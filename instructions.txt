@@ -1,0 +1,6 @@
+
+  cd /Users/shmuelzbaida/Desktop/Aharon2025/new_muzero/new_swt
+
+  Then run:
+  chmod +x start_live_trading.sh
+  ./start_live_trading.sh

@@ -1,0 +1,30 @@
+# Episode 13475 Live Trading - SIMPLE VERSION
+
+services:
+  # Episode 13475 Live Trading Agent (ONLY THIS - NO EXTRAS)
+  episode-13475-live:
+    build:
+      context: .
+      dockerfile: Dockerfile.episode13475-live
+    container_name: episode-13475-live
+    restart: unless-stopped
+    ports:
+      - "8080:8080"  # Monitoring only
+    volumes:
+      - ./logs:/app/logs
+      - ./sessions:/app/sessions
+      - ./config:/app/config:ro
+    environment:
+      - PYTHONPATH=/app
+      - LOG_LEVEL=INFO
+      - EPISODE=13475
+      - TRADING_MODE=live
+      # Load OANDA credentials from .env file
+      - OANDA_API_KEY=${OANDA_API_KEY}
+      - OANDA_ACCOUNT_ID=${OANDA_ACCOUNT_ID}
+      - OANDA_ENVIRONMENT=${OANDA_ENVIRONMENT}
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '4.0'

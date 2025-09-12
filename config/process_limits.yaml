@@ -1,0 +1,173 @@
+# Process Control Configuration
+# CRITICAL: These limits cannot be bypassed - prevents rogue processes
+
+# Hard Process Limits (CANNOT BE DISABLED)
+limits:
+  # Episode limits (prevents runaway training)
+  max_episodes: 20000                    # Hard limit - training stops here
+  episode_limit_enabled: true           # Cannot be disabled
+  
+  # Runtime limits (prevents infinite processes)
+  max_runtime_hours: 24.0              # 24 hour maximum runtime
+  runtime_limit_enabled: true          # Cannot be disabled
+  
+  # Resource limits
+  max_memory_gb: 4.0                   # 4GB memory limit
+  max_cpu_percent: 80.0                # 80% CPU usage limit
+  
+  # Checkpoint limits (prevents disk overflow)
+  max_checkpoints: 10                  # Keep only 10 checkpoints
+  checkpoint_cleanup_enabled: true     # Auto-cleanup old checkpoints
+  checkpoint_cleanup_interval_hours: 1.0  # Cleanup every hour
+
+# Process Monitoring (ALWAYS ENABLED)
+monitoring:
+  # Heartbeat system
+  enable_heartbeat: true               # Cannot be disabled
+  heartbeat_interval_seconds: 60.0     # Update every minute
+  
+  # External monitoring
+  enable_external_monitoring: true     # Cannot be disabled
+  write_pid_file: true                 # Write PID for external monitoring
+  write_heartbeat_file: true           # Write heartbeat for watchdog
+  
+  # Resource monitoring
+  enable_resource_monitoring: true     # Cannot be disabled
+  resource_check_interval_seconds: 300.0  # Check every 5 minutes
+  
+  # Alert thresholds
+  memory_alert_threshold_gb: 3.0       # Alert at 3GB memory usage
+  cpu_alert_threshold_percent: 70.0    # Alert at 70% CPU usage
+  runtime_warning_hours: 20.0          # Warn at 20 hours runtime
+  episode_warning_count: 18000         # Warn at 18k episodes
+
+# Signal Handling (ALWAYS ENABLED)
+signals:
+  enable_signal_handlers: true         # Cannot be disabled
+  handle_sigint: true                  # Handle Ctrl+C
+  handle_sigterm: true                 # Handle termination signals
+  graceful_shutdown_timeout_seconds: 30.0  # Max time for graceful shutdown
+  force_shutdown_on_timeout: true      # Force kill if graceful fails
+
+# Cleanup Configuration (ALWAYS ENABLED)
+cleanup:
+  enable_automatic_cleanup: true       # Cannot be disabled
+  cleanup_on_exit: true               # Clean up files on exit
+  cleanup_on_signal: true             # Clean up on signals
+  cleanup_on_error: true              # Clean up on errors
+  
+  # Files to clean up
+  cleanup_files:
+    - "*.pid"                          # PID files
+    - "*_heartbeat.json"               # Heartbeat files
+    - "*.lock"                         # Lock files
+    - "*.tmp"                          # Temporary files
+
+# Failsafe Mechanisms (CANNOT BE DISABLED)
+failsafes:
+  # Multiple enforcement layers
+  enforce_episode_limit: true          # Episode limit enforcement
+  enforce_runtime_limit: true          # Runtime limit enforcement  
+  enforce_memory_limit: true           # Memory limit enforcement
+  
+  # Emergency stops
+  emergency_stop_on_memory_critical: true      # Stop if memory critical
+  emergency_stop_on_disk_full: true           # Stop if disk full
+  emergency_stop_on_error_cascade: true       # Stop on cascading errors
+  
+  # Watchdog integration
+  enable_external_watchdog: true      # Enable external process monitoring
+  watchdog_check_interval_seconds: 120.0  # External watchdog check interval
+  watchdog_timeout_multiplier: 3.0    # Watchdog timeout = heartbeat * multiplier
+
+# Training-Specific Limits
+training:
+  # Episode management
+  save_checkpoint_every_episodes: 25   # Save every 25 episodes
+  max_episodes_without_improvement: 1000  # Stop if no improvement
+  
+  # Performance tracking
+  track_episode_performance: true      # Track performance metrics
+  rolling_performance_window: 100     # 100-episode rolling window
+  
+  # Early stopping conditions
+  enable_early_stopping: true         # Enable early stopping
+  early_stop_patience_episodes: 500   # Patience before early stop
+  early_stop_min_improvement: 0.01    # Minimum improvement threshold
+
+# Live Trading Limits
+live_trading:
+  # Trading session limits
+  max_trading_hours_per_day: 24.0     # Maximum trading hours per day
+  max_trades_per_day: 100             # Maximum trades per day
+  max_consecutive_losses: 10           # Maximum consecutive losses
+  
+  # Risk management
+  max_daily_drawdown_pips: 100.0      # Maximum daily drawdown
+  circuit_breaker_loss_pips: 200.0    # Circuit breaker threshold
+  
+  # API limits
+  max_api_calls_per_minute: 60        # API rate limiting
+  api_cooldown_on_error_seconds: 60.0 # Cooldown after API errors
+
+# Logging Configuration
+logging:
+  # Process control logs
+  log_process_lifecycle: true         # Log start/stop/signals
+  log_resource_usage: true            # Log memory/CPU usage
+  log_limit_violations: true          # Log when limits hit
+  
+  # Alert logging
+  log_alerts: true                    # Log all alerts
+  log_warnings: true                  # Log all warnings
+  log_emergency_stops: true           # Log emergency stops
+  
+  # Performance logging
+  log_performance_metrics: true       # Log performance data
+  performance_log_interval_seconds: 300.0  # Log every 5 minutes
+
+# External Monitoring Integration
+external_monitoring:
+  # Monitoring files
+  heartbeat_file_template: "{process_name}_heartbeat.json"
+  pid_file_template: "{process_name}.pid"
+  status_file_template: "{process_name}_status.json"
+  
+  # Status reporting
+  report_status_interval_seconds: 60.0    # Status update interval
+  include_system_metrics: true            # Include system-wide metrics
+  include_process_metrics: true           # Include process-specific metrics
+  
+  # Integration with external systems
+  enable_prometheus_metrics: false        # Prometheus integration (optional)
+  enable_grafana_dashboard: false         # Grafana integration (optional)
+  enable_slack_alerts: false             # Slack integration (optional)
+
+# Validation
+validation:
+  # Configuration validation
+  validate_on_startup: true           # Validate config on startup
+  strict_validation: true             # Fail on invalid config
+  
+  # Runtime validation
+  validate_limits_periodically: true  # Check limits are being enforced
+  validation_check_interval_seconds: 600.0  # Check every 10 minutes
+  
+  # Self-test
+  run_self_test_on_startup: true      # Run process control self-test
+  self_test_timeout_seconds: 30.0     # Self-test timeout
+
+# Emergency Procedures
+emergency:
+  # Emergency contact information
+  emergency_log_location: "./emergency_logs/"
+  emergency_dump_location: "./emergency_dumps/"
+  
+  # Emergency actions
+  dump_state_on_emergency: true       # Dump state for debugging
+  create_emergency_checkpoint: true   # Save emergency checkpoint
+  notify_external_systems: true       # Notify monitoring systems
+  
+  # Recovery procedures
+  enable_automatic_recovery: false    # No automatic recovery (safer)
+  manual_intervention_required: true  # Require manual restart

@@ -1,0 +1,195 @@
+# SWT Experimental Agent Configuration
+# EfficientZero + Advanced MuZero enhancements
+
+# Override agent system for experimental mode
+agent_system: "experimental"
+
+# EfficientZero Core Enhancements
+efficientzero:
+  # Self-Supervised Consistency Loss
+  consistency_loss:
+    enabled: true                        # Enable consistency loss
+    weight: 1.0                          # Loss weight
+    stop_gradient: true                  # Stop gradient on target representation
+    temperature: 0.1                     # Temperature scaling
+    consistency_type: "cosine"          # "cosine", "l2", "l1"
+    
+  # End-to-End Value-Prefix Network
+  value_prefix:
+    enabled: true                        # Enable value-prefix network
+    weight: 0.5                          # Loss weight in total loss
+    
+    # Architecture options
+    architecture: "transformer"         # "lstm", "transformer", "tcn", "conv1d"
+    
+    # Network parameters
+    input_dim: 2                         # reward + value predictions
+    hidden_dim: 64                       # Hidden layer dimension
+    num_layers: 2                        # Number of layers
+    dropout: 0.1                         # Dropout rate
+    
+    # Transformer-specific settings
+    transformer:
+      num_heads: 8                       # Multi-head attention
+      feedforward_dim: 128              # Feedforward dimension
+      attention_dropout: 0.1            # Attention dropout
+      
+    # LSTM-specific settings  
+    lstm:
+      bidirectional: false              # Unidirectional LSTM
+      batch_first: true                 # Batch-first tensor format
+      
+  # Model-Based Off-Policy Correction
+  off_policy_correction:
+    enabled: true                        # Enable off-policy correction
+    adaptive_horizon: true               # Use adaptive rollout horizon
+    
+    # Horizon parameters
+    min_horizon: 3                       # Minimum rollout steps
+    max_horizon: 8                       # Maximum rollout steps
+    horizon_decay_rate: 0.95            # Decay for older data
+    
+    # Correction parameters
+    use_fresh_mcts: true                # Use fresh MCTS for correction
+    deterministic_correction: true      # No exploration noise in correction
+
+# Advanced MuZero Enhancements
+advanced_enhancements:
+  # Gumbel Action Selection
+  gumbel_selection:
+    enabled: true                        # Enable Gumbel action selection
+    temperature: 0.1                     # Gumbel temperature
+    simple_loss: true                    # Use simple Gumbel loss
+    adaptive_temperature: true          # Adapt temperature to market volatility
+    
+    # Temperature adaptation
+    base_temperature: 0.1               # Base temperature
+    volatility_scaling: 1.5             # Scale with market volatility
+    
+  # ReZero Just-in-Time MCTS
+  rezero_mcts:
+    enabled: true                        # Enable ReZero optimizations
+    backward_view_cache: true           # Use backward-view caching
+    temporal_reuse: true                # Enable temporal information reuse
+    
+    # Cache parameters
+    cache_size_mb: 200                  # Maximum cache size in MB
+    cache_hit_threshold: 0.95           # Similarity threshold for cache hits
+    cleanup_frequency: 1000             # Cleanup cache every N episodes
+    
+    # Just-in-time parameters
+    enable_subtree_reuse: true          # Reuse subtrees from previous searches
+    max_reuse_depth: 5                  # Maximum depth for subtree reuse
+    
+  # UniZero Concurrent Prediction
+  unizero_concurrent:
+    enabled: true                        # Enable concurrent prediction
+    joint_optimization: true             # Joint world model + policy optimization
+    shared_latent_dim: 256              # Shared latent representation dimension
+    
+    # Concurrent training parameters
+    world_model_weight: 1.0             # World model loss weight
+    policy_weight: 1.0                  # Policy loss weight
+    latent_consistency_weight: 0.5      # Latent consistency weight
+    
+  # Backward-View Reanalyze
+  backward_reanalyze:
+    enabled: true                        # Enable backward-view reanalyze
+    buffer_reanalyze_period: 1000       # Reanalyze buffer every N episodes
+    trajectory_reanalyze_length: 10     # Length of trajectories to reanalyze
+    
+    # Reanalyze parameters
+    prioritize_recent: true             # Prioritize recent experiences
+    quality_threshold: 0.1              # Minimum quality score for reanalysis
+
+# MCTS Enhancements (override base MCTS config)
+mcts:
+  num_simulations: 15                   # Standard simulation count
+  c_puct: 1.25                         # Exploration constant
+  
+  # Enhanced features (enabled for experimental agent)
+  enable_gumbel_selection: true        # Use Gumbel action selection
+  enable_rezero_optimization: true     # Use ReZero optimizations
+  enable_progressive_widening: false   # Progressive widening (disabled for now)
+  
+  # Progressive widening parameters (if enabled)
+  progressive_widening:
+    widening_factor: 2.0                # Node widening factor
+    max_actions_per_node: 10            # Maximum actions per node
+    visit_threshold: 5                  # Visits required before widening
+
+# Network Architecture Overrides
+network:
+  # Enable experimental features in networks
+  enable_consistency_loss: true         # Network support for consistency loss
+  enable_value_prefix: true            # Network support for value-prefix
+  enable_concurrent_prediction: true   # Network support for concurrent prediction
+  
+  # Enhanced loss weights
+  loss_weights:
+    policy_loss: 1.0                    # Standard policy loss
+    value_loss: 1.0                     # Standard value loss
+    reward_loss: 1.0                    # Standard reward loss
+    consistency_loss: 1.0               # Consistency loss weight
+    prefix_loss: 0.5                    # Value-prefix loss weight
+    concurrent_loss: 0.8                # Concurrent prediction loss weight
+
+# Training Optimizations
+training_optimizations:
+  # Sample Efficiency Improvements
+  sample_efficiency:
+    prioritized_replay: true            # Use prioritized experience replay
+    importance_sampling: true           # Importance sampling correction
+    n_step_returns: 5                   # N-step return estimation
+    
+  # Training Speed Optimizations
+  speed_optimizations:
+    batch_processing: true              # Process experiences in batches
+    parallel_mcts: true                 # Parallel MCTS execution
+    compiled_networks: true             # JIT compile networks
+    
+  # Memory Optimizations
+  memory_optimizations:
+    gradient_checkpointing: true        # Use gradient checkpointing
+    experience_compression: true        # Compress stored experiences
+    dynamic_batching: true             # Dynamic batch size adjustment
+
+# Performance Monitoring (Experimental-Specific)
+experimental_monitoring:
+  # Enhanced Metrics
+  enhanced_metrics:
+    consistency_loss_tracking: true     # Track consistency loss evolution
+    value_prefix_accuracy: true         # Track value-prefix prediction accuracy
+    cache_hit_rates: true              # Track ReZero cache performance
+    gumbel_selection_stats: true       # Track Gumbel selection statistics
+    
+  # Resource Monitoring
+  resource_monitoring:
+    memory_usage_detailed: true        # Detailed memory usage tracking
+    cache_size_monitoring: true        # Monitor cache memory usage
+    inference_timing: true             # Track inference timing breakdown
+    
+  # Performance Validation
+  validation:
+    compare_with_baseline: true        # Compare with standard MuZero
+    ablation_studies: true             # Enable ablation study logging
+    convergence_monitoring: true       # Monitor convergence improvements
+
+# Compatibility Settings
+compatibility:
+  maintain_checkpoint_format: true     # Maintain compatibility with standard checkpoints
+  backward_compatibility: true        # Support loading standard MuZero checkpoints
+  checkpoint_migration: true          # Auto-migrate old checkpoints
+  
+# Experimental Features (Beta)
+beta_features:
+  # Additional enhancements under development
+  enable_meta_learning: false         # Meta-learning capabilities
+  enable_curriculum_learning: false   # Advanced curriculum learning
+  enable_multi_objective: false       # Multi-objective optimization
+  
+# Safety and Validation
+experimental_safety:
+  validation_frequency: 100           # Validate experimental features every N episodes
+  fallback_to_standard: true         # Fallback to standard agent if issues
+  safety_checks: true                # Enable additional safety checks

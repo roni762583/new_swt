@@ -1,0 +1,86 @@
+# Docker Compose for Episode 13475 Live Trading
+
+services:
+  # Episode 13475 Live Trading Agent (Fixed)
+  episode-13475-live:
+    build:
+      context: .
+      dockerfile: Dockerfile.live-fixed
+    container_name: episode-13475-live
+    restart: unless-stopped
+    ports:
+      - "8080:8080"  # Monitoring port
+    volumes:
+      - ./logs:/app/logs
+      - ./sessions:/app/sessions
+      - ./cache:/app/cache
+      - ./config:/app/config:ro
+    environment:
+      - PYTHONPATH=/app
+      - LOG_LEVEL=INFO
+      - EPISODE=13475
+      - UNIT_SIZE=1.0
+      - TRADING_MODE=live
+    networks:
+      - episode-13475-network
+    command: ["python3", "live_trading_episode_13475.py", "--config", "config/live.yaml", "--log-level", "INFO"]
+    healthcheck:
+      test: ["CMD", "/app/health_check.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.1'
+
+  # Redis for caching (lightweight)
+  redis-cache:
+    image: redis:7-alpine
+    container_name: episode-13475-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - episode-13475-network
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Simple monitoring dashboard
+  episode-13475-monitor:
+    image: nginx:alpine
+    container_name: episode-13475-monitor
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    volumes:
+      - ./logs:/usr/share/nginx/html/logs:ro
+      - ./sessions:/usr/share/nginx/html/sessions:ro
+      - ./monitoring/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - episode-13475-network
+    depends_on:
+      - episode-13475-live
+
+networks:
+  episode-13475-network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.21.0.0/16
+
+volumes:
+  redis_data:
+    driver: local

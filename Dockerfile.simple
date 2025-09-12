@@ -1,0 +1,13 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install minimal dependencies with cache
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install numpy
+
+# Copy validation script
+COPY simple_validation.py .
+
+# Run simple validation
+CMD ["python3", "simple_validation.py"]

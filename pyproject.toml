@@ -1,0 +1,179 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "new-swt"
+version = "1.0.0"
+description = "Clean SWT: Stochastic MuZero + WST Forex Trading System"
+authors = [
+    {name = "SWT Team", email = "team@swt.ai"},
+]
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    # Core ML and numerical computing
+    "numpy>=1.26.0,<2.0.0",
+    "torch>=2.0.0,<2.3.0",
+    "scipy>=1.7.0,<2.0.0",
+    
+    # Data handling
+    "pandas>=1.3.0,<3.0.0",
+    "h5py>=3.1.0,<4.0.0",
+    
+    # Configuration and validation
+    "pydantic>=2.0.0,<3.0.0",
+    "pyyaml>=6.0.0,<7.0.0",
+    "python-dotenv>=1.0.0,<2.0.0",
+    
+    # Async and networking
+    "aiohttp>=3.8.0,<4.0.0",
+    "asyncio-throttle>=1.0.0,<2.0.0",
+    
+    # Trading APIs - using official OANDA v20 library only
+    # "oandapyV20>=0.6.0,<1.0.0",  # NOT USED - v20 is installed separately
+    
+    # Utilities
+    "click>=8.0.0,<9.0.0",
+    "rich>=13.0.0,<14.0.0",
+    "python-dateutil>=2.8.0,<3.0.0",
+    
+    # Monitoring and logging
+    "prometheus-client>=0.16.0,<1.0.0",
+    "structlog>=23.0.0,<24.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    # Testing
+    "pytest>=7.0.0,<8.0.0",
+    "pytest-asyncio>=0.21.0,<1.0.0",
+    "pytest-cov>=4.0.0,<5.0.0",
+    "pytest-mock>=3.10.0,<4.0.0",
+    "hypothesis>=6.70.0,<7.0.0",
+    
+    # Code quality
+    "black>=23.0.0,<24.0.0",
+    "isort>=5.12.0,<6.0.0",
+    "flake8>=6.0.0,<7.0.0",
+    "mypy>=1.0.0,<2.0.0",
+    "bandit>=1.7.0,<2.0.0",
+    
+    # Pre-commit and hooks
+    "pre-commit>=3.0.0,<4.0.0",
+    
+    # Documentation
+    "mkdocs>=1.4.0,<2.0.0",
+    "mkdocs-material>=9.0.0,<10.0.0",
+]
+
+performance = [
+    # Optional performance enhancements
+    "numba>=0.57.0,<1.0.0",
+    "cython>=3.0.0,<4.0.0",
+    
+    # Wavelet transforms (if available)
+    "PyWavelets>=1.4.0,<2.0.0",
+    "kymatio>=0.3.0,<1.0.0",
+]
+
+training = [
+    # RL and training specific
+    "gymnasium>=0.29.0,<1.0.0",
+    "tensorboard>=2.13.0,<3.0.0",
+    "wandb>=0.15.0,<1.0.0",
+]
+
+[project.scripts]
+swt-train = "scripts.train:main"
+swt-live = "scripts.live_trade:main"
+swt-validate = "scripts.validate_checkpoint:main"
+
+[project.urls]
+Homepage = "https://github.com/swt-team/new-swt"
+Documentation = "https://new-swt.readthedocs.io"
+Repository = "https://github.com/swt-team/new-swt"
+Issues = "https://github.com/swt-team/new-swt/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["swt_*", "scripts"]
+
+[tool.black]
+line-length = 88
+target-version = ['py39', 'py310', 'py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+line_length = 88
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --cov=swt_core --cov=swt_features --cov=swt_inference --cov=swt_environment --cov=swt_live --cov-report=term-missing --cov-report=html"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["swt_core", "swt_features", "swt_inference", "swt_environment", "swt_live"]
+omit = ["*/tests/*", "*/test_*.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]

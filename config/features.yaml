@@ -1,0 +1,116 @@
+# SWT Feature Processing Configuration
+# CRITICAL: These values MUST match training environment exactly
+# Any changes here require retraining the model
+
+# WST (Wavelet Scattering Transform) Parameters
+wst:
+  J: 2                                    # Number of scales
+  Q: 6                                    # Number of orientations per scale  
+  backend: "fallback"                     # "kymatio", "pytorch-wavelets", "fallback"
+  max_order: 2                            # Maximum scattering order
+  output_dim: 128                         # Expected WST feature dimension
+
+# Position Feature Configuration (9D - EXACT training match)
+position_features:
+  dimension: 9                            # MUST be exactly 9D
+  
+  # Normalization parameters from swt_forex_env.py (EXACT values)
+  normalization:
+    duration_max_bars: 720.0              # EXACT: duration_bars / 720.0
+    pnl_scale_factor: 100.0               # EXACT: unrealized_pnl_pips / 100.0
+    price_change_scale_factor: 50.0       # EXACT: price_change_pips / 50.0
+    drawdown_scale_factor: 50.0           # EXACT: max_drawdown_pips / 50.0
+    accumulated_dd_scale: 100.0           # EXACT: accumulated_drawdown_pips / 100.0
+    bars_since_dd_scale: 60.0             # EXACT: bars_since_max_drawdown / 60.0
+
+  # Risk thresholds from training environment (EXACT values)
+  risk_thresholds:
+    high_drawdown_pips: 20.0              # EXACT: position.max_drawdown_pips > 20.0
+    near_stop_loss_pips: -15.0            # EXACT: position.unrealized_pnl_pips < -15.0
+    near_take_profit_pips: 15.0           # EXACT: position.unrealized_pnl_pips > 15.0
+
+  # Risk weights from training environment (EXACT values)
+  risk_weights:
+    high_drawdown: 0.4                    # EXACT: risk_score += 0.4
+    near_stop_loss: 0.3                   # EXACT: risk_score += 0.3
+    near_take_profit: 0.3                 # EXACT: risk_score += 0.3
+  
+  # Feature definitions (training-compatible)
+  feature_mapping:
+    - name: "position_side"              # -1/0/+1 encoding
+      index: 0
+      description: "Position direction: SHORT=-1, FLAT=0, LONG=+1"
+      
+    - name: "duration_bars"              # Normalized by 720.0
+      index: 1
+      description: "Bars since entry / 720.0"
+      
+    - name: "unrealized_pnl_pips"        # Divided by 100.0
+      index: 2  
+      description: "Unrealized PnL pips / 100.0"
+      
+    - name: "entry_price_relative"       # Percentage relative to current
+      index: 3
+      description: "(entry_price - current_price) / current_price"
+      
+    - name: "recent_price_change"        # Divided by 50.0
+      index: 4
+      description: "Recent price momentum / 50.0"
+      
+    - name: "max_drawdown_pips"          # Divided by 50.0
+      index: 5
+      description: "Maximum adverse excursion / 50.0"
+      
+    - name: "accumulated_drawdown"       # Divided by 100.0
+      index: 6
+      description: "Total accumulated drawdown / 100.0"
+      
+    - name: "bars_since_max_drawdown"    # Divided by 60.0
+      index: 7
+      description: "Bars since max drawdown / 60.0"
+      
+    - name: "risk_flags"                 # 0.0 to 1.0
+      index: 8
+      description: "Composite risk score [0, 1]"
+
+# Market Data Processing
+market_data:
+  price_window_size: 256                  # Number of bars for WST processing
+  price_normalization: "zscore"          # "zscore", "minmax", "robust"
+  gap_detection_threshold: 5.0           # Pip threshold for gap detection
+  missing_data_strategy: "interpolate"   # "interpolate", "drop", "error"
+  
+  # Data validation
+  validation:
+    min_bars_required: 256                # Minimum bars needed
+    max_price_change: 50.0               # Maximum allowed price change (pips)
+    required_fields: ["open", "high", "low", "close", "volume"]
+
+# Feature Validation
+validation:
+  market_features:
+    expected_dim: 128
+    dtype: "float32"
+    nan_policy: "error"                   # "error", "warn", "ignore"
+    inf_policy: "error"
+    
+  position_features:
+    expected_dim: 9
+    dtype: "float32" 
+    nan_policy: "error"
+    inf_policy: "error"
+    
+  # Value ranges for validation
+  expected_ranges:
+    position_side: [-1.0, 1.0]
+    duration_bars: [0.0, 5.0]            # Up to 5x session length
+    unrealized_pnl_pips: [-50.0, 50.0]   # Reasonable PnL range
+    risk_flags: [0.0, 1.0]               # Probability-like
+
+# Performance Optimization
+optimization:
+  enable_caching: true                    # Cache WST transforms
+  cache_size_mb: 500                     # Maximum cache size
+  vectorization: true                     # Use vectorized operations
+  parallel_processing: true              # Enable multiprocessing
+  batch_processing: true                 # Process in batches when possible

@@ -1,0 +1,167 @@
+# SWT System Configuration
+# Global system settings and infrastructure
+
+# System Identification
+system:
+  name: "SWT-Trading-System"
+  version: "1.0.0"
+  description: "Stochastic MuZero + WST Forex Trading System"
+  
+# Agent System Selection (KEY CONFIGURATION FOR ALGORITHM SWITCHING)
+agent_system: "stochastic_muzero"        # "stochastic_muzero" or "experimental"
+
+# Computational Resources
+resources:
+  device: "auto"                         # "auto", "cpu", "cuda", "mps"
+  num_workers: 8                         # Multiprocessing workers
+  batch_size: 64                         # Training batch size
+  
+  # Memory management
+  memory:
+    max_buffer_size: 100000              # Experience buffer size
+    buffer_cleanup_threshold: 0.9       # Cleanup when 90% full
+    cache_size_mb: 1000                  # General cache size
+    
+  # Performance optimization
+  optimization:
+    enable_jit_compilation: true         # JIT compile critical functions
+    enable_vectorization: true          # Use vectorized operations
+    enable_parallel_processing: true    # Parallel data processing
+    
+# Random Seed Configuration
+random_seed:
+  global_seed: 42                        # Global random seed
+  torch_seed: 42                         # PyTorch seed
+  numpy_seed: 42                         # NumPy seed
+  reproducible_training: true           # Enable deterministic training
+
+# Logging Configuration
+logging:
+  level: "INFO"                          # "DEBUG", "INFO", "WARNING", "ERROR"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+  # Log destinations
+  destinations:
+    console: true                        # Log to console
+    file: true                           # Log to file
+    tensorboard: true                    # TensorBoard logging
+    wandb: false                         # Weights & Biases logging
+    
+  # File logging
+  file_logging:
+    directory: "logs/"                   # Log directory
+    max_file_size: "100MB"              # Maximum log file size
+    backup_count: 5                      # Number of backup files
+    rotation: "time"                     # "time" or "size" based rotation
+
+# Directory Configuration
+directories:
+  data_path: "data/"                     # Data directory
+  checkpoint_path: "checkpoints/"        # Model checkpoints
+  log_path: "logs/"                      # Log files
+  cache_path: "cache/"                   # Cache directory
+  config_path: "config/"                 # Configuration files
+  
+  # Auto-create missing directories
+  auto_create: true
+
+# Monitoring and Alerting
+monitoring:
+  enable_system_monitoring: true         # Monitor system resources
+  enable_performance_tracking: true     # Track performance metrics
+  enable_health_checks: true            # Periodic health checks
+  
+  # System metrics
+  system_metrics:
+    cpu_usage_threshold: 0.9            # Alert if CPU usage > 90%
+    memory_usage_threshold: 0.9         # Alert if memory usage > 90%
+    disk_usage_threshold: 0.8           # Alert if disk usage > 80%
+    
+  # Performance metrics
+  performance_metrics:
+    inference_latency_threshold: 100     # Alert if inference > 100ms
+    training_speed_threshold: 30        # Alert if < 30 episodes/minute
+    
+  # Health check intervals
+  health_checks:
+    system_check_interval: 300          # System check every 5 minutes
+    performance_check_interval: 60      # Performance check every minute
+    
+# Error Handling
+error_handling:
+  strategy: "fail_fast"                 # "fail_fast", "retry", "graceful"
+  max_retries: 3                        # Maximum retry attempts
+  retry_delay: 1.0                      # Delay between retries (seconds)
+  
+  # Exception handling
+  exceptions:
+    log_stack_traces: true              # Log full stack traces
+    send_alerts: true                   # Send error alerts
+    
+# Data Validation
+data_validation:
+  strict_validation: true               # Strict data validation
+  nan_policy: "error"                   # "error", "warn", "ignore"
+  inf_policy: "error"                   # Policy for infinity values
+  
+  # Input validation
+  input_validation:
+    market_data: true                   # Validate market data
+    position_data: true                 # Validate position data
+    configuration: true                 # Validate configurations
+    
+# Security Configuration
+security:
+  enable_input_sanitization: true      # Sanitize all inputs
+  enable_output_validation: true       # Validate all outputs
+  log_security_events: true            # Log security-related events
+  
+  # API security
+  api_security:
+    enable_rate_limiting: true          # Rate limit API calls
+    max_requests_per_minute: 100       # Maximum API requests per minute
+    timeout_seconds: 10.0               # API timeout
+
+# Environment Configuration
+environment:
+  development:
+    debug_mode: true                    # Enable debug features
+    verbose_logging: true               # More detailed logging
+    enable_profiling: true             # Performance profiling
+    
+  production:
+    debug_mode: false                   # Disable debug features
+    verbose_logging: false              # Standard logging
+    enable_profiling: false            # Disable profiling
+    
+  # Environment detection
+  auto_detect_environment: true        # Auto-detect dev/prod environment
+
+# Feature Flags
+feature_flags:
+  experimental_features: false          # Enable experimental features
+  beta_features: false                  # Enable beta features  
+  debug_features: false                 # Enable debug features
+  
+# Backup and Recovery
+backup:
+  enable_automatic_backup: true        # Automatic backup
+  backup_frequency: "daily"            # "hourly", "daily", "weekly"
+  backup_retention_days: 30            # Days to retain backups
+  
+  # Backup destinations
+  backup_destinations:
+    local: true                         # Local backup
+    cloud: false                        # Cloud backup (configure separately)
+    
+# Update and Maintenance
+maintenance:
+  enable_auto_updates: false           # Automatic system updates
+  maintenance_window: "02:00-04:00"    # Maintenance window (UTC)
+  
+  # Cleanup tasks
+  cleanup:
+    old_logs: true                      # Clean old log files
+    old_checkpoints: true              # Clean old checkpoints
+    cache_cleanup: true                # Clean cache files
+    cleanup_frequency: "daily"         # Cleanup frequency

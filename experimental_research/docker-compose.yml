@@ -1,0 +1,187 @@
+version: '3.8'
+name: efficientzero-research
+
+# EfficientZero Experimental Research Docker Composition
+# Production-grade container orchestration with build cache optimization
+# Strict adherence to CLAUDE.md professional standards
+
+services:
+  # Primary EfficientZero Training Service
+  efficientzero-trainer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # Leverage BuildKit for maximum cache efficiency
+      cache_from:
+        - efficientzero-research:builder
+        - efficientzero-research:runtime
+      args:
+        BUILDKIT_INLINE_CACHE: 1
+    image: efficientzero-research:latest
+    container_name: efficientzero-trainer
+    
+    # Volume mounts for persistence and development
+    volumes:
+      # Persistent data volumes
+      - ./checkpoints:/app/experimental_research/checkpoints
+      - ./logs:/app/experimental_research/logs
+      - ./results:/app/experimental_research/results
+      - ./data:/app/experimental_research/data
+      
+      # Development volumes (comment out for production)
+      - ./configs:/app/experimental_research/configs
+      - ./monitoring:/app/experimental_research/monitoring
+      
+      # System volumes for performance
+      - /tmp:/tmp
+      
+    # Environment configuration
+    environment:
+      # Python environment
+      - PYTHONPATH=/app/experimental_research
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      
+      # Training configuration
+      - EFFICIENTZERO_ENABLED=1
+      - TRAINING_MODE=research
+      - MONITORING_ENABLED=1
+      - CHECKPOINTS_ENABLED=1
+      
+      # Performance optimization
+      - OMP_NUM_THREADS=6
+      - MKL_NUM_THREADS=6
+      - OPENBLAS_NUM_THREADS=6
+      - FFTW_THREADS=6
+      
+      # Research-specific settings
+      - EXPERIMENT_ID=efficientzero_v1
+      - ARCHITECTURE_MODE=transformer
+      - CONSISTENCY_LOSS_ENABLED=true
+      - VALUE_PREFIX_ENABLED=true
+      - OFF_POLICY_CORRECTION_ENABLED=true
+      
+    # Working directory
+    working_dir: /app/experimental_research
+    
+    # Production training command
+    command: >
+      python efficientzero_main.py
+      --experiment-name "efficientzero_transformer_research"
+      --episodes 100000
+      --architecture transformer
+      --consistency-weight 1.0
+      --prefix-weight 0.5
+      --validate-system
+    
+    # Restart policy for production stability
+    restart: unless-stopped
+    
+    # Health monitoring
+    healthcheck:
+      test: 
+        - "CMD-SHELL"
+        - "python -c 'from efficientzero_trainer import EfficientZeroSWTTrainer; print(\"✅ Training system healthy\")' || exit 1"
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 120s
+    
+    # Resource allocation (optimized for research workload)
+    deploy:
+      resources:
+        limits:
+          memory: 10G      # Sufficient for Transformer + WST
+          cpus: '6.0'      # Reserve cores for intensive research
+        reservations:
+          memory: 6G       # Minimum guaranteed memory
+          cpus: '4.0'      # Minimum guaranteed cores
+    
+    # Network configuration
+    ports:
+      - "5003:5003"       # Training dashboard
+      - "6008:6008"       # TensorBoard
+    
+    # Logging configuration
+    logging:
+      driver: json-file
+      options:
+        max-size: 100m
+        max-file: "5"
+        labels: "service,experiment"
+        
+  # Monitoring and Visualization Service
+  efficientzero-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: efficientzero-research:latest
+    container_name: efficientzero-monitor
+    
+    # Shared volumes for monitoring
+    volumes:
+      - ./logs:/app/experimental_research/logs:ro
+      - ./results:/app/experimental_research/results:ro
+      - ./checkpoints:/app/experimental_research/checkpoints:ro
+      - ./monitoring:/app/experimental_research/monitoring
+      
+    # Environment for monitoring
+    environment:
+      - PYTHONPATH=/app/experimental_research
+      - MONITORING_MODE=1
+      - DASHBOARD_ENABLED=1
+      
+    # Monitoring command
+    command: python efficientzero_monitor.py --port 8080 --realtime
+    
+    # Resource allocation (lightweight monitoring)
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+          
+    # Dashboard access
+    ports:
+      - "8080:8080"       # Monitoring dashboard
+      
+    # Dependency on trainer
+    depends_on:
+      efficientzero-trainer:
+        condition: service_healthy
+        
+    # Restart policy
+    restart: unless-stopped
+    
+# Network configuration for service communication
+networks:
+  default:
+    name: efficientzero-network
+    driver: bridge
+
+# Named volumes for persistent data
+volumes:
+  efficientzero-checkpoints:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./checkpoints
+      
+  efficientzero-logs:
+    driver: local
+    driver_opts:
+      type: none  
+      o: bind
+      device: ./logs
+      
+  efficientzero-results:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./results

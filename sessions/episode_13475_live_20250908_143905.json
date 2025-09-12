@@ -1,0 +1,220 @@
+{
+  "episode": 13475,
+  "session_start": "2025-09-08T14:34:43.837970",
+  "session_end": "2025-09-08T14:39:05.484149",
+  "runtime_hours": 0.07267949055555556,
+  "total_trades": 18,
+  "winning_trades": 7,
+  "win_rate_percent": 38.88888888888889,
+  "daily_pnl": -76.86684490266771,
+  "final_balance": 9923.133155097334,
+  "max_drawdown": 111.96362493222978,
+  "parameters": {
+    "mcts_simulations": 15,
+    "c_puct": 1.25,
+    "wst_J": 2,
+    "wst_Q": 6,
+    "position_features_dim": 9,
+    "risk_management": "signal_based_only"
+  },
+  "trade_history": [
+    {
+      "timestamp": "2025-09-08T14:35:34.126214",
+      "type": "long",
+      "entry_price": 197.48763689103322,
+      "exit_price": 197.48729624588742,
+      "size": 1.0,
+      "pips": -3.4064514579768,
+      "pnl_dollars": -3.4064514579768,
+      "duration_minutes": 0.016722816666666664,
+      "confidence": 0.95
+    },
+    {
+      "timestamp": "2025-09-08T14:35:36.144806",
+      "type": "short",
+      "entry_price": 197.4863389714632,
+      "exit_price": 197.48436346925476,
+      "size": 1.0,
+      "pips": 19.75502208438229,
+      "pnl_dollars": 19.75502208438229,
+      "duration_minutes": 0.01681003333333333,
+      "confidence": 0.7
+    },
+    {
+      "timestamp": "2025-09-08T14:35:38.155334",
+      "type": "long",
+      "entry_price": 197.48324018894732,
+      "exit_price": 197.48246720740744,
+      "size": 1.0,
+      "pips": -7.729815398818118,
+      "pnl_dollars": -7.729815398818118,
+      "duration_minutes": 0.0167922,
+      "confidence": 0.95
+    },
+    {
+      "timestamp": "2025-09-08T14:35:52.228469",
+      "type": "short",
+      "entry_price": 197.48071362356748,
+      "exit_price": 197.48496350793556,
+      "size": 1.0,
+      "pips": -42.49884368078938,
+      "pnl_dollars": -42.49884368078938,
+      "duration_minutes": 0.2177722,
+      "confidence": 0.7
+    },
+    {
+      "timestamp": "2025-09-08T14:36:15.366432",
+      "type": "long",
+      "entry_price": 197.4881181373272,
+      "exit_price": 197.48682975097228,
+      "size": 1.0,
+      "pips": -12.883863549291164,
+      "pnl_dollars": -12.883863549291164,
+      "duration_minutes": 0.08377989999999999,
+      "confidence": 0.7
+    },
+    {
+      "timestamp": "2025-09-08T14:36:31.463271",
+      "type": "long",
+      "entry_price": 197.48857440389887,
+      "exit_price": 197.4889804669162,
+      "size": 1.0,
+      "pips": 4.060630173228219,
+      "pnl_dollars": 4.060630173228219,
+      "duration_minutes": 0.2514887333333333,
+      "confidence": 0.7
+    },
+    {
+      "timestamp": "2025-09-08T14:36:34.481835",
+      "type": "long",
+      "entry_price": 197.48962824635873,
+      "exit_price": 197.48779118884678,
+      "size": 1.0,
+      "pips": -18.370575119490695,
+      "pnl_dollars": -18.370575119490695,
+      "duration_minutes": 0.01683095,
+      "confidence": 0.7
+    },
+    {
+      "timestamp": "2025-09-08T14:37:01.600602",
+      "type": "short",
+      "entry_price": 197.4850781624808,
+      "exit_price": 197.4788584064469,
+      "size": 1.0,
+      "pips": 62.19756033885915,
+      "pnl_dollars": 62.19756033885915,
+      "duration_minutes": 0.30136183333333333,
+      "confidence": 0.7
+    },
+    {
+      "timestamp": "2025-09-08T14:37:10.654478",
+      "type": "short",
+      "entry_price": 197.47896591480747,
+      "exit_price": 197.47726988363684,
+      "size": 1.0,
+      "pips": 16.960311706384346,
+      "pnl_dollars": 16.960311706384346,
+      "duration_minutes": 0.13408971666666666,
+      "confidence": 0.7
+    },
+    {
+      "timestamp": "2025-09-08T14:37:13.671526",
+      "type": "short",
+      "entry_price": 197.47625271340672,
+      "exit_price": 197.47455143291342,
+      "size": 1.0,
+      "pips": 17.01280493307422,
+      "pnl_dollars": 17.01280493307422,
+      "duration_minutes": 0.033506,
+      "confidence": 0.7
+    },
+    {
+      "timestamp": "2025-09-08T14:37:23.726493",
+      "type": "short",
+      "entry_price": 197.47635730997814,
+      "exit_price": 197.4781456971218,
+      "size": 1.0,
+      "pips": -17.883871436481513,
+      "pnl_dollars": -17.883871436481513,
+      "duration_minutes": 0.15085905000000002,
+      "confidence": 0.7
+    },
+    {
+      "timestamp": "2025-09-08T14:37:43.823025",
+      "type": "short",
+      "entry_price": 197.4760405883368,
+      "exit_price": 197.48002660330448,
+      "size": 1.0,
+      "pips": -39.86014967694018,
+      "pnl_dollars": -39.86014967694018,
+      "duration_minutes": 0.13402825000000002,
+      "confidence": 0.7
+    },
+    {
+      "timestamp": "2025-09-08T14:38:13.994338",
+      "type": "long",
+      "entry_price": 197.47962434607754,
+      "exit_price": 197.47626744167067,
+      "size": 1.0,
+      "pips": -33.56904406871308,
+      "pnl_dollars": -33.56904406871308,
+      "duration_minutes": 0.45252916666666665,
+      "confidence": 0.7
+    },
+    {
+      "timestamp": "2025-09-08T14:38:18.015272",
+      "type": "long",
+      "entry_price": 197.47470325479122,
+      "exit_price": 197.47383559711076,
+      "size": 1.0,
+      "pips": -8.676576804589331,
+      "pnl_dollars": -8.676576804589331,
+      "duration_minutes": 0.016731683333333334,
+      "confidence": 0.95
+    },
+    {
+      "timestamp": "2025-09-08T14:38:20.026429",
+      "type": "long",
+      "entry_price": 197.47272610936452,
+      "exit_price": 197.4747061272627,
+      "size": 1.0,
+      "pips": 19.800178981768113,
+      "pnl_dollars": 19.800178981768113,
+      "duration_minutes": 0.01677715,
+      "confidence": 0.95
+    },
+    {
+      "timestamp": "2025-09-08T14:38:23.043553",
+      "type": "short",
+      "entry_price": 197.47488004970415,
+      "exit_price": 197.47252564578312,
+      "size": 1.0,
+      "pips": 23.544039210321444,
+      "pnl_dollars": 23.544039210321444,
+      "duration_minutes": 0.03355888333333333,
+      "confidence": 0.7
+    },
+    {
+      "timestamp": "2025-09-08T14:38:36.120797",
+      "type": "short",
+      "entry_price": 197.47317861780877,
+      "exit_price": 197.47594291189796,
+      "size": 1.0,
+      "pips": -27.64294089189434,
+      "pnl_dollars": -27.64294089189434,
+      "duration_minutes": 0.20117441666666666,
+      "confidence": 0.7
+    },
+    {
+      "timestamp": "2025-09-08T14:39:01.251473",
+      "type": "long",
+      "entry_price": 197.47683161839893,
+      "exit_price": 197.47406409237436,
+      "size": 1.0,
+      "pips": -27.675260245700883,
+      "pnl_dollars": -27.675260245700883,
+      "duration_minutes": 0.13412938333333332,
+      "confidence": 0.7
+    }
+  ]
+}

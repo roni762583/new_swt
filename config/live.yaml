@@ -1,0 +1,98 @@
+# Episode 13475 Live Trading Configuration
+# Production-ready settings without S/L or T/P
+# Based on successful testing results: +600 pips, 46.9% win rate
+
+# Episode 13475 Core Parameters
+episode: 13475
+risk_management: "signal_based_only"  # No fixed S/L or T/P
+
+# MCTS Configuration
+mcts_simulations: 15
+c_puct: 1.25
+temperature_scheduling: "fixed"
+temperature: 0.8
+search_depth: 10
+expansion_threshold: 1
+
+# WST Feature Processing
+wst_J: 2
+wst_Q: 6
+wst_backend: "manual"  # Avoid kymatio dependency
+wst_padding: "zero"
+wst_normalize: true
+
+# Position Features
+position_features_dim: 9
+position_weight: 1.0
+market_weight: 1.0
+
+# Trading Parameters
+trading:
+  unit_size: 1.0  # Standard 1 unit position size for testing
+  max_position_size: 1.0
+  min_confidence_threshold: 0.3  # Only trade high confidence signals
+  max_trades_per_hour: 10
+  max_daily_trades: 50
+  
+  # Risk Management (pure signal-based only - no artificial limits)
+  # No emergency stops - exactly like training
+  trend_break_exit: true     # Exit on trend break signals only
+
+# Market Data
+market:
+  symbol: "GBPJPY"
+  timeframe: "M1"
+  lookback_window: 256
+  feature_normalization: "zscore"
+  
+# Real-time Processing
+real_time:
+  processing_interval: 1.0  # 1 second
+  inference_timeout: 500    # 500ms max
+  cache_enabled: true
+  cache_ttl: 60            # 1 minute
+  
+# Monitoring and Logging
+monitoring:
+  enabled: true
+  metrics_port: 8080
+  log_level: "INFO"
+  log_trades: true
+  log_inference_times: true
+  
+  # Performance Alerts
+  alert_slow_inference: 0.5    # Alert if inference > 500ms
+  alert_low_win_rate: 0.4      # Alert if win rate < 40%
+  alert_high_drawdown: -30     # Alert if drawdown > 30 pips
+
+# No Safety Limits (Pure Training Mode)
+safety:
+  # No artificial limits - exactly like training environment
+  
+# Resource Management
+resources:
+  memory_limit_gb: 2.0
+  cpu_limit_percent: 100.0
+  disk_usage_limit_gb: 1.0
+  
+# Episode 13475 Specific Settings
+episode_13475:
+  mode: "live_production"
+  simulation_compatible: false  # Real trading mode
+  signal_based_exits: true
+  technical_indicators:
+    - "rsi_14"
+    - "macd"
+    - "bollinger_bands"
+    - "ema_12"
+    - "sma_20"
+    - "sma_50"
+    - "atr_14"
+  
+  exit_conditions:
+    # Pure signal-based exits - no pip limits
+    extreme_overbought_rsi: 75
+    extreme_oversold_rsi: 25
+    trend_break_rsi_long: 45
+    trend_break_rsi_short: 55
+    # No pip-based limits - signals only

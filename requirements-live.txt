@@ -1,0 +1,38 @@
+# Live trading specific dependencies
+fastapi>=0.100.0
+uvicorn[standard]>=0.22.0
+websockets>=11.0.0
+
+# Database and caching
+redis>=4.6.0
+sqlite3-to-mysql>=1.4.16
+
+# API and networking
+requests>=2.31.0
+aiofiles>=23.1.0
+
+# Authentication and security
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+
+# Monitoring and alerting
+prometheus-client>=0.17.1
+grafana-api>=1.0.3
+
+# Email notifications
+smtplib>=1.0.0
+email-validator>=2.0.0
+
+# Time zone handling
+pytz>=2023.3
+
+# Live trading specific
+ccxt>=4.0.0  # Cryptocurrency exchanges (if needed)
+
+# Performance and reliability  
+tenacity>=8.2.0  # Retry logic
+circuit-breaker>=1.0.0
+
+# Development and debugging (lighter than training)
+pytest>=7.4.0
+requests-mock>=1.11.0

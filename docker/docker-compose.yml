@@ -1,0 +1,373 @@
+# SWT Production Deployment
+# Complete multi-service Docker Compose configuration
+#
+# Services:
+# - swt-live-trader: Live trading system
+# - swt-training: Training system (optional)
+# - redis: Caching and message broker
+# - prometheus: Metrics collection
+# - grafana: Monitoring dashboards
+# - nginx: Reverse proxy and load balancer
+
+version: '3.8'
+
+services:
+  # Live Trading System
+  swt-live-trader:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.live
+      args:
+        BUILD_DATE: ${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}
+        VCS_REF: ${VCS_REF:-$(git rev-parse --short HEAD)}
+        VERSION: ${VERSION:-latest}
+    image: swt-live-trader:${VERSION:-latest}
+    container_name: swt-live-trader
+    restart: unless-stopped
+    
+    # Resource limits for production
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2'
+        reservations:
+          memory: 1G
+          cpus: '1'
+    
+    # Environment configuration
+    environment:
+      - SWT_ENVIRONMENT=production
+      - SWT_LOG_LEVEL=${SWT_LOG_LEVEL:-INFO}
+      - SWT_CONFIG_FILE=/app/config/live.yaml
+      
+      # OANDA API Configuration
+      - SWT_OANDA_ACCOUNT_ID=${SWT_OANDA_ACCOUNT_ID}
+      - SWT_OANDA_API_TOKEN=${SWT_OANDA_API_TOKEN}
+      - SWT_OANDA_ENVIRONMENT=${SWT_OANDA_ENVIRONMENT:-practice}
+      
+      # Trading Configuration
+      - SWT_INSTRUMENT=${SWT_INSTRUMENT:-GBP_JPY}
+      - SWT_POSITION_SIZE=${SWT_POSITION_SIZE:-1000}
+      - SWT_MIN_CONFIDENCE=${SWT_MIN_CONFIDENCE:-0.6}
+      - SWT_MAX_DAILY_LOSS=${SWT_MAX_DAILY_LOSS:-500.0}
+      
+      # System Configuration
+      - SWT_AGENT_SYSTEM=${SWT_AGENT_SYSTEM:-stochastic_muzero}
+      - SWT_CHECKPOINT_PATH=/app/checkpoints/episode_13475.pth
+      
+      # Redis Configuration
+      - REDIS_URL=redis://redis:6379/0
+      
+    # Volume mounts
+    volumes:
+      - ../config:/app/config:ro
+      - ../checkpoints:/app/checkpoints:ro
+      - ../logs:/app/logs:rw
+      - ../data:/app/data:ro
+      - ../results:/app/results:rw
+    
+    # Port mapping
+    ports:
+      - "8080:8080"  # Health check and metrics
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    
+    # Dependencies
+    depends_on:
+      redis:
+        condition: service_healthy
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+        labels: "service=swt-live-trader"
+
+  # Training System (Optional)
+  swt-training:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.training
+      args:
+        BUILD_DATE: ${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}
+        VCS_REF: ${VCS_REF:-$(git rev-parse --short HEAD)}
+        VERSION: ${VERSION:-latest}
+    image: swt-training:${VERSION:-latest}
+    container_name: swt-training
+    restart: "no"  # Don't auto-restart training
+    profiles: ["training"]  # Only start with --profile training
+    
+    # GPU support
+    runtime: nvidia
+    
+    # Resource limits for training
+    deploy:
+      resources:
+        limits:
+          memory: 12G
+          cpus: '8'
+        reservations:
+          memory: 8G
+          cpus: '4'
+    
+    # Environment configuration
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0
+      - SWT_ENVIRONMENT=training
+      - SWT_LOG_LEVEL=${SWT_LOG_LEVEL:-INFO}
+      - SWT_CONFIG_FILE=/app/config/training.yaml
+      
+      # Training Configuration
+      - SWT_NUM_EPISODES=${SWT_NUM_EPISODES:-500000}
+      - SWT_BATCH_SIZE=${SWT_BATCH_SIZE:-64}
+      - SWT_LEARNING_RATE=${SWT_LEARNING_RATE:-0.0002}
+      - SWT_CHECKPOINT_FREQUENCY=${SWT_CHECKPOINT_FREQUENCY:-25}
+      
+      # GPU Configuration
+      - CUDA_VISIBLE_DEVICES=0
+      - TORCH_CUDA_ARCH_LIST=7.0;7.5;8.0;8.6
+      
+      # Redis Configuration
+      - REDIS_URL=redis://redis:6379/1
+    
+    # Volume mounts
+    volumes:
+      - ../config:/app/config:ro
+      - ../data:/app/data:ro
+      - ../logs:/app/logs:rw
+      - ../checkpoints:/app/checkpoints:rw
+      - ../experiments:/app/experiments:rw
+      - ../results:/app/results:rw
+    
+    # Port mapping
+    ports:
+      - "8081:8080"  # Health check
+      - "6006:6006"  # TensorBoard
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import torch; print('GPU:', torch.cuda.is_available())"]
+      interval: 120s
+      timeout: 30s
+      retries: 2
+      start_period: 60s
+    
+    # Dependencies
+    depends_on:
+      redis:
+        condition: service_healthy
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "500m"
+        max-file: "3"
+        labels: "service=swt-training"
+
+  # Redis - Caching and Message Broker
+  redis:
+    image: redis:7-alpine
+    container_name: swt-redis
+    restart: unless-stopped
+    
+    # Redis configuration
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    
+    # Persistent storage
+    volumes:
+      - redis_data:/data
+    
+    # Port mapping (internal only)
+    expose:
+      - "6379"
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Prometheus - Metrics Collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: swt-prometheus
+    restart: unless-stopped
+    profiles: ["monitoring"]  # Only start with --profile monitoring
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    
+    # Configuration
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    
+    # Configuration and storage
+    volumes:
+      - ../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    
+    # Port mapping
+    ports:
+      - "9090:9090"
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    
+    # Dependencies
+    depends_on:
+      - swt-live-trader
+
+  # Grafana - Monitoring Dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: swt-grafana
+    restart: unless-stopped
+    profiles: ["monitoring"]  # Only start with --profile monitoring
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1'
+        reservations:
+          memory: 256M
+          cpus: '0.5'
+    
+    # Environment configuration
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    
+    # Configuration and storage
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    
+    # Port mapping
+    ports:
+      - "3000:3000"
+    
+    # Health check
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    
+    # Dependencies
+    depends_on:
+      - prometheus
+
+  # Nginx - Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: swt-nginx
+    restart: unless-stopped
+    profiles: ["proxy"]  # Only start with --profile proxy
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+          cpus: '0.25'
+    
+    # Configuration
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    
+    # Port mapping
+    ports:
+      - "80:80"
+      - "443:443"
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    
+    # Dependencies
+    depends_on:
+      - swt-live-trader
+      - grafana
+
+# Named Volumes
+volumes:
+  # System data
+  redis_data:
+    driver: local
+  
+  prometheus_data:
+    driver: local
+  
+  grafana_data:
+    driver: local
+
+# Networks
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# Deployment profiles:
+# Production Live Trading: docker-compose up -d
+# With Training: docker-compose --profile training up -d
+# With Monitoring: docker-compose --profile monitoring up -d  
+# Full Stack: docker-compose --profile training --profile monitoring --profile proxy up -d

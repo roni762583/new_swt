@@ -1,0 +1,56 @@
+# Environment files
+.env
+.env.local
+.env.production
+
+# Data files
+data/*.csv
+data/*.parquet
+*.db
+
+# Model files
+checkpoints/*.pth
+checkpoints/*.pt
+*.ckpt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Logs
+logs/
+*.log
+
+# Validation results
+validation_results/
+test_results/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+# Large files (managed separately)
+checkpoints/*.pth
+checkpoints/*.pt
+checkpoints/*.ckpt
+data/*.csv
+data/*.parquet
+*.zip
+*.tar.gz
+*.7z
+
+# But track README files in these directories
+!checkpoints/README.md
+!data/README.md

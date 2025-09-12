@@ -1,0 +1,78 @@
+{
+    "model_config": {
+        "wst": {
+            "J": 2,
+            "Q": 6,
+            "input_length": 256,
+            "market_output_dim": 128,
+            "orientations": 6,
+            "dropout_p": 0.1,
+            "use_batch_norm": true,
+            "use_residual": true
+        },
+        "fusion": {
+            "position_features": 9,
+            "combined_output_dim": 128,
+            "fusion_hidden_dim": 256
+        },
+        "stochastic_muzero": {
+            "latent_dim": 128,
+            "action_dim": 4,
+            "z_dim": 16,
+            "hidden_dim": 256,
+            "num_simulations": 15,
+            "discount": 0.997,
+            "dirichlet_alpha": 0.25,
+            "exploration_fraction": 0.25
+        }
+    },
+    "training_config": {
+        "batch_size": 64,
+        "learning_rate": 0.0002,
+        "weight_decay": 0.00001,
+        "gradient_clip": 10.0,
+        "buffer_size": 100000,
+        "num_unroll_steps": 5,
+        "td_steps": 10,
+        "num_epochs": 1000000,
+        "save_interval": 100,
+        "eval_interval": 500
+    },
+    "reward": {
+        "type": "amddp1",
+        "reassign_on_trade_complete": true,
+        "use_final_pnl": true,
+        "no_curriculum": true,
+        "enable_curriculum": false,
+        "drawdown_penalty": 0.01,
+        "profit_protection": true,
+        "min_protected_reward": 0.001
+    },
+    "reward_profiles": {
+        "amddp5": {
+            "type": "amddp5",
+            "drawdown_penalty": 0.05,
+            "profit_protection": true,
+            "min_protected_reward": 0.001,
+            "reassign_on_trade_complete": true,
+            "use_final_pnl": true
+        },
+        "amddp1": {
+            "type": "amddp1", 
+            "drawdown_penalty": 0.01,
+            "profit_protection": true,
+            "min_protected_reward": 0.001,
+            "reassign_on_trade_complete": true,
+            "use_final_pnl": true
+        }
+    },
+    "environment_config": {
+        "price_series_length": 256,
+        "spread_pips": 4.0,
+        "pip_value": 0.01,
+        "session_hours": 12,
+        "walkforward_hours": 1,
+        "max_gap_minutes": 10
+    },
+    "data_path": "swt_data/oanda_full_3year_data.csv"
+}

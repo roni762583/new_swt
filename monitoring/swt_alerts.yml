@@ -1,0 +1,106 @@
+groups:
+  - name: swt_trading_alerts
+    rules:
+      # Training service alerts
+      - alert: SWTTrainingDown
+        expr: up{job="swt-training"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: training
+        annotations:
+          summary: "SWT Training service is down"
+          description: "SWT Training service has been down for more than 1 minute"
+
+      - alert: SWTTrainingHighMemory
+        expr: swt_memory_usage_mb{job="swt-training"} > 6000
+        for: 5m
+        labels:
+          severity: warning
+          service: training
+        annotations:
+          summary: "SWT Training high memory usage"
+          description: "Training service memory usage is {{ $value }}MB (>6GB)"
+
+      # Live trading alerts
+      - alert: SWTLiveTradingDown
+        expr: up{job="swt-live"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: live_trading
+        annotations:
+          summary: "SWT Live Trading service is down"
+          description: "CRITICAL: Live trading service has been down for 30 seconds"
+
+      - alert: SWTInferenceLatencyHigh
+        expr: swt_inference_time_ms{job="swt-live"} > 200
+        for: 2m
+        labels:
+          severity: warning
+          service: live_trading
+        annotations:
+          summary: "SWT Inference latency is high"
+          description: "Inference time is {{ $value }}ms (>200ms threshold)"
+
+      - alert: SWTFeatureProcessingFailed
+        expr: increase(swt_feature_processing_errors_total{job="swt-live"}[5m]) > 5
+        for: 1m
+        labels:
+          severity: warning
+          service: live_trading
+        annotations:
+          summary: "SWT Feature processing errors"
+          description: "{{ $value }} feature processing errors in the last 5 minutes"
+
+      - alert: SWTTradingAccountBalance
+        expr: swt_account_balance_usd{job="swt-live"} < 1000
+        for: 1m
+        labels:
+          severity: critical
+          service: live_trading
+        annotations:
+          summary: "SWT Trading account balance low"
+          description: "Account balance is ${{ $value }} (below $1000 threshold)"
+
+      - alert: SWTNoRecentTrades
+        expr: increase(swt_trades_total{job="swt-live"}[1h]) == 0
+        for: 2h
+        labels:
+          severity: warning
+          service: live_trading
+        annotations:
+          summary: "SWT No recent trades"
+          description: "No trades executed in the last 2 hours"
+
+  - name: swt_performance_alerts
+    rules:
+      - alert: SWTModelConfidenceLow
+        expr: swt_model_confidence{job="swt-live"} < 0.3
+        for: 10m
+        labels:
+          severity: warning
+          service: live_trading
+        annotations:
+          summary: "SWT Model confidence consistently low"
+          description: "Model confidence has been below 30% for 10 minutes"
+
+      - alert: SWTMCTSSearchTimeout
+        expr: increase(swt_mcts_timeouts_total{job="swt-live"}[5m]) > 3
+        for: 1m
+        labels:
+          severity: warning
+          service: live_trading
+        annotations:
+          summary: "SWT MCTS search timeouts"
+          description: "{{ $value }} MCTS timeouts in the last 5 minutes"
+
+      - alert: SWTCacheHitRateLow
+        expr: swt_cache_hit_rate{job="swt-live"} < 0.5
+        for: 15m
+        labels:
+          severity: info
+          service: live_trading
+        annotations:
+          summary: "SWT Cache hit rate low"
+          description: "Cache hit rate is {{ $value }} (below 50% for 15 minutes)"

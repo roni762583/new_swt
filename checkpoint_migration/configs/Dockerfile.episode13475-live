@@ -1,0 +1,68 @@
+# Episode 13475 Live Trading - Production Ready with Build Cache Optimization
+FROM python:3.11-slim as base
+
+# Build arguments for cache busting
+ARG BUILDKIT_INLINE_CACHE=1
+
+# Environment variables
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+# Install system dependencies with cache mount
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for security
+RUN useradd --create-home --shell /bin/bash --uid 1000 swt-user
+
+# Copy requirements files first for better layer caching
+COPY requirements.txt requirements-live-fixed.txt pyproject.toml setup.py ./
+
+# Install Python dependencies with cache mount and fixed numpy version
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    pip install --upgrade pip setuptools wheel && \
+    pip install --no-deps numpy==1.24.3 && \
+    pip install -r requirements-live-fixed.txt && \
+    pip install torch==2.2.0 torchvision==0.17.0 --index-url https://download.pytorch.org/whl/cpu && \
+    pip install v20>=3.0.25.0
+
+# Copy source code with proper ownership  
+COPY --chown=swt-user:swt-user . .
+
+# Install package in development mode with cache
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    pip install -e .
+
+# Create necessary directories with proper permissions
+RUN mkdir -p /app/logs /app/sessions /app/cache /app/config /app/data && \
+    chown -R swt-user:swt-user /app
+
+# Switch to non-root user
+USER swt-user
+
+# Create health check script
+RUN echo '#!/bin/bash\nps aux | grep -v grep | grep "live_trading_episode_13475.py" > /dev/null' > /app/health_check.sh && \
+    chmod +x /app/health_check.sh
+
+# Expose monitoring port
+EXPOSE 8080
+
+# Health check with proper timeout
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD /app/health_check.sh || exit 1
+
+# Set working directory ownership
+WORKDIR /app
+
+# Default command - Episode 13475 Live Trading
+CMD ["python3", "live_trading_episode_13475.py", "--config", "config/live.yaml", "--log-level", "INFO"]

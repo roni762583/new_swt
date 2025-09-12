@@ -1,0 +1,62 @@
+# 🚨 CRITICAL TRADING SAFETY CONFIGURATION
+# Episode 13475 Live Trading Safety Parameters
+
+# Position Size Limits
+position_limits:
+  max_position_size: 1                    # ABSOLUTE MAXIMUM: Never exceed 1 unit
+  trade_size_per_order: 1                 # Standard trade size
+  position_size_tolerance: 0.1            # Allow 10% tolerance for fills
+  emergency_violation_threshold: 3        # Emergency shutdown after N violations
+
+# Risk Management
+risk_management:
+  max_daily_trades: 100                   # Maximum trades per day
+  max_consecutive_losses: 10              # Stop after consecutive losses
+  max_daily_loss_usd: 100.0              # Stop if daily loss exceeds this
+  max_drawdown_usd: 200.0                # Emergency stop at this drawdown
+
+# Trading Parameters
+trading:
+  min_confidence_threshold: 0.6          # Minimum confidence for trades
+  spread_cost_estimate_pips: 2.5         # Estimated spread cost
+  pip_value_tolerance: 0.001             # P&L calculation tolerance
+
+# Monitoring and Safety
+monitoring:
+  emergency_check_interval_seconds: 30   # How often to check position sizes
+  status_log_interval_seconds: 300       # How often to log status
+  reconciliation_interval_seconds: 300   # How often to reconcile positions
+
+# API Safety
+oanda_api:
+  max_retries: 3                         # Maximum API retry attempts
+  timeout_seconds: 30                    # API timeout
+  rate_limit_delay_ms: 100              # Delay between API calls
+
+# Emergency Actions
+emergency:
+  enable_auto_close_oversized: false     # Auto-close positions > max_size
+  enable_emergency_shutdown: false       # Auto-shutdown on critical violations
+  alert_webhook_url: null                # Optional: webhook for emergency alerts
+
+# Episode 13475 Specific
+episode_13475:
+  mcts_simulations: 15
+  c_puct: 1.25
+  wst_J: 2
+  wst_Q: 6
+  position_features_dim: 9
+  risk_management_mode: "signal_based_only"  # No S/L or T/P
+
+# Validation Rules
+validation:
+  enforce_single_unit_trading: true      # Strictly enforce 1-unit trading
+  validate_fills_against_request: true   # Validate fill size vs requested
+  log_all_position_changes: true         # Log every position change
+  enable_broker_reconciliation: true     # Enable position reconciliation
+
+# Development/Testing
+development:
+  enable_simulation_mode: false          # Set true for testing
+  log_level: "INFO"                     # DEBUG, INFO, WARNING, ERROR
+  enable_detailed_logging: true          # Enable verbose position logging

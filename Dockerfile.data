@@ -1,0 +1,20 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install only what's needed for data download
+RUN pip install --no-cache-dir \
+    v20 \
+    pandas \
+    python-dotenv \
+    pyyaml
+
+# Copy scripts and env
+COPY scripts/download_oanda_data.py scripts/
+COPY download_gbpjpy_data.py .
+COPY .env .
+
+# Create data directory
+RUN mkdir -p data
+
+CMD ["python", "download_gbpjpy_data.py"]

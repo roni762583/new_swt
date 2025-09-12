@@ -1,0 +1,52 @@
+# Production Live Trading Container for New SWT
+FROM python:3.11-slim as base
+
+# Set environment variables
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
+    DEBIAN_FRONTEND=noninteractive
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for security
+RUN useradd --create-home --shell /bin/bash swt-user && \
+    chown -R swt-user:swt-user /app
+
+# Copy requirements first for better caching
+COPY requirements.txt requirements-live.txt ./
+
+# Install Python dependencies with cache mount
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir -r requirements-live.txt
+
+# Copy application code
+COPY --chown=swt-user:swt-user . .
+
+# Install package in editable mode
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -e .
+
+# Create necessary directories
+RUN mkdir -p /app/logs /app/cache && \
+    chown -R swt-user:swt-user /app/logs /app/cache
+
+# Switch to non-root user
+USER swt-user
+
+# Expose ports for monitoring and dashboard
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Default command
+CMD ["python3", "live_trading_main.py", "--config", "config/live_trading.yaml"]

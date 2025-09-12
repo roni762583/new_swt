@@ -1,0 +1,25 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements with REAL Episode 13475 fixes
+COPY requirements-episode13475-fixed.txt .
+RUN pip install --no-cache-dir -r requirements-episode13475-fixed.txt
+
+# Copy the REAL Episode 13475 system
+COPY . .
+
+# Expose port for dashboard
+EXPOSE 8082
+
+# Environment variables
+ENV PYTHONPATH="/app"
+ENV LOG_LEVEL="INFO"
+
+# Start REAL Episode 13475 live trading
+CMD ["python3", "live_trading_episode13475_real.py", "--config", "config/live.yaml", "--checkpoint", "checkpoints/episode_13475.pth"]

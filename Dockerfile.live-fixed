@@ -1,0 +1,45 @@
+# Episode 13475 Live Trading - Numpy Conflicts Resolved
+FROM python:3.11-slim
+
+# Environment variables
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
+    DEBIAN_FRONTEND=noninteractive
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements with fixed numpy versions
+COPY requirements-live-fixed.txt ./
+COPY pyproject.toml setup.py ./
+
+# Install Python dependencies (fixed versions)
+RUN pip install --no-cache-dir -r requirements-live-fixed.txt
+
+# Copy application code
+COPY . .
+
+# Install package in editable mode
+RUN pip install -e .
+
+# Create directories for live trading
+RUN mkdir -p /app/logs /app/sessions /app/cache /app/checkpoints /app/config
+
+# Health check script
+RUN echo '#!/bin/bash\nps aux | grep -v grep | grep live_trading_episode_13475.py > /dev/null || exit 1' > /app/health_check.sh && \
+    chmod +x /app/health_check.sh
+
+# Expose monitoring port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD /app/health_check.sh
+
+# Run Episode 13475 live trading agent
+CMD ["python3", "live_trading_episode_13475.py", "--config", "config/live.yaml"]

@@ -1,0 +1,32 @@
+# Core dependencies - pinned versions for reproducibility  
+numpy==1.24.3
+torch==2.0.1
+scipy==1.10.1
+pandas==2.0.3
+h5py==3.9.0
+
+# Configuration and validation
+pydantic==2.3.0
+pyyaml==6.0.1
+python-dotenv==1.0.0
+
+# Async and networking  
+aiohttp==3.8.5
+asyncio-throttle==1.0.2
+
+# Trading APIs - using official OANDA v20 library only
+# oandapyV20==0.6.3  # REMOVED - only using official v20 library installed separately
+
+# Utilities
+click==8.1.7
+rich==13.5.2
+python-dateutil==2.8.2
+
+# Monitoring and logging
+prometheus-client==0.17.1
+structlog==23.1.0
+
+# Optional performance (install if available)
+# PyWavelets==1.4.1
+# kymatio==0.3.0
+numba==0.57.1

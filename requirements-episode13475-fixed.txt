@@ -1,0 +1,47 @@
+# Episode 13475 Requirements - Real Numpy Compatibility Fix
+# This resolves the numpy._core vs numba conflict properly
+
+# Core Python packages
+numpy==1.26.4
+python-dateutil>=2.8.0,<3.0.0
+PyYAML>=6.0
+
+# PyTorch ecosystem (versions that support numpy 1.26.4)
+torch==2.3.0
+torchvision==0.18.0
+
+# Remove numba dependency entirely (not needed for Episode 13475)
+# scipy>=1.10.0  # Remove if it pulls in numba
+
+# Data processing (compatible versions)
+pandas>=1.5.0,<2.2.0
+
+# Async and networking
+aiohttp>=3.8.0,<4.0.0
+asyncio-throttle>=1.0.0
+
+# Data validation
+pydantic>=2.0.0,<3.0.0
+
+# Configuration
+click>=8.0.0
+python-dotenv>=1.0.0
+
+# Memory and process management
+psutil>=5.9.0
+
+# Fast JSON
+orjson>=3.9.0
+
+# Logging and monitoring
+rich>=13.0.0,<14.0.0
+
+# HTTP requests
+requests>=2.28.0
+urllib3>=1.26.0,<2.0.0
+
+# Time handling
+pytz>=2023.3
+
+# Mathematical operations (if needed, compatible version)
+# Note: Avoid scipy if it pulls in numba automatically

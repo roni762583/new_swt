@@ -1,0 +1,45 @@
+# Simple test configuration for Episode 13475 testing
+# Minimal config to match the actual class structure
+
+# Model Configuration  
+model:
+  checkpoint_path: "checkpoints/episode_13475.pth"
+  device: "cpu"
+  
+# Feature Configuration
+features:
+  wst:
+    J: 2
+    Q: 6
+    mode: 'symmetric'
+    
+  position:
+    enabled: true
+    dimensions: 9
+    
+  market:
+    enabled: true
+    lookback_periods: 128
+    
+# Process Limits
+process_limits:
+  max_memory_mb: 4096.0
+  max_cpu_percent: 80.0
+  max_runtime_hours: 24.0
+  max_episodes: 20000
+  max_checkpoints: 10
+  checkpoint_cleanup_interval_hours: 1.0
+  heartbeat_interval_seconds: 60.0
+  enable_external_monitoring: true
+
+# Trading Configuration (basic)
+trading:
+  instrument: "GBP_JPY"
+  environment: "test"
+  
+# MCTS Configuration  
+mcts:
+  num_simulations: 15
+  c_puct: 1.25
+  root_dirichlet_alpha: 0.3
+  root_exploration_fraction: 0.25
