@@ -162,6 +162,10 @@ class SWTOandaDownloader:
                 if last_time.tzinfo is None:
                     last_time = last_time.replace(tzinfo=timezone.utc)
                 
+                # Ensure current_start is also timezone-aware
+                if current_start.tzinfo is None:
+                    current_start = current_start.replace(tzinfo=timezone.utc)
+                    
                 current_start = last_time + timedelta(minutes=1)
                 
                 # Safety check - prevent infinite loops

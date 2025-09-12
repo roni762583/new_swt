@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  swt-validation:
+    build:
+      context: .
+      dockerfile: Dockerfile.validation
+    image: swt-validation:latest
+    container_name: swt-validation
+    environment:
+      - PYTHONPATH=/app
+      - DOCKER_BUILDKIT=1
+    volumes:
+      # Mount the entire project directory
+      - .:/app
+      # Mount data directory for persistence
+      - ./data:/app/data
+      # Mount validation results directory
+      - ./validation_results:/app/validation_results
+      # Mount checkpoints directory
+      - ./checkpoints:/app/checkpoints
+      # Mount .env file
+      - ./.env:/app/.env:ro
+      # Mount pip cache for PyTorch and other packages
+      - ~/.cache/pip:/root/.cache/pip
+    working_dir: /app
+    command: bash
+    stdin_open: true
+    tty: true

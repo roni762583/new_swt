@@ -28,7 +28,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from swt_core.config_manager import ConfigManager
 from swt_features.feature_processor import FeatureProcessor
-from swt_inference.inference_engine import InferenceEngine
+# InferenceEngine not needed - using networks directly
 from swt_inference.checkpoint_loader import CheckpointLoader
 from swt_environments.swt_forex_env import SWTForexEnvironment, SWTAction
 
@@ -131,10 +131,11 @@ class MonteCarloCAR25Validator:
     """
     
     def __init__(self, config: CAR25Config):
-        self.config = config
+        self.config = config  # CAR25 validation config
+        self.swt_config = None  # SWT system config (loaded from checkpoint)
         self.test_data = None
         self.checkpoint_path = None
-        self.inference_engine = None
+        self.networks = None
         self.feature_processor = None
         self.results_cache = {}
         
@@ -150,21 +151,54 @@ class MonteCarloCAR25Validator:
         config_manager = ConfigManager()
         config = config_manager.load_config(strict_validation=False)  # Allow non-Episode 13475
         
+        # Add agent_system attribute for checkpoint loader compatibility
+        from swt_core.types import AgentType
+        config.agent_system = AgentType.STOCHASTIC_MUZERO
+        
         # Initialize components
-        self.feature_processor = FeatureProcessor(config.feature_config)
+        self.feature_processor = FeatureProcessor(config)
         
         # Load checkpoint
         loader = CheckpointLoader(config)
         checkpoint_data = loader.load_checkpoint(checkpoint_path)
         
-        # Initialize inference engine
-        self.inference_engine = InferenceEngine(
-            config=config,
-            networks=checkpoint_data['networks'],
-            device=checkpoint_data['device']
-        )
+        # Store networks directly from checkpoint (it's a single network object)
+        self.networks = checkpoint_data['networks']
+        self.checkpoint_info = checkpoint_data.get('checkpoint_info', {})
+        
+        # Store SWT config for later use
+        self.swt_config = config
         
         logger.info(f"✅ Checkpoint loaded successfully")
+        
+    def run_inference(self, market_features: np.ndarray, position_features: np.ndarray) -> Tuple[int, float]:
+        """Run inference using loaded networks"""
+        with torch.no_grad():
+            # Convert to tensors
+            market_tensor = torch.FloatTensor(market_features).unsqueeze(0)
+            position_tensor = torch.FloatTensor(position_features).unsqueeze(0)
+            
+            # Get initial hidden state from representation network (only needs market features)
+            hidden_state = self.networks.representation_network(market_tensor)
+            
+            # Generate latent variable for stochastic network
+            latent_z = self.networks.chance_encoder(hidden_state)
+            
+            # Combine hidden state with latent for policy/value networks
+            combined = torch.cat([hidden_state, latent_z], dim=-1)
+            
+            # Get policy and value
+            policy_logits = self.networks.policy_network(hidden_state, latent_z)
+            value = self.networks.value_network(hidden_state, latent_z)
+            
+            # Get action probabilities
+            action_probs = torch.softmax(policy_logits, dim=-1).squeeze().numpy()
+            
+            # Select action (argmax for deterministic)
+            action = int(np.argmax(action_probs))
+            confidence = float(action_probs[action])
+            
+            return action, confidence
         
     def load_test_data(self, data_path: str) -> None:
         """Load and prepare test data"""
@@ -176,8 +210,12 @@ class MonteCarloCAR25Validator:
             
         self.test_data = pd.read_csv(data_path)
         
-        # Ensure required columns
-        required_cols = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+        # Handle both 'time' and 'timestamp' columns
+        if 'time' in self.test_data.columns and 'timestamp' not in self.test_data.columns:
+            self.test_data['timestamp'] = self.test_data['time']
+        
+        # Ensure required columns (volume is optional)
+        required_cols = ['timestamp', 'open', 'high', 'low', 'close']
         missing_cols = set(required_cols) - set(self.test_data.columns)
         if missing_cols:
             raise ValueError(f"Missing required columns: {missing_cols}")
@@ -266,21 +304,40 @@ class MonteCarloCAR25Validator:
         trades = []
         current_position = None
         
-        # Create environment
+        # Create environment with correct parameters
         env = SWTForexEnvironment(
-            data=data,
-            initial_balance=self.config.initial_capital,
-            leverage=100,
-            spread_pips=self.config.spread_cost_pips
+            session_data=data,  # Pass data as session_data
+            config_dict={
+                'spread_pips': self.config.spread_cost_pips,
+                'price_series_length': 256,
+                'reward': {
+                    'type': 'pure_pips',
+                    'drawdown_penalty': 0.05,
+                    'profit_protection': True,
+                    'min_protected_reward': 0.01
+                }
+            }
         )
         
-        obs = env.reset()
+        obs, info = env.reset()  # reset returns tuple (obs, info)
         done = False
         
         while not done:
-            # Get action from inference engine
-            action, confidence = self.inference_engine.run_inference(
-                market_features=obs['market_features'],
+            # Process market prices through WST to get 128-dim features
+            # The environment gives us 256 prices, we need to process them
+            market_prices = obs['market_prices']
+            
+            # Process through feature processor to get WST features
+            # Create a dummy state dict for the feature processor
+            state_dict = {
+                'market_prices': market_prices,
+                'position_features': obs['position_features']
+            }
+            processed_features = self.feature_processor.extract_features(state_dict)
+            
+            # Get action from networks using WST features
+            action, confidence = self.run_inference(
+                market_features=processed_features['market_features'],  # 128-dim WST features
                 position_features=obs['position_features']
             )
             
@@ -418,6 +475,17 @@ class MonteCarloCAR25Validator:
         
         # Extract annualized returns
         returns = [r.annualized_return for r in results]
+        
+        # Handle empty results
+        if not returns or len(returns) == 0:
+            return {
+                'car25': 0.0,
+                'car50': 0.0,
+                'car75': 0.0,
+                'quality_score': 0.0,
+                'passes_thresholds': False,
+                'aggregate_metrics': {}
+            }
         
         # Calculate percentiles
         car25 = np.percentile(returns, 25)  # 25th percentile (conservative)

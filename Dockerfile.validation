@@ -1,0 +1,54 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies with cache mount
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy only requirements first for better layer caching
+COPY requirements*.txt ./
+
+# Install Python dependencies with pip cache mount
+# This ensures pip packages are cached between builds
+# Install PyTorch CPU first to avoid conflicts
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    pip install --no-cache-dir torch==2.0.1+cpu -f https://download.pytorch.org/whl/torch_stable.html
+
+# Install core dependencies with proper versions
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    pip install --no-cache-dir \
+    numpy==1.24.3 \
+    scipy==1.10.1 \
+    pandas==2.0.3 \
+    numba==0.57.1 \
+    matplotlib \
+    seaborn \
+    tqdm \
+    pyyaml==6.0.1 \
+    h5py==3.9.0 \
+    pydantic==2.3.0 \
+    python-dotenv==1.0.0 \
+    click==8.1.7 \
+    rich==13.5.2 \
+    python-dateutil==2.8.2 \
+    structlog==23.1.0 \
+    aiohttp==3.8.5 \
+    v20
+
+# Copy entire project (this layer changes most often, so it's last)
+COPY . .
+
+# Create necessary directories
+RUN mkdir -p /app/data /app/validation_results /app/checkpoints
+
+# Set Python path
+ENV PYTHONPATH=/app
+ENV DOCKER_BUILDKIT=1
+
+CMD ["bash"]
