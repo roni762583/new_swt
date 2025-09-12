@@ -15,7 +15,7 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent / "experimental_research"))
 
-from experimental_research.swt_training.swt_trainer import SWTTrainer, SWTTrainingConfig
+from experimental_research.swt_training.swt_trainer import SWTStochasticMuZeroTrainer as SWTTrainer, SWTTrainingConfig
 
 # Setup logging
 logging.basicConfig(

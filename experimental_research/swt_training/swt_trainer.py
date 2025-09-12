@@ -36,6 +36,7 @@ from swt_core.swt_checkpoint_manager import create_swt_checkpoint_manager, SWTCh
 from swt_core.swt_curriculum_learning import create_swt_curriculum_learning, CurriculumConfig, CurriculumStage
 from swt_core.swt_quality_buffer import SWTQualityExperienceBuffer, SWTExperience
 from swt_core.swt_session_manager import create_swt_session_manager, SWTSessionManager, SWTSessionConfig
+from swt_core.simple_csv_session_manager import SimpleCsvSessionManager
 # Optional visualization module - may not be available in minimal training containers
 try:
     from swt_visualizations.checkpoint_trade_visualizer import create_trade_chart
@@ -366,8 +367,7 @@ class SWTStochasticMuZeroTrainer:
             logger.info("🗑️ Cleared experience buffer")
             
             # Initialize session manager for session-based training
-            from swt_core.swt_session_manager import SWTSessionManager
-            self.session_manager = SWTSessionManager()
+            # This will be properly initialized in _initialize_session_manager()
             logger.info("📊 Using session-based training mode")
             
             # Reset episode counter for fresh exploration schedule
@@ -768,16 +768,22 @@ class SWTStochasticMuZeroTrainer:
         
         # Create session manager configuration
         session_config = SWTSessionConfig(
-            session_hours=24.0,  # 24-hour sessions (1440 M1 bars)
+            session_hours=6.0,  # 6-hour sessions (360 M1 bars) - as per config
             walk_forward_hours=1.0,  # 1-hour walk forward (60 M1 bars)
             max_gap_minutes=10,
-            min_session_bars=1200,  # Minimum 20 hours of data
+            min_session_bars=300,  # Minimum 5 hours of data
             train_ratio=0.80,
-            test_ratio=0.20
+            validation_ratio=0.10,
+            test_ratio=0.10
         )
         
-        # Initialize session manager with data path
-        self.session_manager = SWTSessionManager(db_path=self.config.data_path, config=session_config)
+        # Initialize session manager - use SimpleCsvSessionManager for CSV files
+        from pathlib import Path
+        data_path = Path(self.config.data_path)
+        if data_path.suffix == '.csv':
+            self.session_manager = SimpleCsvSessionManager(data_path=str(data_path), config=session_config)
+        else:
+            self.session_manager = SWTSessionManager(db_path=self.config.data_path, config=session_config)
         
         # Store environment config template using reward profiles
         if hasattr(self.config, 'reward_profiles') and self.config.reward_profiles and self.config.reward_type in self.config.reward_profiles:

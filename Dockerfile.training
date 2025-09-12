@@ -29,9 +29,9 @@ RUN pip install --no-cache-dir -r requirements-csv-minimal.txt
 # Copy application code
 COPY --chown=swt-user:swt-user . .
 
-# Install package in editable mode
+# Install package in editable mode WITHOUT dependencies to prevent version conflicts
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -e .
+    pip install --no-deps -e .
 
 # Create necessary directories
 RUN mkdir -p /app/checkpoints /app/logs /app/cache && \

@@ -15,7 +15,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional, Any, Literal
 from dataclasses import dataclass
-import duckdb
+# duckdb removed - using CSV only
 
 logger = logging.getLogger(__name__)
 
