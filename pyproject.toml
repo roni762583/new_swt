@@ -25,10 +25,11 @@ classifiers = [
 ]
 
 dependencies = [
-    # Core ML and numerical computing
-    "numpy>=1.26.0,<2.0.0",
+    # Core ML and numerical computing - NumPy constrained for Numba compatibility
+    "numpy>=1.21.0,<1.25.0",  # Compatible with numba 0.57.1
     "torch>=2.0.0,<2.3.0",
     "scipy>=1.7.0,<2.0.0",
+    "numba>=0.57.0,<0.58.0",  # Required for WST performance
     
     # Data handling
     "pandas>=1.3.0,<3.0.0",
@@ -82,7 +83,6 @@ dev = [
 
 performance = [
     # Optional performance enhancements
-    "numba>=0.57.0,<1.0.0",
     "cython>=3.0.0,<4.0.0",
     
     # Wavelet transforms (if available)

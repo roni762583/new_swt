@@ -6,16 +6,44 @@ This is a **COMPLETE PRODUCTION-READY REIMPLEMENTATION** of the SWT (Stochastic 
 
 **Core Principle**: Single Source of Truth - identical code for training and live trading.
 
-## 🚨 **CURRENT STATUS: 100% COMPLETE - MIGRATED TO GITHUB**
+## 🚨 **CURRENT STATUS: PRODUCTION READY WITH DEPENDENCY CLEANUP**
 
-### **📦 Repository Migration (September 12, 2025)**
+### **📦 Production System Update (September 12, 2025)**
 - **GitHub Repository**: https://github.com/roni762583/new_swt (Private)
 - **Large Files**: Managed locally with snapshot system (no LFS costs)
-- **Checkpoint**: Episode 13475 (439MB) stored in `new_swt_large_files/`
-- **Data**: GBPJPY synthetic data created for testing
-- **Scripts**: `create_snapshot.sh` for versioned archives, `restore_large_files.sh` for local work
+- **Checkpoint**: Episode 13475 (439MB) available for deployment
+- **Training Data**: 3.5-year GBPJPY M1 dataset (1.88M bars) ready for training
+- **Dependencies**: Cleaned minimal requirements with NumPy/Numba compatibility
 
-### **✅ CODEBASE AUDIT RESULTS (September 12, 2025)**
+### **✅ RECENT CRITICAL FIXES (September 12, 2025)**
+
+#### **🔧 Dependency Management Overhaul**
+- **NumPy/Numba Compatibility**: Fixed version constraints (numpy<1.25.0, numba==0.57.1)
+- **DuckDB Removal**: Eliminated legacy database dependency (CSV-only training)
+- **Minimal Requirements**: Created streamlined `requirements-csv-minimal.txt`
+- **Docker BuildKit**: Configured for efficient caching and build optimization
+- **Import Safety**: Made visualization modules optional for training containers
+
+#### **💿 137-Feature Architecture Verification**
+- **Market Encoder**: Fixed AMDDP1/AMDDP5 reward inconsistency (line 213)
+- **Position Features**: Verified 9-dimension calculation with arctan scaling
+- **WST Features**: Confirmed 128-dimension wavelet scattering transform output
+- **Feature Fusion**: Validated 128 market + 9 position → 128 final dimensions
+
+#### **🏗️ Container Infrastructure**
+- **Training Container**: Optimized Dockerfile with minimal dependencies
+- **BuildKit Cache**: Docker layer caching for faster subsequent builds
+- **Numba Acceleration**: Verified JIT compilation works in containerized environment
+- **Resource Limits**: Configured memory and CPU constraints for production
+
+#### **🎯 Current Training Status**
+- **Architecture**: 137 features (128 WST market + 9 position) → 128 fused dimensions
+- **Data**: GBPJPY_M1_3.5years_20250912.csv (ready for training)
+- **Configuration**: Episode 13475 compatible with AMDDP1 reward system
+- **Dependencies**: All requirements validated in training container
+- **Next Step**: Ready to start fresh training or continue from Episode 13475
+
+### **✅ CODEBASE AUDIT RESULTS (Updated September 12, 2025)**
 - **90+ Python files** - All production-ready, no stubs or placeholders
 - **Zero external dependencies** - Completely self-contained within new_swt/
 - **Episode 13475 full support** - 59 files with specialized optimizations
@@ -1209,9 +1237,22 @@ The SWT system is now complete with comprehensive production infrastructure:
 - Migration tools - `scripts/migration_tools.py` (system transition helpers)
 - Integration tests - Production readiness validation
 
-### **🎯 Ready for Live Trading**
+### **🎯 Training and Production Ready**
 
-**Quick Start:**
+#### **Quick Start Training (Docker):**
+```bash
+# Build training container with optimized dependencies
+export DOCKER_BUILDKIT=1
+docker compose -f docker-compose.training.yml build
+
+# Start fresh training with 137-feature architecture
+docker compose -f docker-compose.training.yml up swt-training
+
+# Monitor training progress
+docker logs -f swt-training
+```
+
+#### **Production Live Trading:**
 ```bash
 # Deploy complete production system
 ./scripts/deploy_production.sh
@@ -1221,4 +1262,11 @@ curl http://localhost:8080/health
 
 # View trading dashboard
 open http://localhost:3000  # Grafana
+```
+
+#### **Dependency Verification:**
+```bash
+# Verify NumPy/Numba compatibility in container
+docker exec swt-training python -c "import numba; print(f'Numba {numba.__version__} ready')"
+docker exec swt-training python -c "import numpy; print(f'NumPy {numpy.__version__} compatible')"
 ```

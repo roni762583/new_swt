@@ -36,7 +36,13 @@ from swt_core.swt_checkpoint_manager import create_swt_checkpoint_manager, SWTCh
 from swt_core.swt_curriculum_learning import create_swt_curriculum_learning, CurriculumConfig, CurriculumStage
 from swt_core.swt_quality_buffer import SWTQualityExperienceBuffer, SWTExperience
 from swt_core.swt_session_manager import create_swt_session_manager, SWTSessionManager, SWTSessionConfig
-from swt_visualizations.checkpoint_trade_visualizer import create_trade_chart  # Chart generation
+# Optional visualization module - may not be available in minimal training containers
+try:
+    from swt_visualizations.checkpoint_trade_visualizer import create_trade_chart
+    HAS_VISUALIZATION = True
+except ImportError:
+    create_trade_chart = None
+    HAS_VISUALIZATION = False
 
 logger = logging.getLogger(__name__)
 

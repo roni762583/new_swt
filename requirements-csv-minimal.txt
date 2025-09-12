@@ -1,5 +1,5 @@
 # Minimal requirements for CSV-based SWT training
-# Core ML Pipeline
+# Core ML Pipeline - Exact compatible versions for Numba
 torch==2.0.1
 numpy==1.24.3
 pandas==2.0.3
