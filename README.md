@@ -6,7 +6,14 @@ This is a **COMPLETE PRODUCTION-READY REIMPLEMENTATION** of the SWT (Stochastic 
 
 **Core Principle**: Single Source of Truth - identical code for training and live trading.
 
-## 🚨 **CURRENT STATUS: 100% COMPLETE - PRODUCTION READY**
+## 🚨 **CURRENT STATUS: 100% COMPLETE - MIGRATED TO GITHUB**
+
+### **📦 Repository Migration (September 12, 2025)**
+- **GitHub Repository**: https://github.com/roni762583/new_swt (Private)
+- **Large Files**: Managed locally with snapshot system (no LFS costs)
+- **Checkpoint**: Episode 13475 (439MB) stored in `new_swt_large_files/`
+- **Data**: GBPJPY synthetic data created for testing
+- **Scripts**: `create_snapshot.sh` for versioned archives, `restore_large_files.sh` for local work
 
 ### **✅ CODEBASE AUDIT RESULTS (September 12, 2025)**
 - **90+ Python files** - All production-ready, no stubs or placeholders
