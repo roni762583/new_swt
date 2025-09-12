@@ -1,0 +1,26 @@
+# Minimal requirements for CSV-based SWT training
+# Core ML Pipeline
+torch==2.0.1
+numpy==1.24.3
+pandas==2.0.3
+scipy==1.10.1
+numba==0.57.1
+
+# Configuration & Validation
+pydantic==2.3.0
+pyyaml==6.0.1
+python-dotenv==1.0.0
+
+# Utilities
+python-dateutil==2.8.2
+click==8.1.7
+rich==13.5.2
+structlog==23.1.0
+
+# Training specific
+tqdm>=4.65.0
+tensorboard>=2.12.0
+
+# Optional WST enhancements (fallback implementations exist)
+# pytorch-wavelets==1.3.0
+# kymatio>=0.3.0

@@ -20,13 +20,11 @@ RUN apt-get update && apt-get install -y \
 RUN useradd --create-home --shell /bin/bash swt-user && \
     chown -R swt-user:swt-user /app
 
-# Copy requirements first for better caching
-COPY requirements.txt requirements-training.txt ./
+# Copy minimal requirements for CSV training
+COPY requirements-csv-minimal.txt ./
 
-# Install Python dependencies with cache mount
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir -r requirements-training.txt
+# Install minimal Python dependencies - exact versions for production
+RUN pip install --no-cache-dir -r requirements-csv-minimal.txt
 
 # Copy application code
 COPY --chown=swt-user:swt-user . .
