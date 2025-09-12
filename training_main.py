@@ -23,7 +23,7 @@ from swt_core.exceptions import ConfigurationError, CheckpointError
 from swt_features.feature_processor import FeatureProcessor
 from swt_environments.swt_forex_env import SWTForexEnvironment, SWTAction
 from swt_models.swt_stochastic_networks import SWTStochasticMuZeroNetwork
-from swt_core.swt_mcts import SWTMCTS
+from swt_core.swt_mcts import SWTStochasticMCTS, SWTMCTSConfig
 from swt_validation.automated_validator import AutomatedValidator, ValidationTrigger, create_validation_callback
 from swt_validation.composite_scorer import create_metrics_from_dict
 import torch
@@ -185,6 +185,15 @@ class SWTTrainingOrchestrator(ManagedProcess):
                 weight_decay=1e-4
             )
             
+            # Initialize MCTS
+            mcts_config = SWTMCTSConfig(
+                num_simulations=15,  # Episode 13475 simulations
+                c_puct=1.25,
+                discount=0.997,
+                temperature=1.0
+            )
+            self.mcts = SWTStochasticMCTS(self.network, mcts_config)
+            
             logger.info("🧠 Training engine initialized with SWT components")
             
             # Set up monitoring endpoints
@@ -269,42 +278,34 @@ class SWTTrainingOrchestrator(ManagedProcess):
             
             while not done and episode_length < 1440:  # Max 24 hours
                 # Process observation through WST features
-                wst_features = self.feature_processor.process_observation(observation)
+                processed_obs = self.feature_processor.process_observation(observation)
+                wst_features = torch.FloatTensor(processed_obs.combined_features).unsqueeze(0)
                 
-                # Initialize MCTS for this step
-                root = SWTMCTS(
-                    observation=wst_features,
-                    action_space_size=self.environment.action_space.n,
-                    network=self.network,
-                    c_puct=c_puct,
-                    discount=discount
+                # Run MCTS to get action probabilities
+                action_probs, search_path, root_value = self.mcts.run(
+                    root_observation=wst_features,
+                    add_exploration_noise=True,
+                    override_temperature=temperature if temperature > 0 else None
                 )
                 
-                # Run MCTS simulations
-                for _ in range(num_simulations):
-                    root.run_simulation()
-                
-                # Select action based on visit counts
-                visit_counts = root.get_visit_counts()
+                # Select action based on probabilities
                 if temperature > 0:
-                    # Sample action according to visit counts
-                    action_probs = visit_counts ** (1 / temperature)
-                    action_probs = action_probs / action_probs.sum()
+                    # Sample action according to probabilities
                     action = np.random.choice(len(action_probs), p=action_probs)
                 else:
-                    # Select most visited action
-                    action = np.argmax(visit_counts)
+                    # Select most probable action
+                    action = np.argmax(action_probs)
                 
                 # Execute action in environment
                 next_observation, reward, done, info = self.environment.step(action)
                 
                 # Store transition
                 trajectory.append({
-                    'observation': wst_features,
+                    'observation': processed_obs.combined_features,
                     'action': action,
                     'reward': reward,
-                    'value': root.get_value(),
-                    'policy': visit_counts / visit_counts.sum()
+                    'value': root_value,
+                    'policy': action_probs
                 })
                 
                 # Update metrics

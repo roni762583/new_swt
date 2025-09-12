@@ -581,9 +581,47 @@ class SWTStochasticMuZeroNetwork(nn.Module):
     Integrates all 5 networks for WST-enhanced stochastic planning
     """
     
-    def __init__(self, config: SWTStochasticMuZeroConfig):
+    def __init__(self, config: Union[SWTStochasticMuZeroConfig, Dict, None] = None, 
+                 observation_shape: Optional[Tuple] = None, 
+                 action_space_size: Optional[int] = None,
+                 **kwargs):
+        """
+        Initialize SWT Stochastic MuZero Network
+        
+        Args:
+            config: SWTStochasticMuZeroConfig instance or dict
+            observation_shape: Legacy compatibility - (137,) expected for 128+9 features
+            action_space_size: Number of actions (4 for SWT: Hold, Buy, Sell, Close)
+            **kwargs: Additional parameters for backward compatibility
+        """
         super().__init__()
+        
+        # Handle legacy constructor from training_main.py
+        if config is None and observation_shape is not None:
+            # Legacy constructor compatibility
+            if observation_shape == (137,):
+                # Correct 137-feature configuration
+                config = SWTStochasticMuZeroConfig(
+                    market_wst_features=128,
+                    position_features=9,
+                    total_input_dim=137,
+                    final_input_dim=128,
+                    num_actions=action_space_size or 4,
+                    **kwargs
+                )
+                logger.info("🔄 Using legacy constructor compatibility for 137-feature network")
+            else:
+                raise ValueError(f"Unsupported observation_shape: {observation_shape}. Expected (137,) for 128 market + 9 position features")
+        elif isinstance(config, dict):
+            config = SWTStochasticMuZeroConfig(**config)
+        elif config is None:
+            config = SWTStochasticMuZeroConfig()
+            
         self.config = config
+        
+        # Validate configuration for Episode 13475 compatibility
+        if config.total_input_dim != 137:
+            logger.warning(f"⚠️ Expected 137 input features for Episode 13475, got {config.total_input_dim}")
         
         # Initialize all networks
         self.representation_network = SWTRepresentationNetwork(config)
@@ -605,6 +643,7 @@ class SWTStochasticMuZeroNetwork(nn.Module):
         logger.info(f"🧠 Complete SWT Stochastic MuZero Network initialized")
         logger.info(f"   Networks: Repr, Dynamics, Policy, Value, Chance")
         logger.info(f"   Hidden dim: {config.hidden_dim}, Latent dim: {config.latent_z_dim}")
+        logger.info(f"   Input features: {config.total_input_dim} (market: {config.market_wst_features}, position: {config.position_features})")
         
     def initial_inference(self, fused_observation: torch.Tensor) -> Dict[str, torch.Tensor]:
         """

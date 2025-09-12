@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  swt-training:
+    build:
+      context: .
+      dockerfile: Dockerfile.training
+      cache_from:
+        - python:3.11-slim
+      args:
+        BUILDKIT_INLINE_CACHE: 1
+    container_name: swt-training-137
+    volumes:
+      - ./data:/app/data:ro          # Read-only data mount
+      - ./checkpoints:/app/checkpoints
+      - ./logs:/app/logs
+      - ./precomputed_wst:/app/precomputed_wst
+    environment:
+      - PYTHONPATH=/app:/app/experimental_research
+      - CUDA_VISIBLE_DEVICES=""     # CPU-only for now
+      - OMP_NUM_THREADS=4
+      - TRAINING_MODE=production
+    working_dir: /app
+    command: python start_training.py
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '8.0'
+          memory: 16G
+        reservations:
+          cpus: '4.0'
+          memory: 8G
+    healthcheck:
+      test: ["CMD", "python", "-c", "import torch; print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - swt-network
+
+  swt-monitor:
+    image: python:3.11-slim
+    container_name: swt-monitor
+    volumes:
+      - ./checkpoints:/app/checkpoints
+      - ./logs:/app/logs
+    environment:
+      - PYTHONPATH=/app
+    working_dir: /app
+    command: >
+      sh -c "while true; do
+        echo \"[$(date)] Training monitor active\";
+        sleep 60;
+      done"
+    restart: unless-stopped
+    depends_on:
+      - swt-training
+    networks:
+      - swt-network
+
+networks:
+  swt-network:
+    driver: bridge

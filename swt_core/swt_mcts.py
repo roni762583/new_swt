@@ -422,6 +422,10 @@ def test_swt_mcts():
     return mcts
 
 
+# Compatibility alias for training_main.py
+SWTMCTS = SWTStochasticMCTS
+
+
 if __name__ == "__main__":
     # Configure logging
     logging.basicConfig(level=logging.INFO)

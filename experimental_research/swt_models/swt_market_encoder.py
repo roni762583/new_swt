@@ -191,7 +191,7 @@ class SWTPositionFeatureExtractor:
         3. position_efficiency - Performance efficiency metric [0, 1]
         4. pips_from_peak - Drawdown from best position point (arctan scaled)
         5. max_drawdown_pips - Maximum drawdown in pips (arctan scaled)
-        6. amddp10_reward - Actual AMDDP reward value (arctan scaled)
+        6. amddp1_reward - Actual AMDDP1 reward value (arctan scaled)
         7. is_long - Long position flag (binary)
         8. is_short - Short position flag (binary)  
         9. has_position - Position active flag (binary)
@@ -210,7 +210,7 @@ class SWTPositionFeatureExtractor:
         features[2] = position_info.get('position_efficiency', 0.0)  # Already in [0, 1]
         features[3] = arctan_scale(position_info.get('pips_from_peak', 0.0), 150)
         features[4] = arctan_scale(position_info.get('max_drawdown_pips', 0.0), 150)
-        features[5] = arctan_scale(position_info.get('amddp5_reward', 0.0), 150)  # AMDDP5 for SWT
+        features[5] = arctan_scale(position_info.get('amddp1_reward', 0.0), 150)  # AMDDP1 for SWT
         
         # Features 6-8: Binary flags (exact V7/V8 logic)
         direction = position_info.get('direction', 0)
