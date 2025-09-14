@@ -522,7 +522,17 @@ class SWTStochasticMuZeroTrainer:
         """Initialize all neural network models"""
         
         # Market encoder (WST + position fusion)
-        self.market_encoder = SWTMarketStateEncoder(config_dict=self.config.market_encoder_config)
+        # Check if precomputed WST should be used
+        precomputed_wst_path = getattr(self.config, 'precomputed_wst_path', None)
+        if precomputed_wst_path:
+            logger.info(f"🗃️ Using precomputed WST features from: {precomputed_wst_path}")
+        else:
+            logger.info(f"🔄 Using on-the-fly WST computation")
+            
+        self.market_encoder = SWTMarketStateEncoder(
+            config_dict=self.config.market_encoder_config,
+            precomputed_wst_path=precomputed_wst_path
+        )
         self.market_encoder = self.market_encoder.to(self.device)
         
         # Stochastic MuZero network

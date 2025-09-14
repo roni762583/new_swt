@@ -8,11 +8,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from typing import Tuple, Dict, Any
+from typing import Tuple, Dict, Any, Optional
 import logging
 import json
+from pathlib import Path
 
 from swt_models.swt_wavelet_scatter import EnhancedWSTCNN
+from swt_models.swt_precomputed_loader import PrecomputedWSTLoader
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +27,7 @@ class SWTMarketStateEncoder(nn.Module):
     3. Final fusion layer (137 → 128 for MuZero compatibility)
     """
     
-    def __init__(self, config_path: str = None, config_dict: dict = None):
+    def __init__(self, config_path: str = None, config_dict: dict = None, precomputed_wst_path: Optional[str] = None):
         super().__init__()
         
         # Load configuration
@@ -41,11 +43,38 @@ class SWTMarketStateEncoder(nn.Module):
         self.wst_config = self.config['wst']
         self.fusion_config = self.config['fusion']
         
-        # WST market feature extractor
-        self.market_encoder = EnhancedWSTCNN(
-            wst_config=self.wst_config,
-            output_dim=self.wst_config['market_output_dim']
-        )
+        # Initialize WST feature extraction
+        self.use_precomputed_wst = precomputed_wst_path is not None
+        self.precomputed_loader = None
+        
+        if self.use_precomputed_wst:
+            # Use precomputed WST features from HDF5 file
+            self.precomputed_loader = PrecomputedWSTLoader(
+                hdf5_path=precomputed_wst_path,
+                cache_size=self.config.get('wst_cache_size', 10000)
+            )
+            
+            # Create a simple projection layer from precomputed features to market output dim
+            precomputed_dim = self.precomputed_loader.wst_dim  # 16 from precomputation
+            self.wst_projection = nn.Sequential(
+                nn.Linear(precomputed_dim, 64),
+                nn.ReLU(),
+                nn.Dropout(self.wst_config.get('dropout_p', 0.1)),
+                nn.Linear(64, self.wst_config['market_output_dim']),
+                nn.ReLU(),
+                nn.LayerNorm(self.wst_config['market_output_dim'])
+            )
+            
+            logger.info(f"🗃️ Using precomputed WST features ({precomputed_dim}D → {self.wst_config['market_output_dim']}D)")
+            
+        else:
+            # Use on-the-fly WST computation (original behavior)
+            self.market_encoder = EnhancedWSTCNN(
+                wst_config=self.wst_config,
+                output_dim=self.wst_config['market_output_dim']
+            )
+            
+            logger.info(f"🔄 Using on-the-fly WST computation")
         
         # Position feature processing
         position_dim = self.fusion_config['position_features']
@@ -100,23 +129,52 @@ class SWTMarketStateEncoder(nn.Module):
             }
         }
     
-    def forward(self, market_data: torch.Tensor, position_data: torch.Tensor) -> torch.Tensor:
+    def forward(self, market_data, position_data: torch.Tensor, data_indices: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Forward pass through complete market state encoder
         
         Args:
-            market_data: Price series (B, 1, 256) or (B, 256)
+            market_data: Price series (B, 1, 256) or (B, 256) for on-the-fly WST,
+                        OR None when using precomputed WST (data_indices required)
             position_data: Position features (B, 9)
+            data_indices: Data indices for precomputed WST lookup (B,) - only used if precomputed
             
         Returns:
             Combined state representation (B, 128)
         """
-        # Ensure market data has correct shape
-        if market_data.dim() == 2:
-            market_data = market_data.unsqueeze(1)  # (B, 256) → (B, 1, 256)
         
-        # Extract market features using WST
-        market_features = self.market_encoder(market_data)  # (B, 128)
+        if self.use_precomputed_wst:
+            # Use precomputed WST features
+            if data_indices is None:
+                raise ValueError("data_indices required when using precomputed WST features")
+            
+            batch_size = data_indices.shape[0]
+            
+            # Load precomputed WST features for each index in the batch
+            wst_features = []
+            for i in range(batch_size):
+                idx = data_indices[i].item()
+                # Load precomputed WST features for this window
+                wst_feature = self.precomputed_loader.get_single_wst_feature(idx)
+                wst_features.append(wst_feature)
+            
+            # Stack into batch tensor
+            wst_batch = torch.stack(wst_features)  # (B, 16)
+            
+            # Project to market output dimensions
+            market_features = self.wst_projection(wst_batch)  # (B, 128)
+            
+        else:
+            # Use on-the-fly WST computation (original behavior)
+            if market_data is None:
+                raise ValueError("market_data required when using on-the-fly WST computation")
+                
+            # Ensure market data has correct shape
+            if market_data.dim() == 2:
+                market_data = market_data.unsqueeze(1)  # (B, 256) → (B, 1, 256)
+            
+            # Extract market features using WST
+            market_features = self.market_encoder(market_data)  # (B, 128)
         
         # Process position features
         position_features = self.position_encoder(position_data)  # (B, 16)

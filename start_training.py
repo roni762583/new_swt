@@ -66,6 +66,8 @@ def create_training_config():
             "position_feature_dim": 9,   # Position features
             "hidden_dim": 128,           # Final fused dimension
             "dropout_rate": 0.1,
+            # Enable precomputed WST features for faster training
+            "precomputed_wst_path": "precomputed_wst/GBPJPY_WST_3.5years_streaming.h5",
             "wst": {
                 "J": 2,
                 "Q": 6,
@@ -83,7 +85,7 @@ def create_training_config():
         # MuZero network configuration
         "muzero_config": {
             "total_input_dim": 137,      # 128 market + 9 position
-            "final_input_dim": 128,      # After fusion
+            "final_input_dim": 137,      # Direct input to representation network (NO FUSION)
             "hidden_dim": 256,
             "num_actions": 4,
             "support_size": 601,
