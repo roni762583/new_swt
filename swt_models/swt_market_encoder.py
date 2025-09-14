@@ -48,7 +48,7 @@ class SWTMarketStateEncoder(nn.Module):
         )
         
         # Position feature processing
-        position_dim = self.fusion_config['position_features']
+        position_dim = self.fusion_config.get('position_features', self.fusion_config.get('position_dim', 9))
         self.position_encoder = nn.Sequential(
             nn.Linear(position_dim, 32),
             nn.ReLU(),
@@ -62,19 +62,25 @@ class SWTMarketStateEncoder(nn.Module):
         position_processed_dim = 16
         fusion_input_dim = market_dim + position_processed_dim  # 144
         
+        # Get fusion configuration with fallbacks for different naming conventions
+        fusion_hidden = self.fusion_config.get('fusion_hidden_dim', 
+                                               self.fusion_config.get('hidden_dim', 128))
+        fusion_output = self.fusion_config.get('combined_output_dim', 
+                                               self.fusion_config.get('output_dim', 128))
+        
         self.fusion_layers = nn.Sequential(
-            nn.Linear(fusion_input_dim, self.fusion_config['fusion_hidden_dim']),
+            nn.Linear(fusion_input_dim, fusion_hidden),
             nn.ReLU(),
             nn.Dropout(self.wst_config.get('dropout_p', 0.1)),
-            nn.Linear(self.fusion_config['fusion_hidden_dim'], self.fusion_config['combined_output_dim']),
+            nn.Linear(fusion_hidden, fusion_output),
             nn.ReLU(),
-            nn.LayerNorm(self.fusion_config['combined_output_dim'])  # Add layer norm for stability
+            nn.LayerNorm(fusion_output)  # Add layer norm for stability
         )
         
         # Feature dimensions for logging
         self.market_dim = market_dim
         self.position_dim = position_dim
-        self.output_dim = self.fusion_config['combined_output_dim']
+        self.output_dim = fusion_output
         
         logger.info(f"🎯 SWT Market State Encoder initialized")
         logger.info(f"   Market: 256 prices → {self.market_dim} features (WST+CNN)")
