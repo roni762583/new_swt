@@ -212,7 +212,7 @@ class CheckpointLoader:
             from experimental_research.swt_models.swt_stochastic_networks import SWTStochasticMuZeroNetwork, SWTStochasticMuZeroConfig
             
             # Create networks instance with proper config (use actual Episode 13475 dimensions)
-            hidden_dim = 128  # Episode 13475 ACTUAL hidden dimension (from checkpoint analysis)
+            hidden_dim = self.config.model.network.hidden_dim if hasattr(self.config, "model") and hasattr(self.config.model, "network") else 256  # From config hidden dimension (from checkpoint analysis)
             if hasattr(self.config, 'network_config') and hasattr(self.config.network_config, 'hidden_dim'):
                 hidden_dim = self.config.network_config.hidden_dim
                 
@@ -272,7 +272,7 @@ class CheckpointLoader:
             from experimental_research.swt_models.swt_stochastic_networks import SWTStochasticMuZeroNetwork, SWTStochasticMuZeroConfig
             
             # Create enhanced networks instance with experimental features (use actual Episode 13475 dimensions)
-            hidden_dim = 128  # Episode 13475 ACTUAL hidden dimension (from checkpoint analysis)
+            hidden_dim = self.config.model.network.hidden_dim if hasattr(self.config, "model") and hasattr(self.config.model, "network") else 256  # From config hidden dimension (from checkpoint analysis)
             if hasattr(self.config, 'network_config') and hasattr(self.config.network_config, 'hidden_dim'):
                 hidden_dim = self.config.network_config.hidden_dim
                 
@@ -373,11 +373,11 @@ class CheckpointLoader:
             # Test forward pass with dummy data
             with torch.no_grad():
                 # Test representation network (Episode 13475 expects fused state input)
-                dummy_fused_state = torch.randn(1, 128, device=self.device)  # Already fused market+position
+                dummy_fused_state = torch.randn(1, 137, device=self.device)  # Already fused market+position
                 
                 latent = networks.representation_network(dummy_fused_state)
                 
-                expected_hidden_dim = 128  # Episode 13475 ACTUAL dimension (from checkpoint analysis)
+                expected_hidden_dim = self.config.model.network.hidden_dim if hasattr(self.config, "model") and hasattr(self.config.model, "network") else 256  # From config dimension (from checkpoint analysis)
                 if hasattr(self.config, 'network_config') and hasattr(self.config.network_config, 'hidden_dim'):
                     expected_hidden_dim = self.config.network_config.hidden_dim
                     

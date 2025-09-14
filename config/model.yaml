@@ -4,7 +4,7 @@
 # Network Architecture (Episode 13475 compatible)
 network:
   architecture: "standard"               # Episode 13475 used standard architecture
-  hidden_dim: 256                        # VERIFIED: Episode 13475 hidden dimension
+  hidden_dim: 256                        # AUTO-DETECTED from checkpoint
   num_layers: 3                          # VERIFIED: Episode 13475 network depth
   activation: "relu"                     # Standard activation
   dropout: 0.1                           # Standard dropout rate
@@ -13,122 +13,63 @@ network:
   residual_connections: false            # Episode 13475 did not use residuals
   layer_norm: true                       # Layer normalization enabled
   batch_norm: false                      # Batch norm disabled (standard)
-  
-# Individual Network Configurations (Episode 13475 exact)
-networks:
-  # Representation Network (Encoder)
-  representation:
-    input_dims:
-      market_features: 128               # EXACT: WST feature dimension
-      position_features: 9               # CRITICAL: Must be exactly 9D
-    output_dim: 256                      # EXACT: Episode 13475 latent dimension
-    
-    # Episode 13475 verified architecture
-    architecture:
-      market_branch: [128, 256]          # Market feature processing
-      position_branch: [9, 64]           # Position feature processing  
-      fusion_layers: [320, 256]          # Concatenated feature fusion
-      
-  # Policy Network (Episode 13475 exact)
-  policy:
-    input_dim: 256                       # EXACT: Latent state dimension
-    output_dim: 4                        # EXACT: 4 actions (HOLD, BUY, SELL, CLOSE)
-    
-    architecture:
-      hidden_layers: [256, 128, 64]      # VERIFIED: Episode 13475 policy layers
-      output_activation: "softmax"       # Action probability distribution
-      
-  # Value Network (Episode 13475 exact)
-  value:
-    input_dim: 256                       # EXACT: Latent state dimension
-    support_size: 601                    # EXACT: Episode 13475 categorical support
-    support_range: [-300.0, 300.0]      # EXACT: Value range in pips
-    
-    architecture:
-      hidden_layers: [256, 128, 64]      # VERIFIED: Episode 13475 value layers
-      output_activation: "softmax"       # Categorical value distribution
-      
-  # Dynamics Network (World Model) - Episode 13475 exact
-  dynamics:
-    input_dim: 288                       # EXACT: Latent + action (256 + 32)
-    output_dim: 256                      # EXACT: Next state dimension
-    action_embedding_dim: 32             # EXACT: Action embedding size
-    
-    architecture:
-      afterstate_layers: [288, 256]      # Afterstate computation
-      reward_head: [256, 601]            # Reward prediction (categorical)
-      transition_layers: [288, 256]      # State transition modeling
-      
-  # Chance Encoder (Stochastic MuZero component)
-  chance:
-    input_dim: 512                       # 4 x 128 (4-step history)
-    output_dim: 32                       # Chance encoding dimension
-    
-    architecture:
-      encoding_layers: [512, 128, 32]    # Stochastic uncertainty encoding
 
-# Training Configuration (Episode 13475 compatible)
+# Position Feature Settings (Episode 13475 critical)
+position_features:
+  enabled: true                          # ALWAYS enabled for Episode 13475
+  dimension: 9                           # CRITICAL: Exactly 9 position features
+  encoding_type: "standard"              # Standard position encoding
+  normalize: true                        # Apply normalization (same as training)
+
+# Value and Reward Network Configuration
+value_network:
+  value_support_size: 601                # VERIFIED: Episode 13475 value support
+  value_support_range: [-300, 300]       # Value distribution range in pips
+  
+reward_network:
+  reward_support_size: 601               # Same as value support
+  reward_support_range: [-300, 300]      # Reward distribution range in pips
+
+# Training Configuration (Episode 13475 parameters)
 training:
-  optimizer: "adam"                      # VERIFIED: Episode 13475 used Adam
-  learning_rate: 0.0002                  # VERIFIED: Episode 13475 learning rate
-  weight_decay: 1e-4                     # Standard L2 regularization
+  learning_rate: 0.0002                  # Episode 13475 learning rate
+  momentum: 0.9                          # Momentum for optimizer
+  weight_decay: 0.0001                   # L2 regularization
+  gradient_clipping: 0.5                 # Gradient clipping threshold
   
-  # Learning rate schedule (Episode 13475 compatible)
+  # Learning rate schedule
   lr_schedule:
-    type: "constant"                     # Episode 13475 used constant LR
-    min_lr: 1e-6                         # Minimum learning rate (not used)
-    warmup_steps: 0                      # No warmup (Episode 13475 standard)
-    
-  # Gradient handling (Episode 13475 settings)
-  gradient_clipping:
-    enable: true                         # VERIFIED: Episode 13475 used clipping
-    max_norm: 0.5                        # VERIFIED: Episode 13475 clip norm
-    
-  # Loss weights (Episode 13475 exact)
-  loss_weights:
-    policy_loss: 1.0                     # EXACT: Episode 13475 policy weight
-    value_loss: 1.0                      # EXACT: Episode 13475 value weight
-    reward_loss: 1.0                     # EXACT: Episode 13475 reward weight
-    consistency_loss: 0.0                # Disabled (not in Episode 13475)
-    prefix_loss: 0.0                     # Disabled (not in Episode 13475)
-    
-  # Training stability (Episode 13475 settings)
-  stability:
-    enable_gradient_checkpointing: false # Not used in Episode 13475
-    enable_mixed_precision: false       # Not used in Episode 13475
-    
-# Model Checkpointing (Episode 13475 compatible)
-checkpointing:
-  save_frequency: 25                     # EXACT: Episode 13475 saved every 25 episodes
-  max_checkpoints: 10                    # Keep last 10 checkpoints
-  save_best_only: false                  # Save all checkpoints
+    type: "cosine"                       # Cosine annealing
+    warmup_steps: 1000                   # Warmup period
+    min_lr: 0.00001                      # Minimum learning rate
   
-  # Checkpoint validation
-  validation:
-    validate_on_load: true               # Validate checkpoints when loading
-    check_architecture: true             # Verify network architecture matches
-    check_dimensions: true               # Verify tensor dimensions match
-    
-# Device Configuration (Episode 13475 environment)
-device:
-  type: "auto"                          # Auto-detect best device
-  gpu_memory_fraction: 0.8              # Conservative GPU memory usage
-  allow_growth: true                    # Dynamic GPU memory allocation
+  # Loss weights (Episode 13475 configuration)
+  loss_weights:
+    value: 0.25                          # Value loss weight
+    reward: 1.0                          # Reward loss weight  
+    policy: 1.0                          # Policy loss weight
+    consistency: 1.0                     # Consistency loss weight
 
-# Episode 13475 Verification
-episode_13475_verification:
-  network_architecture: "standard"       # VERIFIED: Standard architecture
-  latent_dimension: 256                  # VERIFIED: 256-dim latent space
-  position_features: 9                   # CRITICAL: 9D position features
-  action_space: 4                        # VERIFIED: 4 actions
-  value_support: 601                     # VERIFIED: 601-point support
-  learning_rate: 0.0002                  # VERIFIED: 0.0002 LR
-  gradient_clipping: 0.5                 # VERIFIED: 0.5 clip norm
-  checkpoint_frequency: 25               # VERIFIED: Save every 25 episodes
+# Checkpoint Settings
+checkpoint:
+  save_every: 25                         # Save checkpoint every N episodes
+  keep_last: 10                          # Keep last N checkpoints
+  save_best: true                        # Always save best performing model
+  
+  # Episode 13475 specific settings
+  episode_13475_format: true             # Use Episode 13475 checkpoint format
+  include_optimizer: true                # Save optimizer state
+  include_scheduler: true                # Save scheduler state
+  include_buffer: true                   # Save experience buffer
 
-# Compatibility Flags
-compatibility:
-  strict_episode_13475_mode: true        # CRITICAL: Enforce exact compatibility
-  allow_architecture_changes: false     # Do not allow architecture modifications
-  validate_dimensions: true             # Always validate tensor dimensions
-  enforce_exact_parameters: true        # Enforce exact parameter matching
+# Model Initialization
+initialization:
+  method: "xavier_uniform"               # Xavier uniform initialization
+  gain: 1.0                              # Initialization gain
+  
+# Episode 13475 Compatibility
+episode_13475_compatibility:
+  strict_mode: false                     # Relaxed for training new models
+  verify_architecture: true              # Verify architecture matches
+  verify_features: true                  # Verify feature dimensions
+  verify_mcts: true                      # Verify MCTS parameters
