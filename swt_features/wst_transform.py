@@ -14,11 +14,38 @@ import logging
 from pathlib import Path
 import pickle
 from dataclasses import dataclass
+from functools import lru_cache
 
 from swt_core.types import MarketState
 from swt_core.exceptions import FeatureProcessingError
 
 logger = logging.getLogger(__name__)
+
+# LRU cached helper function for pure WST computation
+@lru_cache(maxsize=256)  # Cache last 256 unique price series
+def _cached_wst_computation(price_tuple: tuple, J: int, Q: int) -> tuple:
+    """
+    Cached WST computation for repeated price patterns.
+    Note: Input must be tuple (hashable) for LRU cache to work.
+
+    Args:
+        price_tuple: Tuple of price values (converted from array)
+        J: Number of scales
+        Q: Number of angles per scale
+
+    Returns:
+        Tuple of WST coefficients
+    """
+    # Convert back to numpy for computation
+    price_array = np.array(price_tuple, dtype=np.float32)
+
+    # This is where the expensive WST computation would go
+    # For now, returning a placeholder - actual implementation would compute WST
+    # The key point is that repeated calls with same price_tuple return instantly
+
+    # Placeholder for actual WST computation
+    result = np.zeros(128, dtype=np.float32)  # WST typically outputs 128 features
+    return tuple(result)
 
 
 @dataclass
