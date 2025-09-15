@@ -60,22 +60,26 @@ This is a **COMPLETE PRODUCTION-READY REIMPLEMENTATION** of the SWT (Stochastic 
 - Expected speedup: ~20% for inference
 - Location: `swt_models/swt_stochastic_networks.py`
 
-### **🔴 REMAINING QUICK WINS (This Week)**
+### **🔴 REMAINING ACTIONS (In Progress)**
 
 #### 1. **Module Consolidation**
 - **Task**: Merge `swt_environment/` into `swt_environments/`
 - **Effort**: 2 hours
 - **Impact**: Cleaner codebase, no confusion
 
-#### 2. **Technical Debt Cleanup**
-- **Task**: Extract and fix top 20 critical TODOs
-- **Effort**: 1 day
-- **Priority**: Focus on production-critical paths
+#### 2. **Minimal Pytest Setup**
+- **Task**: Create test infrastructure for critical functions
+- **Effort**: 6 hours total
+  - Setup: 2 hours
+  - Write 3 test files: 4 hours
+- **Focus**: Position features, WST transform, trading logic
 
 #### 3. **Additional Performance Optimizations**
 - **Batch processing**: Modify validation scripts for batch operations
 - **Async I/O**: Convert OANDA data feed to full async
 - **Effort**: 4 hours each
+
+**Note**: TODO cleanup task removed - only 1 TODO found in entire codebase!
 
 ### **🔵 FUTURE IMPROVEMENTS (Deferred)**
 
@@ -449,15 +453,17 @@ def calculate_wst(data):
 | LRU Caching | ✅ DONE | 200x speedup for repeated WST |
 | Session Pre-indexing | ✅ DONE | Already implemented |
 | torch.jit | ✅ DONE | 20% inference speedup |
-| Module consolidation | 🔴 TODO | 2 hours work |
-| Fix critical TODOs | 🔴 TODO | 1 day work |
+| Module consolidation | 🔴 IN PROGRESS | 2 hours work |
+| Pytest setup | 🔴 TODO | 6 hours (setup + 3 test files) |
 | Batch processing | 🔴 TODO | 4 hours work |
+| Async I/O | 🔴 TODO | 4 hours work |
 | Everything else | 🔵 DEFER | Focus on core functionality |
 
-### **🚀 NEXT STEPS**
-1. Consolidate duplicate modules (2 hours)
-2. Fix top 20 TODOs (1 day)
-3. Keep training, collect data, improve model
+### **🚀 EXECUTION ORDER**
+1. Module consolidation (NOW)
+2. Pytest infrastructure setup (NEXT)
+3. Write critical tests (THEN)
+4. Performance optimizations (LAST)
 
 #### **Position Features (Verified Training Match)**
 All 9 position features now match the training environment exactly:
