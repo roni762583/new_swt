@@ -254,6 +254,48 @@ class SWTForexEnvironment(gym.Env):
         
         return normalized_prices.astype(np.float32)
         
+    def _find_valid_session_starts(self, session_length: int, max_start: int) -> List[int]:
+        """Find valid session starting points (no weekends, no gaps)"""
+        valid_starts = []
+
+        # Check each potential starting point
+        for start_idx in range(0, max_start, 60):  # Check every hour for efficiency
+            # Get session data
+            end_idx = start_idx + session_length + self.price_series_length
+
+            if end_idx >= len(self.df):
+                continue
+
+            session_data = self.df.iloc[start_idx:end_idx]
+
+            # Check for weekend (Friday 21:00 to Sunday 21:00 GMT)
+            has_weekend = False
+            if hasattr(session_data.index[0], 'weekday'):
+                # Index is datetime
+                for timestamp in session_data.index:
+                    weekday = timestamp.weekday()
+                    hour = timestamp.hour
+                    # Friday after 21:00 or Saturday or Sunday before 21:00
+                    if (weekday == 4 and hour >= 21) or weekday == 5 or (weekday == 6 and hour < 21):
+                        has_weekend = True
+                        break
+
+            if has_weekend:
+                continue
+
+            # Check for time gaps (more than 5 minutes between consecutive bars)
+            if hasattr(session_data.index[0], 'to_pydatetime'):
+                # Index is datetime - check for gaps
+                time_diffs = session_data.index.to_series().diff()
+                max_gap = time_diffs.max()
+                if max_gap > pd.Timedelta(minutes=5):
+                    continue
+
+            # This is a valid session start
+            valid_starts.append(start_idx)
+
+        return valid_starts
+
     def _get_position_features(self) -> np.ndarray:
         """Get 9D position feature vector"""
         features = np.zeros(9, dtype=np.float32)
@@ -567,13 +609,27 @@ class SWTForexEnvironment(gym.Env):
         return obs, reward, done, False, info
         
     def reset(self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
-        """Reset environment to initial state"""
-        
+        """Reset environment to random 6-hour session"""
+
         if seed is not None:
             np.random.seed(seed)
-            
-        # Reset state
-        self.current_step = 0
+
+        # Select random 6-hour session (360 minutes)
+        session_length = 360  # 6 hours in minutes
+        max_start = self.total_steps - session_length - self.price_series_length
+
+        if max_start <= 0:
+            # Not enough data for random selection
+            self.current_step = 0
+        else:
+            # Find valid sessions (skip weekends and gaps)
+            valid_starts = self._find_valid_session_starts(session_length, max_start)
+            if valid_starts:
+                # Randomly select from valid sessions
+                self.current_step = np.random.choice(valid_starts)
+            else:
+                # Fallback to beginning if no valid sessions
+                self.current_step = 0
         self.position = SWTPositionState()
         self.completed_trades = []
         self.total_pnl_pips = 0.0

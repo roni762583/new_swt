@@ -57,41 +57,42 @@ class FeatureProcessor:
         self.config = config
         
         # Create WST config - let MarketFeatureExtractor handle backend fallback
+        # Get WST output dimension from config
+        wst_output_dim = getattr(config.feature_config.wst_config, 'output_dim', 128)
+
         wst_config = WSTConfig(
             J=config.feature_config.wst_config.J,
             Q=config.feature_config.wst_config.Q,
             backend="manual",  # Use manual implementation directly for testing
-            output_dim=128,
+            output_dim=wst_output_dim,  # From config instead of hardcoded
             normalize=True,
             cache_enabled=False
         )
         
-        # Initialize market feature extractor
+        # Initialize market feature extractor with config values
+        market_config = getattr(config.feature_config, 'market_data', None)
+        window_size = getattr(market_config, 'price_window_size', 256) if market_config else 256
+        norm_method = getattr(market_config, 'price_normalization', 'zscore') if market_config else 'zscore'
+
         self.market_extractor = MarketFeatureExtractor(
             wst_config=wst_config,
-            window_size=256,  # From config/features.yaml market_data.price_window_size
-            normalization_method="zscore"  # From config/features.yaml market_data.price_normalization
+            window_size=window_size,  # From config
+            normalization_method=norm_method  # From config
         )
         
         # Initialize position feature extractor with EXACT training parameters
-        # Convert NormalizationParams to dictionary format expected by PositionFeatureExtractor
-        norm_params = config.feature_config.position_features.normalization_params
-        normalization_dict = {
-            "duration_scale": norm_params.duration_max_bars,
-            "pnl_scale": norm_params.pnl_scale_factor,
-            "price_change_scale": norm_params.price_change_scale_factor,
-            "drawdown_scale": norm_params.drawdown_scale_factor,
-            "accumulated_dd_scale": norm_params.accumulated_dd_scale,
-            "bars_since_dd_scale": norm_params.bars_since_dd_scale
-        }
+        # Use AMDDP1 reward type matching the training environment
+        reward_type = getattr(config.feature_config.position_features, 'reward_type', 'amddp1')
         self.position_extractor = PositionFeatureExtractor(
-            normalization_config=normalization_dict
+            reward_type=reward_type
         )
         
-        # Set up observation space validation
+        # Set up observation space validation with config values
+        position_dim = getattr(config.feature_config.position_features, 'dimension', 9)
+
         self.observation_space = ObservationSpace(
-            market_state_dim=128,  # WST feature dimension
-            position_state_dim=9   # Position feature dimension
+            market_state_dim=wst_output_dim,  # WST feature dimension from config
+            position_state_dim=position_dim   # Position feature dimension from config
         )
         
         # Feature processing statistics
@@ -201,9 +202,10 @@ class FeatureProcessor:
             market_features = self.market_extractor.extract_features(cache_key=cache_key)
             
             # Validate market features
-            if market_features.shape != (128,):
+            expected_market_dim = self.observation_space.market_state_dim
+            if market_features.shape != (expected_market_dim,):
                 raise FeatureProcessingError(
-                    f"Market features shape mismatch: expected (128,), got {market_features.shape}"
+                    f"Market features shape mismatch: expected ({expected_market_dim},), got {market_features.shape}"
                 )
             
             return market_features
@@ -217,9 +219,12 @@ class FeatureProcessor:
                                  market_metadata: Optional[Dict[str, Any]] = None) -> np.ndarray:
         """Extract position features with EXACT training compatibility"""
         try:
-            position_features = self.position_extractor.extract_features(
-                position_state, current_price, market_metadata
+            # Convert PositionState to position_info dict
+            position_info = self.position_extractor.create_position_info_from_state(
+                position_state, current_price
             )
+            # Extract features using the position_info dict
+            position_features = self.position_extractor.extract_features(position_info)
             
             # Validate position features
             if position_features.shape != (9,):

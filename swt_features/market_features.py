@@ -20,7 +20,7 @@ from .wst_transform import WSTProcessor, WSTConfig
 logger = logging.getLogger(__name__)
 
 
-@dataclass 
+@dataclass
 class MarketDataPoint:
     """Single market data point"""
     timestamp: datetime
@@ -28,7 +28,7 @@ class MarketDataPoint:
     high: float
     low: float
     close: float
-    volume: float
+    volume: Optional[float] = 0.0
     spread: Optional[float] = None
 
 
@@ -96,7 +96,7 @@ class MarketFeatureExtractor:
             
             # Add to buffers
             self._price_buffer.append(data_point.close)
-            self._volume_buffer.append(data_point.volume)
+            self._volume_buffer.append(data_point.volume if data_point.volume is not None else 0.0)
             self._timestamp_buffer.append(data_point.timestamp)
             
             # Update last close
@@ -206,7 +206,7 @@ class MarketFeatureExtractor:
         if data_point.close is None or data_point.close <= 0:
             raise FeatureProcessingError(f"Invalid close price: {data_point.close}")
         
-        if data_point.volume is None or data_point.volume < 0:
+        if data_point.volume is not None and data_point.volume < 0:
             raise FeatureProcessingError(f"Invalid volume: {data_point.volume}")
         
         # Check OHLC consistency

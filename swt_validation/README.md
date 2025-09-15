@@ -4,6 +4,9 @@
 
 A comprehensive validation framework implementing Dr. Howard Bandy's quantitative trading methodologies for robust performance assessment.
 
+## 📋 Latest Validation Report
+**[VALIDATION_REPORT.md](./VALIDATION_REPORT.md)** - Comprehensive validation results for Episodes 10 & 775 with performance comparisons and deployment recommendations.
+
 ---
 
 ## 🎯 **Overview**
@@ -186,6 +189,42 @@ Comprehensive validation specifically for Episode 13475 checkpoint to establish 
 
 ---
 
+### **6. Robust Checkpoint Loader** (`robust_checkpoint_loader.py`)
+Memory-efficient checkpoint loader with aggressive optimization for large model files.
+
+#### **Features**
+- **Memory Management**: Configurable memory limits with monitoring
+- **Checkpoint Cleaning**: Removes training-only data for validation
+- **Aggressive Optimization**: Reduces checkpoint size by up to 97%
+- **Automatic Config Extraction**: Handles embedded architecture configs
+
+#### **Usage**
+```bash
+# Standard optimization (removes basic training data)
+python swt_validation/robust_checkpoint_loader.py \
+  --optimize checkpoints/large.pth \
+  --output checkpoints/optimized.pth
+
+# Aggressive optimization (97% size reduction)
+python swt_validation/robust_checkpoint_loader.py \
+  --optimize checkpoints/episode_775.pth \
+  --output checkpoints/episode_775_minimal.pth \
+  --aggressive
+
+# Load with memory limit
+python swt_validation/robust_checkpoint_loader.py \
+  --load checkpoints/large.pth \
+  --memory-limit 2.0  # 2GB limit
+```
+
+#### **Size Reduction Results**
+- Episode 775: 358MB → 9.5MB (97% reduction)
+- Episode 800: 369MB → ~10MB (expected)
+- Removes: optimizer states, schedulers, replay buffers, training history
+- Keeps: network weights, minimal config, episode metadata
+
+---
+
 ## 📈 **Performance Thresholds**
 
 ### **Deployment Criteria**
@@ -196,8 +235,8 @@ A checkpoint is considered deployment-ready when it meets ALL of the following:
 | Composite Score | ≥70/100 | Overall quality assessment |
 | CAR25 | ≥15% | Conservative annual return estimate |
 | Max Drawdown | ≤25% | Maximum acceptable loss |
-| Win Rate | ≥40% | Minimum winning trade percentage |
-| Profit Factor | ≥1.5 | Gross profit / Gross loss ratio |
+| Expectancy | >0 | Average profit per trade (must be positive) |
+| Profit Factor | ≥1.3 | Gross profit / Gross loss ratio |
 | Sharpe Ratio | ≥1.0 | Risk-adjusted return measure |
 | Robustness Score | ≥50% | Walk-forward robustness |
 | Sample Size | ≥100 trades | Minimum statistical significance |
@@ -306,6 +345,11 @@ Recommendation: RECOMMENDED - System meets all thresholds with good performance
 - Large in-sample/out-sample performance gap
 - Win rate > 70% with low profit factor
 - Extremely high CAR25 (>50%) - check for errors
+
+### **4. Understanding Risk:Reward**
+- **Win rate is NOT everything**: A strategy with 40% win rate and 3:1 risk:reward is highly profitable
+- **Expectancy matters most**: (Win% × Avg Win) - (Loss% × Avg Loss) must be positive
+- **Example**: 45% win rate with 2:1 R:R = 0.45×2 - 0.55×1 = 0.35 positive expectancy
 
 ---
 

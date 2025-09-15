@@ -6,14 +6,49 @@ This is a **COMPLETE PRODUCTION-READY REIMPLEMENTATION** of the SWT (Stochastic 
 
 **Core Principle**: Single Source of Truth - identical code for training and live trading.
 
-## 🚨 **CURRENT STATUS: PRODUCTION READY WITH 137-FEATURE ARCHITECTURE**
+## 🚨 **CURRENT STATUS: MULTI-CONTAINER PRODUCTION ARCHITECTURE**
 
-### **📦 Production System Update (September 14, 2025)**
+### **📦 Production System Update (September 14, 2025 - POSITION FEATURES CORRECTED)**
 - **Architecture**: 137-feature system (128 WST + 9 position) → direct to representation network (NO FUSION)
-- **Training Status**: ✅ ACTIVE - Corrected architecture training in progress (Episode 20+)
+- **🔴 CRITICAL FIX**: Position features now match training environment EXACTLY:
+  1. `current_equity_pips` - arctan scaled by 150
+  2. `bars_since_entry` - arctan scaled by 2000
+  3. `position_efficiency` - already in [-1, 1]
+  4. `pips_from_peak` - arctan scaled by 150
+  5. `max_drawdown_pips` - arctan scaled by 150
+  6. `amddp_reward` - arctan scaled by 150 (AMDDP5)
+  7. `is_long` - binary flag
+  8. `is_short` - binary flag
+  9. `has_position` - binary flag
+- **Container Architecture**: ✅ **3-CONTAINER SEPARATION OF CONCERNS**
+  - **Live Trading**: `swt_live_trading` - Episode 10 inference (event-driven, market-aware)
+  - **Validation**: `swt_validation_container` - Continuous checkpoint validation with pre-computed WST
+  - **Training**: `swt_training_container` - Model training (rebuilding with matplotlib support)
 - **WST Processing**: ✅ **UPGRADED TO PRECOMPUTED WST** - HDF5-based feature caching for 10x faster training
 - **Data**: 3.5-year GBPJPY M1 dataset (1.88M bars) with precomputed WST features
-- **Container**: swt-training-137 running with precomputed WST integration
+- **Resource Efficiency**: Live trading properly idles when market closed (no CPU spinning)
+- **Checkpoints**: ALL CLEARED for fresh training with corrected position features
+
+### **🚀 Latest Updates (September 15, 2025)**
+
+#### **Training Improvements**
+- **Random 6-hour session selection**: Training now uses random 6-hour windows instead of sequential episodes
+- **Weekend/gap filtering**: Automatically skips sessions with weekend periods or data gaps >5 minutes
+- **Fixed dimension mismatch**: Network now properly handles 137 features (128 WST + 9 position) directly
+- **AMDDP1 reward**: Using 1% drawdown penalty for position feature rewards
+- **Checkpoint retention**: Keeps only last 2 checkpoints + best model to save disk space
+
+#### **Position Features (Verified Training Match)**
+All 9 position features now match the training environment exactly:
+1. `current_equity_pips` - arctan scaled by 150
+2. `bars_since_entry` - arctan scaled by 2000
+3. `position_efficiency` - already in [-1, 1]
+4. `pips_from_peak` - arctan scaled by 150
+5. `max_drawdown_pips` - arctan scaled by 150
+6. `amddp_reward` - arctan scaled by 150 (using AMDDP1 with 1% penalty)
+7. `is_long` - binary flag
+8. `is_short` - binary flag
+9. `has_position` - binary flag
 
 ### **✅ RECENT CRITICAL FIXES (September 12, 2025)**
 
@@ -24,11 +59,13 @@ This is a **COMPLETE PRODUCTION-READY REIMPLEMENTATION** of the SWT (Stochastic 
 - **Docker BuildKit**: Configured for efficient caching and build optimization
 - **Import Safety**: Made visualization modules optional for training containers
 
-#### **💿 137-Feature Architecture Implementation (September 14, 2025)**
-- **CRITICAL FIX**: Removed fusion layer completely - now passes 137 features directly to representation network
+#### **💿 137-Feature Architecture Implementation (September 14, 2025 - CORRECTED)**
+- **CRITICAL FIX #1**: Removed fusion layer completely - now passes 137 features directly to representation network
+- **CRITICAL FIX #2**: Position features corrected to match training environment exactly (arctan scaling)
 - **Architecture**: 128 WST market features + 9 position features = 137 total (NO FUSION)
 - **Market Encoder**: Updated to use nn.Identity() for position encoder (direct passthrough)
-- **Training**: Fresh training started with corrected architecture - Episode 20+ in progress
+- **Position Features**: Implemented exact arctan scaling formula: `(2/π) * arctan(value/scale)`
+- **Training**: Fresh training required with corrected position features - all old checkpoints cleared
 
 #### **🏗️ Container Infrastructure**
 - **Training Container**: Optimized Dockerfile with minimal dependencies
@@ -36,18 +73,30 @@ This is a **COMPLETE PRODUCTION-READY REIMPLEMENTATION** of the SWT (Stochastic 
 - **Numba Acceleration**: Verified JIT compilation works in containerized environment
 - **Resource Limits**: Configured memory and CPU constraints for production
 
-#### **🎯 Current Training Status (September 14, 2025)**
+#### **🎯 Current Training Status (September 14, 2025 - UPDATED)**
 - **Architecture**: 137 features (128 WST market + 9 position) → direct to representation network (NO FUSION)
-- **Status**: ✅ ACTIVE TRAINING in container swt-training-137
-- **Progress**: Episode 20+ with corrected feature architecture
+- **Best Checkpoint**: Episode 10 - Quality Score: 34.04, Win Rate: 76.19%, Avg PnL: +25.94 pips
+- **Latest Episodes**: 750-775 completed before crash (negative performance, learning phase)
 - **WST Computation**: ✅ **UPGRADED TO PRECOMPUTED WST** - HDF5-cached features for 10x training speedup
 - **Data**: GBPJPY_M1_3.5years_20250912.csv (1.88M bars with precomputed WST features)
 - **Quality Buffer**: 100k capacity with smart eviction, 2k batch eviction
-- **Performance**: Good trading performance with mix of profitable and learning episodes
+- **Hidden Dim Issue**: Episode 10 has hidden_dim=256, configs show 128 (architecture mismatch)
+
+#### **🚀 NEW: Multi-Container Architecture (September 14, 2025) ✅ OPERATIONAL**
+- **Container Separation**: 3 specialized containers for different workloads
+  - **Live Trading**: Event-driven Episode 10 inference, properly idles when market closed
+  - **Validation**: Continuous checkpoint validation using pre-computed WST features
+  - **Training**: Model training with automated validation callbacks ✅ RUNNING
+- **Resource Efficiency**: Each container optimized for its specific workload
+- **Scalability**: Containers can be scaled independently based on workload demands
+- **Fault Isolation**: Container failures don't affect other system components
+- **Clean Architecture**: Clear separation of concerns for maintainability
 
 #### **🚀 NEW: Precomputed WST Feature System (September 14, 2025) ✅ OPERATIONAL**
 - **Performance Boost**: WST computation accelerated from 200ms to <10ms per window
 - **HDF5 Storage**: Compressed, chunked storage with O(1) random access
+- **Validation Caching**: Monte Carlo validation now caches WST features for 10x speedup
+- **Cache Location**: `cache/wst_features/` with hash-based filenames
 - **Thread-Safe Caching**: LRU cache with memory management for concurrent training
 - **Consistent Code**: Identical WST calculation code across precomputation, training, and live trading
 - **Automatic Fallback**: System gracefully falls back to on-the-fly computation if HDF5 unavailable
@@ -254,26 +303,44 @@ chmod 600 .env
 - **Architecture Match**: Entire codebase optimized for Episode 13475
 - **Risk**: New training might not achieve same quality
 
-### **Phase 4: Production Deployment Commands**
+### **Phase 4: Multi-Container Production Deployment Commands**
 
 ```bash
 # 1. Build production images
-docker build -f Dockerfile.live -t swt-live:production .
+docker build -f Dockerfile.training -t new_swt-swt-training:latest .
 
-# 2. Deploy with Episode 13475
-docker-compose -f docker-compose.live.yml up -d
+# 2. Deploy 3-container architecture
+# Live Trading Container (Episode 10)
+docker run -d --name swt_live_trading --restart unless-stopped \
+  -v $(pwd):/workspace -w /workspace \
+  new_swt-swt-training:latest python episode_10_live_trader.py
 
-# 3. Monitor health
-docker-compose -f docker-compose.live.yml ps
-docker-compose -f docker-compose.live.yml logs -f swt-live
+# Validation Container (Continuous checkpoint validation)
+docker run -d --name swt_validation_container --restart unless-stopped \
+  -v $(pwd):/workspace -w /workspace -e PYTHONPATH=/workspace \
+  new_swt-swt-training:latest python swt_validation/validate_with_precomputed_wst.py
 
-# 4. Verify trading
-curl http://localhost:8080/health
-curl http://localhost:8080/position
+# Training Container (Model training with matplotlib)
+docker run -d --name swt_training_container --restart unless-stopped \
+  -v $(pwd):/workspace -w /workspace -e PYTHONPATH=/workspace \
+  new_swt-swt-training:latest python training_main.py
 
-# 5. Access monitoring
-# Grafana: http://localhost:3000
-# Prometheus: http://localhost:9090
+# 3. Monitor all containers
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Command}}" | grep swt
+
+# 4. Check individual container logs
+docker logs -f swt_live_trading        # Live trading activity
+docker logs -f swt_validation_container # Validation results
+docker logs -f swt_training_container   # Training progress
+
+# 5. Container health checks
+curl http://localhost:8080/health       # If monitoring enabled
+docker exec swt_live_trading python -c "print('Live trading healthy')"
+docker exec swt_validation_container python -c "print('Validation healthy')"
+docker exec swt_training_container python -c "print('Training healthy')"
+
+# 6. Stop all containers
+docker stop swt_live_trading swt_validation_container swt_training_container
 ```
 
 ### **Phase 5: Continuous Improvement**

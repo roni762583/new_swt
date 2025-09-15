@@ -266,54 +266,71 @@ class PositionState:
     """
     Universal position state representation.
     Used by both training environment and live trading system.
-    
+
     CRITICAL: This ensures identical feature calculation between training and live.
+    Contains all fields needed for the 9 position features:
+    1. current_equity_pips - arctan scaled by 150
+    2. bars_since_entry - arctan scaled by 2000
+    3. position_efficiency - already in [-1, 1]
+    4. pips_from_peak - arctan scaled by 150
+    5. max_drawdown_pips - arctan scaled by 150
+    6. amddp_reward - arctan scaled by 150
+    7. is_long - binary flag
+    8. is_short - binary flag
+    9. has_position - binary flag
     """
     # Basic position info
     direction: PositionDirection = PositionDirection.FLAT
+    position_type: Optional[PositionType] = None  # For compatibility
     volume: float = 0.0
     entry_price: float = 0.0
     current_price: float = 0.0
     entry_time: Optional[datetime] = None
-    
-    # Duration tracking
-    duration_bars: int = 0
+
+    # Duration tracking (for feature 2)
+    bars_since_entry: int = 0
     duration_minutes: int = 0
-    
-    # P&L tracking (EXACT training environment calculations)
-    unrealized_pnl_pips: float = 0.0
+
+    # P&L tracking (for feature 1)
+    unrealized_pnl_pips: float = 0.0  # current_equity_pips
     unrealized_pnl_percent: float = 0.0
-    
-    # Risk metrics (EXACT training environment calculations)
-    max_drawdown_pips: float = 0.0
-    max_favorable_pips: float = 0.0
-    accumulated_drawdown_pips: float = 0.0
+
+    # Peak tracking (for features 3, 4)
+    peak_equity: float = 0.0  # High water mark
+    min_equity: float = 0.0   # Low water mark
+    position_efficiency: float = 0.0  # Feature 3
+    pips_from_peak: float = 0.0  # Feature 4
+
+    # Drawdown tracking (for features 5, 6)
+    max_drawdown_pips: float = 0.0  # Feature 5
+    dd_sum: float = 0.0  # Cumulative sum of drawdown increases (for AMDDP)
+    accumulated_drawdown: float = 0.0  # Alternative name for dd_sum
+
+    # For backward compatibility
+    max_adverse_pips: float = 0.0  # Same as max_drawdown_pips
     bars_since_max_drawdown: int = 0
-    
-    # Recent price change (for features)
-    recent_price_change_pips: float = 0.0
-    
-    # Risk flags (EXACT training environment calculations)
-    near_stop_loss: bool = False
-    near_take_profit: bool = False  
-    high_drawdown: bool = False
-    
+
     # Derived properties
     @property
     def is_long(self) -> bool:
-        return self.direction == PositionDirection.LONG
-        
+        return self.direction == PositionDirection.LONG or self.position_type == PositionType.LONG
+
     @property
     def is_short(self) -> bool:
-        return self.direction == PositionDirection.SHORT
-        
+        return self.direction == PositionDirection.SHORT or self.position_type == PositionType.SHORT
+
     @property
     def is_flat(self) -> bool:
-        return self.direction == PositionDirection.FLAT
-        
+        return self.direction == PositionDirection.FLAT or self.position_type == PositionType.FLAT
+
     @property
     def has_position(self) -> bool:
         return not self.is_flat
+
+    @property
+    def current_equity_pips(self) -> float:
+        """Alias for unrealized_pnl_pips (training compatibility)"""
+        return self.unrealized_pnl_pips
 
 
 @dataclass

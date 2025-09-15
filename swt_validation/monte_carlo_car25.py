@@ -14,6 +14,14 @@ import torch
 import json
 import logging
 from pathlib import Path
+
+# Optional h5py for caching
+try:
+    import h5py
+    HAS_H5PY = True
+except ImportError:
+    HAS_H5PY = False
+    logging.warning("h5py not available - WST caching disabled")
 from typing import Dict, List, Tuple, Any, Optional
 from datetime import datetime, timedelta
 import argparse
@@ -28,8 +36,8 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from swt_core.config_manager import ConfigManager
 from swt_features.feature_processor import FeatureProcessor
-# InferenceEngine not needed - using networks directly
-from swt_inference.checkpoint_loader import CheckpointLoader
+# Use fixed loader that properly extracts embedded config
+from swt_validation.fixed_checkpoint_loader import load_checkpoint_with_proper_config
 from swt_environments.swt_forex_env import SWTForexEnvironment, SWTAction
 
 # Configure logging
@@ -138,38 +146,33 @@ class MonteCarloCAR25Validator:
         self.networks = None
         self.feature_processor = None
         self.results_cache = {}
+        self.wst_cache_file = None  # Path to cached WST features
+        self.wst_features_cache = None  # Loaded WST features
         
     def load_checkpoint(self, checkpoint_path: str) -> None:
         """Load checkpoint and initialize inference engine"""
         logger.info(f"💾 Loading checkpoint: {checkpoint_path}")
-        
+
         self.checkpoint_path = Path(checkpoint_path)
         if not self.checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-            
-        # Load configuration
-        config_manager = ConfigManager()
-        config = config_manager.load_config(strict_validation=False)  # Allow non-Episode 13475
-        
-        # Add agent_system attribute for checkpoint loader compatibility
-        from swt_core.types import AgentType
-        config.agent_system = AgentType.STOCHASTIC_MUZERO
-        
-        # Initialize components
-        self.feature_processor = FeatureProcessor(config)
-        
-        # Load checkpoint
-        loader = CheckpointLoader(config)
-        checkpoint_data = loader.load_checkpoint(checkpoint_path)
-        
-        # Store networks directly from checkpoint (it's a single network object)
+
+        # Use fixed loader that properly extracts embedded config
+        checkpoint_data = load_checkpoint_with_proper_config(checkpoint_path)
+
+        # Store networks and config
         self.networks = checkpoint_data['networks']
-        self.checkpoint_info = checkpoint_data.get('checkpoint_info', {})
-        
-        # Store SWT config for later use
+        self.checkpoint_info = checkpoint_data.get('metadata', {})
+
+        # Initialize feature processor with base config (WST processing only)
+        config_manager = ConfigManager()
+        config = config_manager.load_config(strict_validation=False)
+        self.feature_processor = FeatureProcessor(config)
+
+        # Store config for later use
         self.swt_config = config
-        
-        logger.info(f"✅ Checkpoint loaded successfully")
+
+        logger.info(f"✅ Checkpoint loaded successfully with hidden_dim={checkpoint_data['config'].get('hidden_dim')}")
         
     def run_inference(self, market_features: np.ndarray, position_features: np.ndarray) -> Tuple[int, float]:
         """Run inference using loaded networks"""
@@ -203,30 +206,93 @@ class MonteCarloCAR25Validator:
     def load_test_data(self, data_path: str) -> None:
         """Load and prepare test data"""
         logger.info(f"📊 Loading test data: {data_path}")
-        
+
         data_file = Path(data_path)
         if not data_file.exists():
             raise FileNotFoundError(f"Data file not found: {data_path}")
-            
+
         self.test_data = pd.read_csv(data_path)
-        
+
         # Handle both 'time' and 'timestamp' columns
         if 'time' in self.test_data.columns and 'timestamp' not in self.test_data.columns:
             self.test_data['timestamp'] = self.test_data['time']
-        
+
         # Ensure required columns (volume is optional)
         required_cols = ['timestamp', 'open', 'high', 'low', 'close']
         missing_cols = set(required_cols) - set(self.test_data.columns)
         if missing_cols:
             raise ValueError(f"Missing required columns: {missing_cols}")
-            
+
         # Convert timestamp to datetime
         self.test_data['timestamp'] = pd.to_datetime(self.test_data['timestamp'])
         self.test_data = self.test_data.sort_values('timestamp').reset_index(drop=True)
-        
+
         logger.info(f"✅ Loaded {len(self.test_data):,} bars")
         logger.info(f"📅 Date range: {self.test_data['timestamp'].min()} to {self.test_data['timestamp'].max()}")
-        
+
+        # Precompute and cache WST features if not already cached
+        self._precompute_wst_features(data_path)
+
+    def _precompute_wst_features(self, data_path: str) -> None:
+        """Precompute and cache WST features for entire dataset"""
+        if not HAS_H5PY:
+            logger.warning("WST caching disabled - h5py not available")
+            return
+
+        # Create cache filename based on data file and checkpoint
+        data_hash = str(hash(data_path))[-8:]
+        checkpoint_hash = str(hash(str(self.checkpoint_path)))[-8:]
+        cache_dir = Path("cache/wst_features")
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        self.wst_cache_file = cache_dir / f"wst_{data_hash}_{checkpoint_hash}.h5"
+
+        if self.wst_cache_file.exists():
+            logger.info(f"📂 Loading cached WST features from {self.wst_cache_file}")
+            with h5py.File(self.wst_cache_file, 'r') as f:
+                self.wst_features_cache = f['wst_features'][:]
+                logger.info(f"✅ Loaded {len(self.wst_features_cache):,} cached WST features")
+                return
+
+        logger.info(f"🔄 Computing WST features for {len(self.test_data):,} samples...")
+
+        # Prepare sliding windows of price data
+        window_size = 256  # Price series length
+        num_samples = len(self.test_data) - window_size + 1
+        wst_features = []
+
+        # Process in batches for efficiency
+        batch_size = 100
+        for i in range(0, num_samples, batch_size):
+            batch_end = min(i + batch_size, num_samples)
+            batch_features = []
+
+            for j in range(i, batch_end):
+                # Get price window
+                price_window = self.test_data['close'].iloc[j:j+window_size].values
+
+                # Normalize prices
+                prices_normalized = (price_window - np.mean(price_window)) / (np.std(price_window) + 1e-8)
+
+                # Compute WST features
+                market_features = self.feature_processor.market_extractor.wst_processor.transform(prices_normalized)
+                batch_features.append(market_features)
+
+            wst_features.extend(batch_features)
+
+            if (i + batch_size) % 1000 == 0:
+                logger.info(f"   Processed {min(i + batch_size, num_samples):,}/{num_samples:,} samples...")
+
+        # Convert to numpy array
+        self.wst_features_cache = np.array(wst_features, dtype=np.float32)
+
+        # Save to cache
+        logger.info(f"💾 Saving WST features to cache: {self.wst_cache_file}")
+        with h5py.File(self.wst_cache_file, 'w') as f:
+            f.create_dataset('wst_features', data=self.wst_features_cache, compression='gzip', compression_opts=4)
+
+        logger.info(f"✅ Computed and cached {len(self.wst_features_cache):,} WST features")
+
     def run_monte_carlo_validation(self, num_runs: Optional[int] = None) -> Dict[str, Any]:
         """
         Run full Monte Carlo validation with CAR25 calculation
@@ -321,28 +387,27 @@ class MonteCarloCAR25Validator:
         
         obs, info = env.reset()  # reset returns tuple (obs, info)
         done = False
-        
+        step_count = 0
+
         while not done:
-            # Process market prices through WST to get 128-dim features
-            # The environment gives us 256 prices, we need to process them
-            market_prices = obs['market_prices']
-            
-            # Process through feature processor to get WST features
-            # Create a dummy state dict for the feature processor
-            state_dict = {
-                'market_prices': market_prices,
-                'position_features': obs['position_features']
-            }
-            processed_features = self.feature_processor.extract_features(state_dict)
+            # Use precomputed WST features if available
+            if self.wst_features_cache is not None and step_count < len(self.wst_features_cache):
+                market_features = self.wst_features_cache[step_count]
+            else:
+                # Fallback to computing on-the-fly if cache not available
+                market_prices = obs['market_prices']
+                prices_normalized = (market_prices - np.mean(market_prices)) / (np.std(market_prices) + 1e-8)
+                market_features = self.feature_processor.market_extractor.wst_processor.transform(prices_normalized)
             
             # Get action from networks using WST features
             action, confidence = self.run_inference(
-                market_features=processed_features['market_features'],  # 128-dim WST features
+                market_features=market_features,  # 128-dim WST features
                 position_features=obs['position_features']
             )
             
             # Execute action
             obs, reward, done, info = env.step(action)
+            step_count += 1
             
             # Record trade if position changed
             if 'trade' in info and info['trade']:
@@ -592,11 +657,11 @@ class MonteCarloCAR25Validator:
                 'actual_car25': car25_metrics['car25'],
                 'car25_passed': car25_metrics['car25'] >= self.config.min_acceptable_car25,
                 'max_dd_threshold': self.config.max_acceptable_drawdown,
-                'actual_avg_dd': car25_metrics['avg_max_drawdown'],
-                'dd_passed': car25_metrics['avg_max_drawdown'] <= self.config.max_acceptable_drawdown,
+                'actual_avg_dd': car25_metrics.get('avg_max_drawdown', 0.0),
+                'dd_passed': car25_metrics.get('avg_max_drawdown', 0.0) <= self.config.max_acceptable_drawdown,
                 'min_profit_factor': self.config.min_profit_factor,
-                'actual_profit_factor': car25_metrics['avg_profit_factor'],
-                'profit_factor_passed': car25_metrics['avg_profit_factor'] >= self.config.min_profit_factor,
+                'actual_profit_factor': car25_metrics.get('avg_profit_factor', 0.0),
+                'profit_factor_passed': car25_metrics.get('avg_profit_factor', 0.0) >= self.config.min_profit_factor,
                 'overall_passed': car25_metrics['passes_thresholds']
             },
             'recommendation': self._generate_recommendation(car25_metrics),
@@ -619,10 +684,10 @@ class MonteCarloCAR25Validator:
             failures = []
             if metrics['car25'] < self.config.min_acceptable_car25:
                 failures.append(f"CAR25 ({metrics['car25']:.2%}) below threshold")
-            if metrics['avg_max_drawdown'] > self.config.max_acceptable_drawdown:
-                failures.append(f"Drawdown ({metrics['avg_max_drawdown']:.2%}) exceeds limit")
-            if metrics['avg_profit_factor'] < self.config.min_profit_factor:
-                failures.append(f"Profit factor ({metrics['avg_profit_factor']:.2f}) too low")
+            if metrics.get('avg_max_drawdown', 0.0) > self.config.max_acceptable_drawdown:
+                failures.append(f"Drawdown ({metrics.get('avg_max_drawdown', 0.0):.2%}) exceeds limit")
+            if metrics.get('avg_profit_factor', 0.0) < self.config.min_profit_factor:
+                failures.append(f"Profit factor ({metrics.get('avg_profit_factor', 0.0):.2f}) too low")
                 
             return f"NOT RECOMMENDED: System fails validation - {', '.join(failures)}"
             

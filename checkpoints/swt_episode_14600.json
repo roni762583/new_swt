@@ -1,0 +1,13 @@
+{
+  "episode": 14600,
+  "timestamp": "2025-09-15T01:22:58.514924",
+  "performance": {
+    "episode": 14599,
+    "error": "'int' object has no attribute 'weekday'",
+    "timestamp": "2025-09-15T01:22:58.514453"
+  },
+  "config": {
+    "agent_type": "episode_13475_compatible",
+    "training_parameters": "episode_13475_compatible"
+  }
+}

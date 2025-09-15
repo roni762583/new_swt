@@ -23,12 +23,12 @@ position_features:
 
 # Value and Reward Network Configuration
 value_network:
-  value_support_size: 601                # VERIFIED: Episode 13475 value support
-  value_support_range: [-300, 300]       # Value distribution range in pips
-  
+  value_support_size: 1203               # AUTO-DETECTED from checkpoint
+  value_support_range: [-601, 601]       # Value distribution range in pips
+
 reward_network:
-  reward_support_size: 601               # Same as value support
-  reward_support_range: [-300, 300]      # Reward distribution range in pips
+  reward_support_size: 1203              # Same as value support
+  reward_support_range: [-601, 601]      # Reward distribution range in pips
 
 # Training Configuration (Episode 13475 parameters)
 training:

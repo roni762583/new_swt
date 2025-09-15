@@ -1,0 +1,12 @@
+{
+  "session_start": "2025-09-14T23:43:35.923251",
+  "session_end": "2025-09-14T23:43:40.008396",
+  "runtime_seconds": 4.085126,
+  "total_trades": 0,
+  "daily_pnl": 0.0,
+  "final_balance": 10000.0,
+  "avg_inference_time_ms": 0.0,
+  "feature_processing_errors": 0,
+  "mcts_timeouts": 0,
+  "cache_hit_rate": 0.0
+}

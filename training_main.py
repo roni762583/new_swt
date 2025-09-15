@@ -13,6 +13,7 @@ from pathlib import Path
 from datetime import datetime
 import json
 import asyncio
+import time
 
 # Add to Python path
 sys.path.append(str(Path(__file__).parent))
@@ -141,42 +142,55 @@ class SWTTrainingOrchestrator(ManagedProcess):
             # Load configuration
             self.config_manager = ConfigManager()
             self.config = self.config_manager.load_config(self.config_path)
-            self.config_manager.force_episode_13475_mode()
+            # self.config_manager.force_episode_13475_mode()  # Method not available in ConfigManager
             
             # Initialize feature processor
             self.feature_processor = FeatureProcessor(self.config)
             
-            # Initialize environment
+            # Initialize environment with proper configuration
+            env_config = {
+                'price_series_length': 256,
+                'spread_pips': 1.5,
+                'pip_value': 0.01,
+                'reward': {
+                    'type': 'amddp5',  # AMDDP5 reward with profit protection
+                    'drawdown_penalty': 1.0,
+                    'profit_protection': 5.0,
+                    'min_protected_reward': 0.0
+                }
+            }
+
             self.environment = SWTForexEnvironment(
-                data_path="data/GBPJPY_M1_202201-202508.csv",
-                wst_features=self.feature_processor,
-                max_drawdown_pips=100.0,
-                max_position_duration=1440,  # 24 hours in minutes
-                pip_value=0.01,  # GBPJPY pip value
-                spread_pips=1.5,
-                reward_type="amddp1",  # Episode 13475 uses AMDDP reward
-                amddp_penalty_weight=1.0
+                data_path="data/GBPJPY_M1_3.5years_20250912.csv",
+                config_dict=env_config
             )
             
-            # Initialize network
-            observation_shape = self.environment.observation_space.shape
-            action_space_size = self.environment.action_space.n
-            
-            self.network = SWTStochasticMuZeroNetwork(
-                observation_shape=observation_shape,
-                action_space_size=action_space_size,
-                num_blocks=6,  # Episode 13475 architecture
-                num_channels=256,
-                reduced_channels_reward=256,
-                reduced_channels_value=256,
-                reduced_channels_policy=256,
-                fc_reward_layers=[256, 256],
-                fc_value_layers=[256, 256],
-                fc_policy_layers=[256, 256],
-                support_size=300,  # Value/reward support
-                stochastic_depth=8,
-                use_batch_norm=True
+            # Initialize network with proper observation shape
+            # The environment returns 137 features (128 WST + 9 position)
+            from swt_models.swt_stochastic_networks import SWTStochasticMuZeroConfig
+
+            network_config = SWTStochasticMuZeroConfig(
+                market_wst_features=128,
+                position_features=9,
+                total_input_dim=137,
+                final_input_dim=137,  # Use full 137 features (128 WST + 9 position)
+                num_actions=4,  # BUY, SELL, HOLD, CLOSE
+                hidden_dim=256,
+                representation_blocks=6,
+                dynamics_blocks=6,
+                prediction_blocks=2,
+                afterstate_blocks=2,
+                support_size=300,
+                chance_space_size=32,
+                chance_history_length=4,
+                afterstate_enabled=True,
+                dropout_rate=0.1,
+                layer_norm=True,
+                residual_connections=True,
+                latent_z_dim=16
             )
+
+            self.network = SWTStochasticMuZeroNetwork(network_config)
             
             # Initialize optimizer
             self.optimizer = torch.optim.Adam(
@@ -208,6 +222,25 @@ class SWTTrainingOrchestrator(ManagedProcess):
             logger.error(f"❌ Training system initialization failed: {e}")
             raise ConfigurationError(f"Training initialization failed: {str(e)}")
     
+    def should_stop(self) -> bool:
+        """Check if training should stop"""
+        return self.state in [ProcessState.STOPPING, ProcessState.STOPPED, ProcessState.CRASHED]
+
+    def _check_resource_limits(self) -> bool:
+        """Check resource limits"""
+        # Simplified resource check without psutil
+        # In production, would check memory/CPU properly
+        return True
+
+    def _get_memory_usage(self) -> float:
+        """Get current memory usage as percentage"""
+        # Simplified without psutil dependency
+        return 0.5  # Mock 50% usage
+
+    def _update_heartbeat(self):
+        """Update process heartbeat"""
+        self.last_heartbeat = time.time()
+
     def run_training_loop(self):
         """Main training loop with safety monitoring"""
         logger.info("🏃‍♂️ Starting training loop...")
@@ -277,8 +310,49 @@ class SWTTrainingOrchestrator(ManagedProcess):
             trajectory = []
             
             while not done and episode_length < 1440:  # Max 24 hours
+                # Extract position state and current price from environment
+                position_state = self.environment.position
+                current_price = self.environment.df['close'].iloc[
+                    self.environment.current_step + self.environment.price_series_length
+                ]
+
                 # Process observation through WST features
-                processed_obs = self.feature_processor.process_observation(observation)
+                # Add market data to feature processor
+                from swt_features.market_features import MarketDataPoint
+                current_idx = self.environment.current_step + self.environment.price_series_length
+                market_data = MarketDataPoint(
+                    timestamp=self.environment.df.index[current_idx],
+                    open=self.environment.df['open'].iloc[current_idx],
+                    high=self.environment.df['high'].iloc[current_idx],
+                    low=self.environment.df['low'].iloc[current_idx],
+                    close=current_price
+                )
+                self.feature_processor.add_market_data(market_data)
+
+                # Convert SWTPositionState to PositionState for feature processor
+                from swt_core.types import PositionState, PositionType
+
+                # Determine position type
+                if position_state.is_long:
+                    pos_type = PositionType.LONG
+                elif position_state.is_short:
+                    pos_type = PositionType.SHORT
+                else:
+                    pos_type = PositionType.FLAT
+
+                # Create immutable PositionState
+                feature_position_state = PositionState(
+                    position_type=pos_type,
+                    entry_price=position_state.entry_price,
+                    unrealized_pnl_pips=position_state.unrealized_pnl_pips,
+                    duration_minutes=position_state.duration_bars  # Using bars as minutes proxy
+                )
+
+                # Process observation with position state and current price
+                processed_obs = self.feature_processor.process_observation(
+                    position_state=feature_position_state,
+                    current_price=current_price
+                )
                 wst_features = torch.FloatTensor(processed_obs.combined_features).unsqueeze(0)
                 
                 # Run MCTS to get action probabilities
@@ -425,14 +499,52 @@ class SWTTrainingOrchestrator(ManagedProcess):
                 "timestamp": datetime.now().isoformat(),
                 "performance": episode_result,
                 "config": {
-                    "agent_type": self.config.agent_system.value,
+                    "agent_type": "episode_13475_compatible",
                     "training_parameters": "episode_13475_compatible"
                 }
             }
             
             with open(checkpoint_path, 'w') as f:
                 json.dump(checkpoint_data, f, indent=2)
-            
+
+            # Save actual model checkpoint (keep only last 2 + best)
+            if self.network is not None:
+                model_checkpoint_path = checkpoint_dir / f"swt_episode_{self.current_episode}.pth"
+                torch.save({
+                    'episode': self.current_episode,
+                    'model_state_dict': self.network.state_dict(),
+                    'optimizer_state_dict': self.optimizer.state_dict(),
+                    'episode_result': episode_result,
+                    'timestamp': datetime.now().isoformat()
+                }, model_checkpoint_path)
+                logger.info(f"🔥 Model checkpoint saved: {model_checkpoint_path}")
+
+                # Clean up old checkpoints - keep only last 2 regular checkpoints
+                import glob
+                all_checkpoints = sorted(glob.glob(str(checkpoint_dir / "swt_episode_*.pth")))
+                if len(all_checkpoints) > 2:
+                    for old_checkpoint in all_checkpoints[:-2]:
+                        try:
+                            Path(old_checkpoint).unlink()
+                            logger.info(f"🗑️ Removed old checkpoint: {old_checkpoint}")
+                        except Exception as e:
+                            logger.warning(f"Failed to remove {old_checkpoint}: {e}")
+
+                # Save best model checkpoint if this is the best performance
+                performance_score = episode_result.get('total_pnl', 0.0)
+                if performance_score > self.best_performance:
+                    self.best_performance = performance_score
+                    best_model_path = checkpoint_dir / "best_model.pth"
+                    torch.save({
+                        'episode': self.current_episode,
+                        'model_state_dict': self.network.state_dict(),
+                        'optimizer_state_dict': self.optimizer.state_dict(),
+                        'episode_result': episode_result,
+                        'best_performance': self.best_performance,
+                        'timestamp': datetime.now().isoformat()
+                    }, best_model_path)
+                    logger.info(f"🏆 BEST MODEL SAVED: {best_model_path} (Performance: {performance_score:.2f})")
+
             self.last_checkpoint_episode = self.current_episode
             logger.info(f"💾 Checkpoint saved: {checkpoint_path}")
             

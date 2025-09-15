@@ -600,6 +600,15 @@ class SWTStochasticMuZeroNetwork(nn.Module):
         if config is None and observation_shape is not None:
             # Legacy constructor compatibility
             if observation_shape == (137,):
+                # Filter kwargs to only include valid SWTStochasticMuZeroConfig parameters
+                valid_params = {
+                    'hidden_dim', 'representation_blocks', 'dynamics_blocks',
+                    'prediction_blocks', 'afterstate_blocks', 'support_size',
+                    'chance_space_size', 'chance_history_length', 'afterstate_enabled',
+                    'dropout_rate', 'layer_norm', 'residual_connections', 'latent_z_dim'
+                }
+                filtered_kwargs = {k: v for k, v in kwargs.items() if k in valid_params}
+
                 # Correct 137-feature configuration
                 config = SWTStochasticMuZeroConfig(
                     market_wst_features=128,
@@ -607,7 +616,7 @@ class SWTStochasticMuZeroNetwork(nn.Module):
                     total_input_dim=137,
                     final_input_dim=128,
                     num_actions=action_space_size or 4,
-                    **kwargs
+                    **filtered_kwargs
                 )
                 logger.info("🔄 Using legacy constructor compatibility for 137-feature network")
             else:

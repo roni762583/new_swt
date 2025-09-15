@@ -57,6 +57,7 @@ class CheckpointLoader:
                 context={"checkpoint_path": str(checkpoint_path)}
             )
         
+        print(f"DEBUG: load_checkpoint called with path: {checkpoint_path}")
         try:
             logger.info(f"📁 Loading checkpoint: {checkpoint_path}")
             
@@ -67,9 +68,12 @@ class CheckpointLoader:
             checkpoint_info = self._analyze_checkpoint(raw_checkpoint, checkpoint_path)
             
             # Load networks based on detected type
+            print(f"DEBUG: agent_type = {checkpoint_info['agent_type']}, EXPERIMENTAL = {AgentType.EXPERIMENTAL}")
             if checkpoint_info["agent_type"] == AgentType.EXPERIMENTAL:
+                print("DEBUG: Loading experimental networks")
                 networks = self._load_experimental_networks(raw_checkpoint, checkpoint_info)
             else:
+                print("DEBUG: Loading standard networks")
                 networks = self._load_standard_networks(raw_checkpoint, checkpoint_info)
             
             # Validate loaded networks
@@ -205,19 +209,86 @@ class CheckpointLoader:
         
         return analysis
     
-    def _load_standard_networks(self, checkpoint: Dict[str, Any], 
+    def _load_standard_networks(self, checkpoint: Dict[str, Any],
                               info: Dict[str, Any]) -> Any:
         """Load standard Stochastic MuZero networks"""
+        print("DEBUG: _load_standard_networks called!")
         try:
             from experimental_research.swt_models.swt_stochastic_networks import SWTStochasticMuZeroNetwork, SWTStochasticMuZeroConfig
-            
-            # Create networks instance with proper config (use actual Episode 13475 dimensions)
-            hidden_dim = self.config.model.network.hidden_dim if hasattr(self.config, "model") and hasattr(self.config.model, "network") else 256  # From config hidden dimension (from checkpoint analysis)
-            if hasattr(self.config, 'network_config') and hasattr(self.config.network_config, 'hidden_dim'):
-                hidden_dim = self.config.network_config.hidden_dim
-                
+
+            # PRIORITY 1: Extract config directly from checkpoint if available
+            hidden_dim = None
+            support_size = None
+
+            logger.info(f"🔍 Analyzing checkpoint structure...")
+            logger.info(f"   Checkpoint keys: {list(checkpoint.keys())[:5]}...")  # First 5 keys
+
+            # Check if checkpoint contains embedded full_config
+            if 'config' in checkpoint and isinstance(checkpoint['config'], dict):
+                if 'full_config' in checkpoint['config']:
+                    full_config = checkpoint['config']['full_config']
+                    if 'muzero_config' in full_config:
+                        muzero_cfg = full_config['muzero_config']
+                        hidden_dim = muzero_cfg.get('hidden_dim', 256)
+                        # Handle both support_size and value_support_size
+                        if 'value_support_size' in muzero_cfg:
+                            support_size = (muzero_cfg['value_support_size'] - 1) // 2
+                        else:
+                            support_size = muzero_cfg.get('support_size', 601)
+                        logger.info(f"✅ Extracted from checkpoint full_config: hidden_dim={hidden_dim}, support_size={support_size}")
+
+                # Fallback to direct config values in checkpoint
+                if hidden_dim is None and 'hidden_dim' in checkpoint['config']:
+                    hidden_dim = checkpoint['config']['hidden_dim']
+                    if 'value_support_size' in checkpoint['config']:
+                        support_size = (checkpoint['config']['value_support_size'] - 1) // 2
+                    else:
+                        support_size = 601
+                    logger.info(f"📦 Using direct checkpoint config: hidden_dim={hidden_dim}, support_size={support_size}")
+
+            # PRIORITY 2: Auto-detect from model weights if not found in config
+            if hidden_dim is None and 'muzero_network_state' in checkpoint:
+                for key, tensor in checkpoint['muzero_network_state'].items():
+                    if 'representation_network.input_projection.0.weight' in key:
+                        hidden_dim = tensor.shape[0]  # First dimension is hidden_dim
+                        logger.info(f"🔍 Auto-detected hidden_dim={hidden_dim} from network weights")
+                        break
+
+                for key, tensor in checkpoint['muzero_network_state'].items():
+                    if 'value_network.value_head.3.weight' in key:
+                        value_support_size = tensor.shape[0]
+                        support_size = (value_support_size - 1) // 2
+                        logger.info(f"🔍 Auto-detected support_size={support_size} from value head")
+                        break
+
+            # PRIORITY 3: Use passed config if available (but this is less reliable)
+            if hidden_dim is None:
+                if hasattr(self.config, 'muzero_config') and isinstance(self.config.muzero_config, dict):
+                    hidden_dim = self.config.muzero_config.get('hidden_dim', 256)
+                    support_size = self.config.muzero_config.get('support_size', 601)
+                    logger.info(f"📋 Using passed muzero_config: hidden_dim={hidden_dim}, support_size={support_size}")
+                elif hasattr(self.config, "model") and hasattr(self.config.model, "network"):
+                    hidden_dim = self.config.model.network.hidden_dim
+                    support_size = 601
+                    if hasattr(self.config.model, 'value_network'):
+                        value_support_size = self.config.model.value_network.value_support_size
+                        support_size = (value_support_size - 1) // 2
+                    logger.info(f"📋 Using model config: hidden_dim={hidden_dim}, support_size={support_size}")
+                else:
+                    # Final fallback
+                    hidden_dim = 256
+                    support_size = 601
+                    logger.warning(f"⚠️ Using defaults: hidden_dim={hidden_dim}, support_size={support_size}")
+
             config = SWTStochasticMuZeroConfig(
+                market_wst_features=128,     # WST features
+                position_features=9,          # Position features
+                total_input_dim=137,          # Combined features
+                final_input_dim=137,          # After fusion (no reduction for this checkpoint)
                 hidden_dim=hidden_dim,
+                support_size=support_size,    # Support size for distributional RL
+                representation_blocks=2,      # Number of blocks in checkpoint
+                dynamics_blocks=2,            # Number of blocks in checkpoint
                 use_optimized_blocks=True,
                 use_vectorized_ops=True
             )
@@ -395,10 +466,12 @@ class CheckpointLoader:
                 
                 # Test value network (needs latent + latent_z for Episode 13475)
                 value_logits = networks.value_network(latent, dummy_latent_z)
-                expected_value_support = 601  # Episode 13475 standard (-300 to +300)
-                if hasattr(self.config, 'network_config') and hasattr(self.config.network_config, 'value_support_size'):
+                expected_value_support = 1203  # Actual value from checkpoint
+                if hasattr(self.config, 'model') and hasattr(self.config.model, 'value_network'):
+                    expected_value_support = self.config.model.value_network.value_support_size
+                elif hasattr(self.config, 'network_config') and hasattr(self.config.network_config, 'value_support_size'):
                     expected_value_support = self.config.network_config.value_support_size
-                    
+
                 if value_logits.shape[1] != expected_value_support:
                     raise CheckpointError(f"Value output dimension mismatch: expected {expected_value_support}, got {value_logits.shape[1]}")
             
