@@ -21,9 +21,9 @@ This is a **COMPLETE PRODUCTION-READY REIMPLEMENTATION** of the SWT (Stochastic 
   8. `is_short` - binary flag
   9. `has_position` - binary flag
 - **Container Architecture**: ✅ **3-CONTAINER SEPARATION OF CONCERNS**
-  - **Live Trading**: `swt_live_trading` - Episode 10 inference (event-driven, market-aware)
+  - **Live Trading**: `swt_live_trading` - ⚠️ Episode 10 found defective, awaiting new checkpoint
   - **Validation**: `swt_validation_container` - Continuous checkpoint validation with pre-computed WST
-  - **Training**: `swt_training_container` - Model training (rebuilding with matplotlib support)
+  - **Training**: `swt_training_container` - Model training restarted after high priority fixes
 - **WST Processing**: ✅ **UPGRADED TO PRECOMPUTED WST** - HDF5-based feature caching for 10x faster training
 - **Data**: 3.5-year GBPJPY M1 dataset (1.88M bars) with precomputed WST features
 - **Resource Efficiency**: Live trading properly idles when market closed (no CPU spinning)
