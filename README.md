@@ -149,53 +149,285 @@ Level 3: Redis (optional, for distributed) - milliseconds
   - Example: "Why we chose AMDDP1 over standard rewards"
   - **Verdict**: Valuable for long-term maintenance
 
-### **❓ POINTS FOR DISCUSSION**
+### **❓ DETAILED Q&A - YOUR QUESTIONS ANSWERED**
 
-#### 1. **Session Sampling Optimization**
-**Current Understanding**: Random start index → take next 360 bars → reject if gaps/weekend
+#### 1. **Multi-Level Caching Strategy**
+**Q: How complicated is this, what is expected benefit, resources, applicability?**
 
-**Proposed Improvement**: Pre-index all valid sessions at startup
+**Answer**:
+- **Complexity**: Medium (2-3 days implementation)
+- **Expected Benefit**:
+  - WST computation: 200ms → <1ms for cached values (200x speedup)
+  - Feature calculations: 50ms → <0.1ms for cached (500x speedup)
+  - Overall training speedup: 30-50% for repeated sessions
+- **Resource Requirements**:
+  - Memory: ~2GB for LRU cache (configurable)
+  - Disk: ~10GB for HDF5 historical cache
+  - Redis (optional): 1GB RAM, separate Docker container
+- **Applicability to Your Case**: HIGH VALUE
+  - You're repeatedly computing WST for same windows
+  - Session sampling often hits same data ranges
+  - **Recommendation**: Start with just LRU cache (1 day work, big win)
+
+#### 2. **Ray/Dask for Distributed Training**
+**Q: Compare overhead to benefit in this case**
+
+**Answer**:
+- **Ray Overhead**:
+  - Memory: 500MB base + 200MB per worker
+  - Setup time: 5-10 seconds to initialize cluster
+  - Code complexity: Must refactor to Ray actors/tasks
+  - Learning curve: 1-2 weeks to master
+- **Your Dataset**: 1.88M bars = ~145MB WST features
+- **Benefit Analysis**:
+  - Single machine can handle this easily
+  - Ray only beneficial for >10GB datasets or >4 GPUs
+  - Would actually SLOW DOWN your training due to serialization overhead
+- **Verdict**: NOT NEEDED - Your dataset is too small to benefit
+
+#### 3. **Session Sampling Pre-indexing**
+**Q: Current approach picks random index + next 360 bars, rejects if invalid. How would improvement work?**
+
+**Answer - Current vs Proposed**:
 ```python
-# On initialization:
-valid_sessions = []
-for i in range(len(data) - 360):
-    if is_valid_session(data[i:i+360]):
-        valid_sessions.append(i)
-# During training:
-start_idx = random.choice(valid_sessions)  # O(1) instead of retry loop
+# CURRENT (Your implementation):
+while True:
+    start_idx = random.randint(0, len(data)-360)
+    session = data[start_idx:start_idx+360]
+    if has_gaps(session) or has_weekend(session):
+        continue  # Retry - could loop many times
+    break
+
+# PROPOSED OPTIMIZATION:
+# At startup (once):
+self.valid_starts = []
+for i in range(len(data)-360):
+    if not has_gaps(data[i:i+360]) and not has_weekend(data[i:i+360]):
+        self.valid_starts.append(i)
+print(f"Found {len(self.valid_starts)} valid sessions")
+
+# During training (many times):
+start_idx = random.choice(self.valid_starts)  # Instant, never fails
 ```
-**Benefit**: Eliminates rejection loops, guaranteed valid sessions
+**Benefits**:
+- No retry loops (especially bad when many gaps)
+- Predictable performance
+- Can report exact number of valid sessions upfront
 
-#### 2. **Data Augmentation for Time Series**
-- **Noise injection**: Add small Gaussian noise to prices (robustness)
-- **Time warping**: Slightly speed up/slow down time series
-- **Magnitude warping**: Scale price movements by 0.9-1.1x
-- **Question**: Worth the complexity for forex data?
+#### 4. **Memory-Mapped Files Analysis**
+**Q: Where needed and benefit/overhead?**
 
-#### 3. **Memory-Mapped Files**
-- **Use Case**: When dataset > RAM (not our case currently)
-- **Current**: 1.88M bars easily fits in 8GB RAM
-- **Verdict**: Not needed unless scaling to years of tick data
+**Answer**:
+- **Your Current Memory Usage**: ~500MB for 1.88M bars
+- **Memory-mapped only helps when**: Dataset > Available RAM
+- **Your case**: Not needed (data fits in memory 10x over)
+- **When to reconsider**: If you expand to tick data (100GB+)
 
-#### 4. **Dependency Management (Poetry vs Pip)**
+#### 5. **Data Augmentation for Forex**
+**Q: Don't understand what you mean**
+
+**Answer - Data Augmentation Examples**:
+```python
+# 1. Noise Injection (makes model robust to small variations)
+augmented_price = original_price * (1 + np.random.normal(0, 0.0001))
+
+# 2. Time Warping (handles different market speeds)
+# Instead of every bar, skip some randomly
+augmented_session = original_session[::random.choice([1, 1, 1, 2])]
+
+# 3. Synthetic Spread Variation
+augmented_spread = original_spread * random.uniform(0.8, 1.2)
+```
+**For Forex Trading**:
+- **Pros**: More robust model, handles unseen conditions better
+- **Cons**: Forex is already noisy, might hurt more than help
+- **Recommendation**: Skip for now, revisit if overfitting occurs
+
+#### 6. **TensorBoard vs JSON Metrics**
+**Q: Implication, benefit/overhead?**
+
+**Answer**:
+- **TensorBoard**:
+  - **Benefits**: Real-time graphs, loss curves, histograms, embeddings
+  - **Overhead**: ~100MB disk, separate process, port 6006
+  - **Best for**: Watching training live, debugging
+- **JSON**:
+  - **Benefits**: Programmatic access, custom analysis, version control
+  - **Overhead**: Minimal (few KB per checkpoint)
+  - **Best for**: Automated decisions, CI/CD pipelines
+- **Recommendation**: Use JSON for now (simpler), add TensorBoard when needed
+
+#### 7. **Checkpoint Versioning with Semantic Versioning**
+**Q: Implication, benefit/overhead?**
+
+**Answer**:
+```python
+# Instead of: checkpoint_episode_500.pth
+# Use: checkpoint_v2.1.3_ep500_arch-137f.pth
+# Where: v[major].[minor].[patch]
+# major = architecture change
+# minor = hyperparameter change
+# patch = training continuation
+```
+**Benefit**: Know which checkpoints are compatible
+**Overhead**: 30 minutes to implement naming convention
+**Worth it?**: Yes, prevents loading incompatible checkpoints
+
+#### 8. **Prometheus Monitoring**
+**Q: What is this?**
+
+**Answer**:
+- **Prometheus**: Time-series database for metrics
+- **In your code**: Already have `prometheus-client==0.17.1` in requirements
+- **What it does**: Collects metrics like:
+  - Inference latency
+  - Trade execution time
+  - Model confidence scores
+  - System resources (CPU, memory)
+- **How to use**: Metrics exposed on HTTP endpoint, Prometheus scrapes them
+
+#### 9. **Distributed Tracing (Jaeger/Zipkin)**
+**Q: Benefit/overhead?**
+
+**Answer**:
+- **What it does**: Tracks request flow across services
+- **Your architecture**: Single service (no microservices)
+- **Overhead**: Additional container, 500MB RAM, complexity
+- **Benefit in your case**: NONE - you don't have distributed services
+- **Verdict**: Skip entirely
+
+#### 10. **Custom Trading Metrics**
+**Q: Let's discuss specifics**
+
+**Suggested Metrics to Implement**:
+```python
+# Real-time metrics (update every trade)
+- Win rate (rolling 20 trades)
+- Average win/loss ratio
+- Consecutive wins/losses
+- Drawdown from peak
+- Time in position
+
+# Session metrics (update every 6 hours)
+- Trades per session
+- Profit factor
+- Sharpe ratio
+- Maximum adverse excursion
+
+# Model metrics (track degradation)
+- Confidence score distribution
+- Action distribution (% buy/sell/hold)
+- MCTS exploration depth
+```
+
+#### 11. **Dr. Bandy's Position Sizing**
+**Q: Uses rolling win rate to size positions?**
+
+**Answer - Dr. Bandy's Approach**:
+- Uses **Kelly Criterion** with safety factor
+- Position size = (Win% × Avg_Win - Loss% × Avg_Loss) / Avg_Loss
+- Applies 25% safety factor (Kelly × 0.25)
+- Updates rolling metrics every 20-30 trades
+- **Your approach (1 unit)**: Correct for now while learning model behavior
+- **Future**: Implement fractional Kelly after 1000+ trades
+
+#### 12. **Sphinx Documentation**
+**Q: Tell me more**
+
+**Answer**:
+- **What it is**: Auto-generates HTML docs from docstrings
+- **Example output**: Like Python's official docs
+- **Setup effort**: 1 day
+- **Maintenance**: Must keep docstrings updated
+- **Worth it?**: Only if releasing as open-source library
+- **Alternative**: Just good docstrings + README is sufficient
+
+#### 13. **Architecture Decision Records (ADRs)**
+**Q: What are these?**
+
+**Answer - ADR Example**:
+```markdown
+# ADR-001: Use AMDDP1 Reward Instead of Simple PnL
+Date: 2024-09-15
+Status: Accepted
+
+## Context
+Need reward function that penalizes drawdowns
+
+## Decision
+Use AMDDP with 1% penalty factor
+
+## Consequences
+- Better risk-adjusted returns
+- Longer training time
+- More stable strategies
+```
+**Benefit**: Documents "why" for future maintainers
+**Effort**: 10 minutes per major decision
+**Recommendation**: Start simple markdown file: `docs/decisions.md`
+
+#### 14. **Dependency Management Poetry vs Pip**
+**Q: Overhead vs benefits?**
+
+**Answer**:
 - **Poetry Benefits**:
-  - Lock file for exact reproducibility
-  - Automatic venv management
-  - Dependency resolution
+  - `poetry.lock` guarantees exact reproducibility
+  - Handles dependency conflicts automatically
+  - Built-in virtual environment management
 - **Poetry Overhead**:
-  - New tool to learn
-  - Migration effort: ~2 hours
-  - May complicate Docker builds
-- **Recommendation**: Stick with pip + requirements.txt for now
+  - Learning curve: 2-3 hours
+  - Migration: 2 hours
+  - Docker complexity: Must install poetry in container
+- **Your case**:
+  - 7 requirements files is messy
+  - But pip works fine for your needs
+- **Recommendation**: Stick with pip, just consolidate to 2 files:
+  - `requirements-base.txt` (core deps)
+  - `requirements-dev.txt` (testing, validation)
 
-#### 5. **Trading Metrics & Model Drift**
-- **Dr. Bandy's Approach**: Uses rolling metrics (win rate, expectancy) for position sizing
-- **Current**: Fixed 1-unit positions (correct for now)
-- **Future Metrics to Track**:
-  - 20-trade rolling win rate
-  - Rolling Sharpe ratio
-  - Maximum adverse excursion (MAE)
-  - Alert if win rate drops >2 std devs
+#### 15. **Model Versioning System**
+**Q: How?**
+
+**Answer - Simple Implementation**:
+```python
+# In checkpoint:
+checkpoint = {
+    'episode': 500,
+    'model_state_dict': model.state_dict(),
+    'model_version': {
+        'architecture': 'v2_137features',
+        'compatible_with': ['v2_137features'],
+        'git_commit': 'abc123',
+        'training_data': 'GBPJPY_2020-2024',
+    }
+}
+
+# On load:
+if checkpoint['model_version']['architecture'] != expected_version:
+    raise IncompatibleModelError()
+```
+
+#### 16. **@lru_cache Decorator**
+**Q: Please explain**
+
+**Answer**:
+```python
+from functools import lru_cache
+
+# WITHOUT CACHE (slow):
+def calculate_wst(data):
+    # Complex 200ms calculation
+    return result
+
+# WITH CACHE (fast):
+@lru_cache(maxsize=128)  # Remember last 128 results
+def calculate_wst(data):
+    # First call: 200ms
+    # Subsequent calls with same data: <0.001ms
+    return result
+```
+**Best for**: Pure functions (same input → same output)
+**Your use cases**: WST transform, feature normalization, indicator calculations
 
 ### **📊 IMPLEMENTATION PRIORITY MATRIX**
 
