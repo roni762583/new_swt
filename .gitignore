@@ -54,3 +54,7 @@ data/*.parquet
 # But track README files in these directories
 !checkpoints/README.md
 !data/README.md
+# Large files
+precomputed_wst/*.h5
+checkpoints/checkpoints/*.pth
+*.pth

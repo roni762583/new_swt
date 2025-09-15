@@ -33,10 +33,192 @@ This is a **COMPLETE PRODUCTION-READY REIMPLEMENTATION** of the SWT (Stochastic 
 
 #### **Training Improvements**
 - **Random 6-hour session selection**: Training now uses random 6-hour windows instead of sequential episodes
-- **Weekend/gap filtering**: Automatically skips sessions with weekend periods or data gaps >5 minutes
+- **Weekend/gap filtering**: Automatically skips sessions with weekend periods or data gaps >10 minutes
 - **Fixed dimension mismatch**: Network now properly handles 137 features (128 WST + 9 position) directly
 - **AMDDP1 reward**: Using 1% drawdown penalty for position feature rewards
 - **Checkpoint retention**: Keeps only last 2 checkpoints + best model to save disk space
+
+#### **🏗️ Architectural Review & Development Workplan (September 15, 2025)**
+
+## **📋 ACTIONABLE WORKPLAN**
+
+### **🔴 IMMEDIATE ACTIONS (This Week)**
+
+#### 1. **Module Consolidation** ✅ APPROVED
+- **Task**: Merge `swt_environment/` into `swt_environments/`
+- **Effort**: 2 hours
+- **Impact**: Eliminates confusion, cleaner codebase
+
+#### 2. **Technical Debt Cleanup** ✅ APPROVED
+- **Task**: Address top 20 critical TODOs
+- **Effort**: 1 day
+- **Action Plan**:
+  - Extract all TODOs into backlog
+  - Prioritize by impact on production
+  - Fix or convert to GitHub issues
+
+#### 3. **Quick Performance Wins** ✅ APPROVED
+- **torch.jit compilation**: Add `@torch.jit.script` to inference functions (20% speedup)
+- **LRU caching**: Add `@functools.lru_cache` to pure functions (e.g., feature calculations)
+- **Batch processing**: Modify validation scripts to process multiple samples at once
+- **Async I/O**: Convert data feed operations to async/await
+- **Effort**: 1 day total
+
+### **🟡 HIGH PRIORITY (Next Sprint)**
+
+#### 1. **Parallel Processing Enhancements** ✅ APPROVED
+- **Session Sampling Parallelization**:
+  - Use `multiprocessing.Pool` for parallel session validation
+  - Expected speedup: 3-4x on multi-core systems
+- **Concurrent MCTS**:
+  - Implement batch MCTS simulations using `torch.multiprocessing`
+  - Process multiple tree searches simultaneously
+
+#### 2. **GPU Optimizations** ✅ APPROVED (Future-Proofing)
+```python
+# Add to training and inference:
+with torch.cuda.amp.autocast():  # Mixed precision
+    output = model(input)
+# Note: Will auto-disable on CPU-only systems
+```
+
+#### 3. **Error Handling Standardization** ✅ APPROVED
+```python
+# Create swt_core/exceptions.py hierarchy:
+class SWTBaseException(Exception): pass
+class DataException(SWTBaseException): pass
+class ModelException(SWTBaseException): pass
+# Add retry decorator for external APIs
+```
+
+#### 4. **Testing Infrastructure** ✅ APPROVED
+- Set up pytest with 80% coverage target
+- Focus on critical paths: inference, trading decisions, position management
+
+### **🟢 MEDIUM PRIORITY (Next Month)**
+
+#### 1. **Caching Strategy** 📊 NEEDS DISCUSSION
+
+**Current State**: Simple pickle cache (cache/wst_cache.pkl)
+
+**Proposed Multi-Level Cache**:
+```python
+Level 1: In-memory LRU (functools.lru_cache) - microseconds
+Level 2: Local disk cache (HDF5) - milliseconds
+Level 3: Redis (optional, for distributed) - milliseconds
+```
+
+**Benefits vs Overhead**:
+- **Benefit**: 10-100x speedup for repeated calculations
+- **Overhead**: Redis adds complexity (Docker service, network latency)
+- **Recommendation**: Start with Level 1+2, add Redis only if scaling to multiple instances
+
+#### 2. **Model Architecture Refactoring** ✅ APPROVED
+- Split `swt_stochastic_networks.py` into:
+  - `representation_network.py`
+  - `dynamics_network.py`
+  - `policy_network.py`
+  - `value_network.py`
+- Add version tracking in checkpoint metadata
+
+#### 3. **Checkpoint Management** ✅ APPROVED
+- **Pruning Strategy**: Keep only:
+  - Last 5 checkpoints
+  - Best checkpoint per 100 episodes
+  - All checkpoints with >X% improvement
+- **TensorBoard vs JSON**:
+  - TensorBoard better for real-time monitoring
+  - JSON better for programmatic access
+  - **Recommendation**: Use both (TensorBoard for viz, JSON for automation)
+
+### **🔵 LOWER PRIORITY (Future)**
+
+#### **Distributed Training (Ray/Dask)** 📊 ANALYSIS
+- **Ray Overhead**: ~500MB memory, 5-10s startup, requires Ray cluster
+- **Benefit**: Only valuable for >100GB datasets or >10 GPUs
+- **Current Dataset**: 1.88M bars (~145MB WST features)
+- **Verdict**: NOT NEEDED NOW - single machine is sufficient
+
+#### **Documentation Tools**
+- **Sphinx**: Auto-generates HTML docs from docstrings
+  - Benefit: Professional API documentation
+  - Effort: 1 day setup + ongoing maintenance
+  - **Verdict**: Nice-to-have, not critical
+- **ADRs (Architecture Decision Records)**:
+  - Simple markdown files documenting "why" decisions
+  - Example: "Why we chose AMDDP1 over standard rewards"
+  - **Verdict**: Valuable for long-term maintenance
+
+### **❓ POINTS FOR DISCUSSION**
+
+#### 1. **Session Sampling Optimization**
+**Current Understanding**: Random start index → take next 360 bars → reject if gaps/weekend
+
+**Proposed Improvement**: Pre-index all valid sessions at startup
+```python
+# On initialization:
+valid_sessions = []
+for i in range(len(data) - 360):
+    if is_valid_session(data[i:i+360]):
+        valid_sessions.append(i)
+# During training:
+start_idx = random.choice(valid_sessions)  # O(1) instead of retry loop
+```
+**Benefit**: Eliminates rejection loops, guaranteed valid sessions
+
+#### 2. **Data Augmentation for Time Series**
+- **Noise injection**: Add small Gaussian noise to prices (robustness)
+- **Time warping**: Slightly speed up/slow down time series
+- **Magnitude warping**: Scale price movements by 0.9-1.1x
+- **Question**: Worth the complexity for forex data?
+
+#### 3. **Memory-Mapped Files**
+- **Use Case**: When dataset > RAM (not our case currently)
+- **Current**: 1.88M bars easily fits in 8GB RAM
+- **Verdict**: Not needed unless scaling to years of tick data
+
+#### 4. **Dependency Management (Poetry vs Pip)**
+- **Poetry Benefits**:
+  - Lock file for exact reproducibility
+  - Automatic venv management
+  - Dependency resolution
+- **Poetry Overhead**:
+  - New tool to learn
+  - Migration effort: ~2 hours
+  - May complicate Docker builds
+- **Recommendation**: Stick with pip + requirements.txt for now
+
+#### 5. **Trading Metrics & Model Drift**
+- **Dr. Bandy's Approach**: Uses rolling metrics (win rate, expectancy) for position sizing
+- **Current**: Fixed 1-unit positions (correct for now)
+- **Future Metrics to Track**:
+  - 20-trade rolling win rate
+  - Rolling Sharpe ratio
+  - Maximum adverse excursion (MAE)
+  - Alert if win rate drops >2 std devs
+
+### **📊 IMPLEMENTATION PRIORITY MATRIX**
+
+| Task | Impact | Effort | Priority | Status |
+|------|--------|--------|----------|--------|
+| Module consolidation | High | Low | NOW | 🔴 |
+| Fix critical TODOs | High | Medium | NOW | 🔴 |
+| Quick perf wins | High | Low | NOW | 🔴 |
+| Parallel sampling | High | Medium | HIGH | 🟡 |
+| Concurrent MCTS | High | Medium | HIGH | 🟡 |
+| GPU optimization | Medium | Low | HIGH | 🟡 |
+| Unit tests | High | High | HIGH | 🟡 |
+| Multi-level cache | Medium | Medium | MEDIUM | 🟢 |
+| Model refactoring | Medium | Medium | MEDIUM | 🟢 |
+| Checkpoint pruning | Medium | Low | MEDIUM | 🟢 |
+| Distributed training | Low | High | FUTURE | 🔵 |
+| Kubernetes | Low | High | FUTURE | 🔵 |
+
+### **🚀 NEXT STEPS**
+1. Execute immediate actions (module consolidation, TODOs, quick wins)
+2. Set up pytest infrastructure
+3. Implement parallel session sampling
+4. Add monitoring for model drift detection
 
 #### **Position Features (Verified Training Match)**
 All 9 position features now match the training environment exactly:
