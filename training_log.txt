@@ -1,0 +1,22 @@
+2025-09-15 16:29:13,494 - INFO - ============================================================
+2025-09-15 16:29:13,494 - INFO - 🚀 MILLION SESSION TRAINING INITIALIZED
+2025-09-15 16:29:13,494 - INFO - ============================================================
+2025-09-15 16:29:13,495 - INFO - Total Sessions: 1,000,000
+2025-09-15 16:29:13,495 - INFO - Device: cuda
+2025-09-15 16:29:13,495 - INFO - Checkpoint Interval: 1,000
+2025-09-15 16:29:13,495 - INFO - Validation Interval: 5,000
+2025-09-15 16:29:13,495 - INFO - ============================================================
+2025-09-15 16:29:13,495 - INFO - 🧠 Initializing model architecture...
+2025-09-15 16:29:13,890 - ERROR - 
+❌ Training failed: cannot import name 'StochasticMuZeroNetworks' from 'swt_models.swt_stochastic_networks' (/workspace/swt_models/swt_stochastic_networks.py)
+2025-09-15 16:29:13,890 - ERROR - Failed to save emergency checkpoint: 'MillionSessionTrainer' object has no attribute 'networks'
+Traceback (most recent call last):
+  File "/workspace/train_million_sessions.py", line 353, in <module>
+    main()
+  File "/workspace/train_million_sessions.py", line 349, in main
+    trainer.run()
+  File "/workspace/train_million_sessions.py", line 264, in run
+    self.initialize_model()
+  File "/workspace/train_million_sessions.py", line 106, in initialize_model
+    from swt_models.swt_stochastic_networks import StochasticMuZeroNetworks
+ImportError: cannot import name 'StochasticMuZeroNetworks' from 'swt_models.swt_stochastic_networks' (/workspace/swt_models/swt_stochastic_networks.py)

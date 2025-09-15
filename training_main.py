@@ -145,7 +145,12 @@ class SWTTrainingOrchestrator(ManagedProcess):
             # self.config_manager.force_episode_13475_mode()  # Method not available in ConfigManager
             
             # Initialize feature processor
-            self.feature_processor = FeatureProcessor(self.config)
+            # Use precomputed WST if available
+            precomputed_path = "precomputed_wst/GBPJPY_WST_3.5years_streaming.h5"
+            self.feature_processor = FeatureProcessor(
+                self.config,
+                precomputed_wst_path=precomputed_path if Path(precomputed_path).exists() else None
+            )
             
             # Initialize environment with proper configuration
             env_config = {
@@ -316,18 +321,22 @@ class SWTTrainingOrchestrator(ManagedProcess):
                     self.environment.current_step + self.environment.price_series_length
                 ]
 
-                # Process observation through WST features
-                # Add market data to feature processor
-                from swt_features.market_features import MarketDataPoint
-                current_idx = self.environment.current_step + self.environment.price_series_length
-                market_data = MarketDataPoint(
-                    timestamp=self.environment.df.index[current_idx],
-                    open=self.environment.df['open'].iloc[current_idx],
-                    high=self.environment.df['high'].iloc[current_idx],
-                    low=self.environment.df['low'].iloc[current_idx],
-                    close=current_price
-                )
-                self.feature_processor.add_market_data(market_data)
+                # For precomputed WST, use the current step as window index
+                # This maps directly to the precomputed features
+                window_index = self.environment.current_step
+
+                # Only add market data if NOT using precomputed (for live trading)
+                if self.feature_processor.precomputed_loader is None:
+                    from swt_features.market_features import MarketDataPoint
+                    current_idx = self.environment.current_step + self.environment.price_series_length
+                    market_data = MarketDataPoint(
+                        timestamp=self.environment.df.index[current_idx],
+                        open=self.environment.df['open'].iloc[current_idx],
+                        high=self.environment.df['high'].iloc[current_idx],
+                        low=self.environment.df['low'].iloc[current_idx],
+                        close=current_price
+                    )
+                    self.feature_processor.add_market_data(market_data)
 
                 # Convert SWTPositionState to PositionState for feature processor
                 from swt_core.types import PositionState, PositionType
@@ -351,7 +360,8 @@ class SWTTrainingOrchestrator(ManagedProcess):
                 # Process observation with position state and current price
                 processed_obs = self.feature_processor.process_observation(
                     position_state=feature_position_state,
-                    current_price=current_price
+                    current_price=current_price,
+                    window_index=window_index  # Pass window index for precomputed WST
                 )
                 wst_features = torch.FloatTensor(processed_obs.combined_features).unsqueeze(0)
                 
@@ -371,7 +381,8 @@ class SWTTrainingOrchestrator(ManagedProcess):
                     action = np.argmax(action_probs)
                 
                 # Execute action in environment
-                next_observation, reward, done, info = self.environment.step(action)
+                next_observation, reward, terminated, truncated, info = self.environment.step(action)
+                done = terminated or truncated
                 
                 # Store transition
                 trajectory.append({

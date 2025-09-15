@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # Training Container - Always stays alive, runs on 6 cores
+  # Training Container - Resumes from last checkpoint, targets 1M sessions
   training:
     build:
       context: .
@@ -15,31 +15,26 @@ services:
       - ./checkpoints:/workspace/checkpoints
       - ./logs/training:/workspace/logs
       - ./cache:/workspace/cache
+      - ./training_state:/workspace/training_state
     environment:
       - PYTHONPATH=/workspace
       - OMP_NUM_THREADS=6
       - MKL_NUM_THREADS=6
       - NUMBA_NUM_THREADS=6
+      - TARGET_EPISODES=1000000
     deploy:
       resources:
         limits:
           cpus: '6'
           memory: 12G
-    command: >
-      bash -c "
-      echo '🚀 Starting SWT Training Container (6 cores)...' &&
-      echo '📊 Starting FULL TRAINING with 20,000 episode limit...' &&
-      python training_main.py --config config/training.yaml --max-episodes 20000 --enable-validation || true &&
-      echo '✅ Training complete or stopped. Container staying alive...' &&
-      tail -f /dev/null
-      "
+    command: ["bash", "/workspace/scripts/start_training.sh"]
     healthcheck:
       test: ["CMD", "python", "-c", "print('Training container healthy')"]
       interval: 60s
       timeout: 10s
       retries: 3
 
-  # Validation Container - Always monitoring for new checkpoints
+  # Validation Container - Monitors for new best checkpoints
   validation:
     build:
       context: .
@@ -64,16 +59,7 @@ services:
         limits:
           cpus: '6'
           memory: 8G
-    command: >
-      bash -c "
-      echo '🔍 Starting SWT Validation Container (up to 6 cores)...' &&
-      while true; do
-        echo 'Monitoring checkpoints directory for new best_checkpoint.pth...' &&
-        python swt_validation/checkpoint_monitor.py --checkpoint-dir /workspace/checkpoints --output-dir /workspace/validation_results --watch-interval 30 --auto-validate || true &&
-        echo 'Validation monitor restarting in 10 seconds...' &&
-        sleep 10
-      done
-      "
+    command: ["bash", "/workspace/scripts/start_validation.sh"]
     depends_on:
       - training
     healthcheck:
@@ -82,7 +68,7 @@ services:
       timeout: 10s
       retries: 3
 
-  # Live Trading Container - Always running with Episode 10
+  # Live Trading Container - Ready but waiting for explicit instruction
   live:
     build:
       context: .
@@ -96,40 +82,24 @@ services:
       - ./sessions:/workspace/sessions
       - ./logs/live:/workspace/logs
       - ./checkpoints:/workspace/checkpoints
+      - ./live_state:/workspace/live_state
     environment:
       - PYTHONPATH=/workspace
       - OMP_NUM_THREADS=4
       - MKL_NUM_THREADS=4
       - NUMBA_NUM_THREADS=4
-      - CHECKPOINT_PATH=/workspace/checkpoints/episode_10_best.pth
       - OANDA_API_KEY=${OANDA_API_KEY}
       - OANDA_ACCOUNT_ID=${OANDA_ACCOUNT_ID}
-      - OANDA_ENVIRONMENT=${OANDA_ENVIRONMENT}
-      - IS_DEMO=${IS_DEMO}
-      - INSTRUMENT=${INSTRUMENT}
-      - MAX_POSITION_SIZE=${MAX_POSITION_SIZE}
+      - OANDA_ENVIRONMENT=${OANDA_ENVIRONMENT:-practice}
+      - IS_DEMO=${IS_DEMO:-true}
+      - INSTRUMENT=${INSTRUMENT:-GBP_JPY}
+      - MAX_POSITION_SIZE=${MAX_POSITION_SIZE:-1}
     deploy:
       resources:
         limits:
           cpus: '4'
           memory: 4G
-    command: >
-      bash -c "
-      echo '💹 Starting SWT Live Trading Container (Episode 10)...' &&
-      echo 'OANDA Account: ${OANDA_ACCOUNT_ID}' &&
-      echo 'Environment: ${OANDA_ENVIRONMENT}' &&
-      echo 'Instrument: ${INSTRUMENT}' &&
-      while true; do
-        if [ -f /workspace/checkpoints/episode_10_best.pth ]; then
-          echo '🔥 Starting LIVE TRADING with Episode 10 checkpoint...'
-          python live_trading_main.py --checkpoint /workspace/checkpoints/episode_10_best.pth --config config/live.yaml || true
-        else
-          echo 'Waiting for episode_10_best.pth checkpoint...'
-        fi
-        echo 'Live trading will restart in 30 seconds...'
-        sleep 30
-      done
-      "
+    command: ["bash", "/workspace/scripts/start_live.sh"]
     depends_on:
       - validation
     healthcheck:

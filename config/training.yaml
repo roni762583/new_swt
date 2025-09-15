@@ -1,0 +1,83 @@
+# SWT Training Configuration
+# Production settings for 1M session training
+
+# Training Parameters
+training:
+  max_episodes: 1000000  # Target: 1 million sessions
+  batch_size: 128
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  gradient_clip: 5.0
+
+  # Checkpoint settings
+  checkpoint_interval: 100  # Save every 100 episodes
+  validation_interval: 500  # Validate every 500 episodes
+  keep_last_checkpoints: 2  # Keep only last 2 checkpoints + best
+  track_expectancy: true  # Track and save based on expectancy
+
+  # Experience replay
+  buffer_size: 100000
+  min_buffer_size: 10000
+  priority_alpha: 0.6
+  priority_beta: 0.4
+
+# Model Architecture
+model:
+  observation_dim: 137  # 128 WST + 9 position features
+  action_dim: 4  # HOLD, BUY, SELL, CLOSE
+  hidden_dim: 256
+  support_size: 300
+  num_layers: 8
+  num_heads: 8
+  dropout: 0.1
+
+# MCTS Parameters
+mcts:
+  num_simulations: 50
+  c_puct: 1.25
+  dirichlet_alpha: 0.3
+  exploration_fraction: 0.25
+  temperature: 1.0
+
+# Session Sampling
+session:
+  min_duration_hours: 6
+  max_gap_minutes: 10
+  overlap_hours: 0
+  random_start: true
+
+# Environment Settings
+environment:
+  data_path: "data/GBPJPY_M1_3.5years_20250912.csv"
+  instrument: "GBP_JPY"
+  pip_scale: 100  # GBPJPY uses 2 decimal places
+  spread: 2.0  # Average spread in pips
+
+  # Reward settings (AMDDP1)
+  reward_type: "amddp1"
+  drawdown_penalty: 0.01  # 1% penalty
+
+# Resource Management
+resources:
+  device: "cuda"  # Use cuda if available, else cpu
+  num_workers: 4
+  pin_memory: true
+  prefetch_factor: 2
+
+# Logging and Monitoring
+logging:
+  level: "INFO"
+  log_dir: "logs/training"
+  tensorboard: false  # Disable for production
+  log_interval: 100  # Log every 100 episodes
+
+# Validation Settings
+validation:
+  enabled: true
+  data_split: 0.2  # Use last 20% for validation
+  metrics:
+    - "win_rate"
+    - "sharpe_ratio"
+    - "max_drawdown"
+    - "total_return"
+  min_improvement: 0.01  # 1% improvement threshold

@@ -19,6 +19,7 @@ from swt_core.exceptions import FeatureProcessingError, DataValidationError
 from .wst_transform import WSTProcessor, WSTConfig
 from .market_features import MarketFeatureExtractor, MarketDataPoint
 from .position_features import PositionFeatureExtractor
+from .precomputed_wst_loader import PrecomputedWSTLoader
 
 logger = logging.getLogger(__name__)
 
@@ -47,18 +48,43 @@ class FeatureProcessor:
     to eliminate training/live system mismatches that caused trading failures.
     """
     
-    def __init__(self, config: SWTConfig):
+    def __init__(self, config: SWTConfig, precomputed_wst_path: Optional[str] = None):
         """
         Initialize unified feature processor
-        
+
         Args:
             config: SWT system configuration
+            precomputed_wst_path: Path to precomputed WST HDF5 file
         """
         self.config = config
-        
-        # Create WST config - let MarketFeatureExtractor handle backend fallback
-        # Get WST output dimension from config
+        self.precomputed_wst_path = precomputed_wst_path
+
+        # Check for precomputed WST file
+        if self.precomputed_wst_path is None:
+            # Try default location
+            default_path = Path("precomputed_wst/GBPJPY_WST_3.5years_streaming.h5")
+            if default_path.exists():
+                self.precomputed_wst_path = str(default_path)
+                logger.info(f"🗃️ Found precomputed WST at: {self.precomputed_wst_path}")
+
+        # Get expected WST dimension from config
         wst_output_dim = getattr(config.feature_config.wst_config, 'output_dim', 128)
+
+        # Initialize precomputed loader if available
+        self.precomputed_loader = None
+        if self.precomputed_wst_path and Path(self.precomputed_wst_path).exists():
+            try:
+                # Pass target dimension for automatic expansion if needed
+                self.precomputed_loader = PrecomputedWSTLoader(
+                    self.precomputed_wst_path,
+                    target_dim=wst_output_dim
+                )
+                logger.info(f"✅ Using PRECOMPUTED WST features for 10x speedup!")
+            except Exception as e:
+                logger.warning(f"Failed to load precomputed WST: {e}")
+                logger.info("Falling back to on-the-fly WST computation")
+        else:
+            logger.info("🔄 Using on-the-fly WST computation (slower)")
 
         wst_config = WSTConfig(
             J=config.feature_config.wst_config.J,
@@ -126,7 +152,8 @@ class FeatureProcessor:
     def process_observation(self, position_state: PositionState,
                           current_price: float,
                           market_cache_key: Optional[str] = None,
-                          market_metadata: Optional[Dict[str, Any]] = None) -> ProcessedObservation:
+                          market_metadata: Optional[Dict[str, Any]] = None,
+                          window_index: Optional[int] = None) -> ProcessedObservation:
         """
         Process complete observation for neural network input
         
@@ -134,16 +161,20 @@ class FeatureProcessor:
         
         Args:
             position_state: Current position state
-            current_price: Current market price  
+            current_price: Current market price
             market_cache_key: Cache key for WST transform
             market_metadata: Additional market information
-            
+            window_index: Index for precomputed WST features (if available)
+
         Returns:
             ProcessedObservation with all features and metadata
         """
         try:
-            # Extract market features
-            market_features = self._extract_market_features(market_cache_key)
+            # Extract market features (using precomputed if index provided)
+            market_features = self._extract_market_features(
+                cache_key=market_cache_key,
+                window_index=window_index
+            )
             
             # Extract position features (EXACT training compatibility)
             position_features = self._extract_position_features(
@@ -190,24 +221,82 @@ class FeatureProcessor:
                 original_error=e
             )
     
-    def _extract_market_features(self, cache_key: Optional[str] = None) -> np.ndarray:
-        """Extract market features using WST transform"""
+    def _extract_market_features(self, cache_key: Optional[str] = None, window_index: Optional[int] = None) -> np.ndarray:
+        """Extract market features using precomputed WST or on-the-fly computation
+
+        Args:
+            cache_key: Cache key for WST transform (used for on-the-fly computation)
+            window_index: Index into precomputed WST features (if available)
+        """
         try:
-            if not self.market_extractor.is_ready():
-                raise FeatureProcessingError(
-                    f"Insufficient market data: need {self.market_extractor.window_size}, "
-                    f"have {len(self.market_extractor._price_buffer)}"
-                )
-            
-            market_features = self.market_extractor.extract_features(cache_key=cache_key)
-            
+            # Prioritize precomputed WST if available and index provided
+            if self.precomputed_loader and window_index is not None:
+                try:
+                    # Get precomputed WST features (now automatically expanded to 128D)
+                    wst_tensor = self.precomputed_loader.get_single_wst_feature(window_index)
+
+                    # Convert to numpy if needed
+                    if hasattr(wst_tensor, 'numpy'):
+                        market_features = wst_tensor.numpy()
+                    else:
+                        market_features = np.array(wst_tensor)
+
+                    # Ensure correct shape
+                    if len(market_features.shape) > 1:
+                        market_features = market_features.squeeze()
+
+                    logger.debug(f"Using precomputed WST for window {window_index}, shape: {market_features.shape}")
+
+                    # Validate and return precomputed features
+                    expected_market_dim = self.observation_space.market_state_dim
+                    if market_features.shape == (expected_market_dim,):
+                        return market_features
+                    else:
+                        logger.error(
+                            f"Precomputed WST shape mismatch: expected ({expected_market_dim},), "
+                            f"got {market_features.shape} after expansion"
+                        )
+                        # Don't fall through - this is a critical error
+                        raise FeatureProcessingError(
+                            f"Precomputed WST dimension error: got {market_features.shape}, "
+                            f"expected ({expected_market_dim},)"
+                        )
+
+                except Exception as e:
+                    logger.error(f"Failed to get precomputed WST for index {window_index}: {e}")
+                    # If we have precomputed loader and window_index, we should NOT fall back
+                    # This is a critical error that needs investigation
+                    raise FeatureProcessingError(
+                        f"Precomputed WST extraction failed for window {window_index}: {e}"
+                    )
+
+            # Only compute on-the-fly if no precomputed option available
+            elif not self.precomputed_loader:
+                if not self.market_extractor.is_ready():
+                    raise FeatureProcessingError(
+                        f"Insufficient market data: need {self.market_extractor.window_size}, "
+                        f"have {len(self.market_extractor._price_buffer)}"
+                    )
+
+                market_features = self.market_extractor.extract_features(cache_key=cache_key)
+            else:
+                # Have loader but no window_index - this shouldn't happen in training
+                logger.warning("Have precomputed loader but no window_index provided")
+                if not self.market_extractor.is_ready():
+                    raise FeatureProcessingError(
+                        f"Insufficient market data: need {self.market_extractor.window_size}, "
+                        f"have {len(self.market_extractor._price_buffer)}"
+                    )
+
+                market_features = self.market_extractor.extract_features(cache_key=cache_key)
+
             # Validate market features
             expected_market_dim = self.observation_space.market_state_dim
             if market_features.shape != (expected_market_dim,):
                 raise FeatureProcessingError(
                     f"Market features shape mismatch: expected ({expected_market_dim},), got {market_features.shape}"
                 )
-            
+
             return market_features
             
         except Exception as e:
@@ -277,6 +366,10 @@ class FeatureProcessor:
     
     def is_ready(self) -> bool:
         """Check if processor is ready for feature extraction"""
+        # If we have precomputed features, we're always ready
+        if self.precomputed_loader is not None:
+            return True
+        # Otherwise check if we have enough market data
         return self.market_extractor.is_ready()
     
     def get_system_status(self) -> Dict[str, Any]:

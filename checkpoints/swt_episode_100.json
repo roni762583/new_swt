@@ -1,10 +1,10 @@
 {
   "episode": 100,
-  "timestamp": "2025-09-15T13:10:06.318125",
+  "timestamp": "2025-09-15T17:15:44.308727",
   "performance": {
     "episode": 99,
-    "error": "Observation processing failed: Insufficient market data: need 256, have 100 (Context: position_type=FLAT, current_price=171.616) (Caused by: FeatureProcessingError: Insufficient market data: need 256, have 100)",
-    "timestamp": "2025-09-15T13:10:06.317736"
+    "error": "Observation processing failed: Insufficient market data: need 256, have 100 (Context: position_type=FLAT, current_price=207.01) (Caused by: FeatureProcessingError: Insufficient market data: need 256, have 100)",
+    "timestamp": "2025-09-15T17:15:44.308405"
   },
   "config": {
     "agent_type": "episode_13475_compatible",
