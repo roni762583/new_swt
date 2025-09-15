@@ -1,10 +1,10 @@
 {
   "episode": 300,
-  "timestamp": "2025-09-15T01:29:40.433507",
+  "timestamp": "2025-09-15T13:13:13.239320",
   "performance": {
     "episode": 299,
-    "error": "mat1 and mat2 shapes cannot be multiplied (1x137 and 128x256)",
-    "timestamp": "2025-09-15T01:29:40.432307"
+    "error": "too many values to unpack (expected 4)",
+    "timestamp": "2025-09-15T13:13:13.238146"
   },
   "config": {
     "agent_type": "episode_13475_compatible",

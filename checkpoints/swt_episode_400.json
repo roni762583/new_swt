@@ -1,10 +1,10 @@
 {
   "episode": 400,
-  "timestamp": "2025-09-15T01:22:32.964006",
+  "timestamp": "2025-09-15T13:14:48.729583",
   "performance": {
     "episode": 399,
-    "error": "'int' object has no attribute 'weekday'",
-    "timestamp": "2025-09-15T01:22:32.963651"
+    "error": "too many values to unpack (expected 4)",
+    "timestamp": "2025-09-15T13:14:48.728154"
   },
   "config": {
     "agent_type": "episode_13475_compatible",

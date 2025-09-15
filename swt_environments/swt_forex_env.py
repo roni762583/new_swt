@@ -283,12 +283,12 @@ class SWTForexEnvironment(gym.Env):
             if has_weekend:
                 continue
 
-            # Check for time gaps (more than 5 minutes between consecutive bars)
+            # Check for time gaps (more than 10 minutes between consecutive bars)
             if hasattr(session_data.index[0], 'to_pydatetime'):
                 # Index is datetime - check for gaps
                 time_diffs = session_data.index.to_series().diff()
                 max_gap = time_diffs.max()
-                if max_gap > pd.Timedelta(minutes=5):
+                if max_gap > pd.Timedelta(minutes=10):
                     continue
 
             # This is a valid session start

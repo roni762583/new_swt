@@ -104,10 +104,10 @@ class SWTSessionSampler:
         # Calculate time gaps
         time_diffs = self.df['timestamp'].diff()
         expected_interval = pd.Timedelta(minutes=1)
-        large_gaps = (time_diffs > expected_interval * 5).sum()  # >5min gaps
-        
+        large_gaps = (time_diffs > expected_interval * 10).sum()  # >10min gaps
+
         if large_gaps > 0:
-            logger.warning(f"⚠️ Found {large_gaps} large time gaps (>5min)")
+            logger.warning(f"⚠️ Found {large_gaps} large time gaps (>10min)")
             
         logger.info(f"✅ Data validation complete - Ready for session sampling")
         
