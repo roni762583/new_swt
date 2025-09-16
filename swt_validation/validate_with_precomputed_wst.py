@@ -21,10 +21,11 @@ import time
 from datetime import datetime, timedelta
 
 # Import our actual trading environment and components
-from swt_environments.swt_forex_env import SWTForexEnvironment as SWTForexEnv, SWTAction
+from swt_environments.swt_forex_env import SWTForexEnvironment as SWTForexEnv, SWTAction, SWTPositionState
 from swt_features.feature_processor import FeatureProcessor
 from swt_features.precomputed_wst_loader import PrecomputedWSTLoader
 from swt_core.config_manager import ConfigManager
+from swt_core.types import PositionState, PositionType
 from swt_validation.fixed_checkpoint_loader import load_checkpoint_with_proper_config
 
 logging.basicConfig(level=logging.INFO)
@@ -82,10 +83,8 @@ class PrecomputedWSTValidator:
 
         # Create the actual trading environment
         self.env = SWTForexEnv(
-            config=self.config_manager.config,
-            csv_file=str(self.csv_file),
-            feature_processor=self.feature_processor,
-            test_mode=True  # Use test data for validation
+            data_path=str(self.csv_file),
+            config_dict=self.config_manager.merged_config  # Use merged_config from ConfigManager
         )
 
         logger.info(f"Initialized trading environment with {self.csv_file}")
@@ -129,8 +128,40 @@ class PrecomputedWSTValidator:
                 steps = 0
 
                 while not done and steps < SESSION_LENGTH:
-                    # Convert observation to tensor
-                    obs_tensor = torch.FloatTensor(observation).unsqueeze(0)
+                    # Get current market price and position state from environment
+                    market_prices = observation['market_prices'] if isinstance(observation, dict) else observation[:256]
+                    current_price = market_prices[-1]  # Last price in the series
+                    position_state = self.env.position  # Get actual position state from environment
+
+                    # For precomputed WST, use the current step as window index
+                    window_index = self.env.current_step
+
+                    # Convert SWTPositionState to PositionState for feature processor
+                    if position_state.is_long:
+                        pos_type = PositionType.LONG
+                    elif position_state.is_short:
+                        pos_type = PositionType.SHORT
+                    else:
+                        pos_type = PositionType.FLAT
+
+                    # Create immutable PositionState
+                    feature_position_state = PositionState(
+                        position_type=pos_type,
+                        entry_price=position_state.entry_price,
+                        unrealized_pnl_pips=position_state.unrealized_pnl_pips,
+                        duration_minutes=position_state.duration_bars  # Using bars as minutes proxy
+                    )
+
+                    # Process observation with position state and current price
+                    processed_obs = self.feature_processor.process_observation(
+                        position_state=feature_position_state,
+                        current_price=current_price,
+                        window_index=window_index  # Pass window index for precomputed WST
+                    )
+
+                    # Get combined features (128 WST + 9 position)
+                    wst_features = processed_obs.combined_features  # Already 137 features
+                    obs_tensor = torch.FloatTensor(wst_features).unsqueeze(0)
 
                     # Get model prediction using initial_inference
                     inference_result = network.initial_inference(obs_tensor)
