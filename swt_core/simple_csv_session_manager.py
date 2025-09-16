@@ -236,8 +236,23 @@ class SimpleCsvSessionManager:
         if large_gaps.any():
             gap_count = large_gaps.sum()
             max_gap = time_diffs.max()
-            logger.warning(f"Session has {gap_count} gaps (max: {max_gap:.1f} minutes)")
-            # Still use the session but warn about gaps
+            logger.warning(f"Session rejected: {gap_count} gaps (max: {max_gap:.1f} minutes) - exceeds {self.config.max_gap_minutes}min limit")
+            return None  # Reject sessions with gaps
+
+        # Weekend detection (Friday 21:00 GMT to Sunday 21:00 GMT)
+        weekend_present = False
+        for _, row in session_df.iterrows():
+            timestamp = row['timestamp']
+            weekday = timestamp.weekday()  # 0=Monday, 6=Sunday
+            hour = timestamp.hour
+            # Friday after 21:00 or Saturday or Sunday before 21:00
+            if (weekday == 4 and hour >= 21) or weekday == 5 or (weekday == 6 and hour < 21):
+                weekend_present = True
+                break
+
+        if weekend_present:
+            logger.warning(f"Session rejected: weekend data detected (Friday 21:00+ or Saturday/Sunday before 21:00)")
+            return None  # Reject sessions with weekend data
         
         # Prepare session data
         session_data = {
