@@ -14,19 +14,21 @@ from pathlib import Path
 import logging
 import argparse
 from datetime import datetime
+import h5py
 
 # Import the actual trading environment
 from swt_environments.swt_forex_env import SWTForexEnvironment as SWTForexEnv
 from swt_validation.fixed_checkpoint_loader import load_checkpoint_with_proper_config
 from swt_core.config_manager import ConfigManager
+from swt_features.precomputed_wst_loader import PrecomputedWSTLoader
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def validate_checkpoint_simple(checkpoint_path: str, csv_file: str, num_runs: int = 10):
+def validate_checkpoint_simple(checkpoint_path: str, csv_file: str, wst_file: str, num_runs: int = 10):
     """
-    Validate checkpoint using raw environment - no feature processor complications
+    Validate checkpoint using raw environment with precomputed WST features
 
     Returns actual pip results after 4 pip spread costs
     """
@@ -46,6 +48,10 @@ def validate_checkpoint_simple(checkpoint_path: str, csv_file: str, num_runs: in
     checkpoint_data = load_checkpoint_with_proper_config(checkpoint_path)
     network = checkpoint_data['networks']
     network.eval()
+
+    # Load precomputed WST features
+    print("Loading precomputed WST features...")
+    wst_loader = PrecomputedWSTLoader(wst_file, cache_size=10000)
 
     # Create environment with actual spread costs
     print("Creating trading environment with 4 pip spread...")
@@ -68,7 +74,7 @@ def validate_checkpoint_simple(checkpoint_path: str, csv_file: str, num_runs: in
             print(f"Session {session+1}/{num_runs}...", end='', flush=True)
 
             # Reset for new 6-hour session
-            observation = env.reset()
+            observation, _ = env.reset()  # Unpack tuple, ignore info
 
             trades_this_session = []
             steps = 0
@@ -76,24 +82,25 @@ def validate_checkpoint_simple(checkpoint_path: str, csv_file: str, num_runs: in
 
             while not done and steps < 360:  # 6 hours = 360 minutes
                 # Get raw observation from environment
-                # The environment returns a dict with 'market_prices' and 'position_features'
                 if isinstance(observation, dict):
-                    # Flatten the observation for the model
-                    market_data = observation.get('market_prices', np.zeros(256))
                     position_data = observation.get('position_features', np.zeros(9))
-                    # For now, just use the last 128 prices + position features
-                    # This matches the model's expected 137 features
-                    flat_obs = np.concatenate([market_data[-128:], position_data])
                 else:
-                    # If already flat, truncate/pad to expected size
-                    flat_obs = observation
-                    if len(flat_obs) > 137:
-                        flat_obs = flat_obs[:137]
-                    elif len(flat_obs) < 137:
-                        flat_obs = np.pad(flat_obs, (0, 137 - len(flat_obs)))
+                    # Fallback if not dict
+                    position_data = np.zeros(9)
+
+                # Get WST features for current window
+                window_index = env.current_step
+                wst_features = wst_loader.get_wst_features(window_index)
+
+                # Convert torch tensor to numpy if needed
+                if hasattr(wst_features, 'numpy'):
+                    wst_features = wst_features.numpy()
+
+                # Combine WST features with position features (128 + 9 = 137)
+                combined_features = np.concatenate([wst_features, position_data])
 
                 # Convert to tensor
-                obs_tensor = torch.FloatTensor(flat_obs).unsqueeze(0)
+                obs_tensor = torch.FloatTensor(combined_features).unsqueeze(0)
 
                 # Get model prediction
                 inference_result = network.initial_inference(obs_tensor)
@@ -156,6 +163,8 @@ def main():
     parser.add_argument("--checkpoint", required=True, help="Path to checkpoint")
     parser.add_argument("--csv-file", default="data/GBPJPY_M1_3.5years_20250912.csv",
                        help="CSV file with price data")
+    parser.add_argument("--wst-file", default="precomputed_wst/GBPJPY_WST_3.5years_streaming.h5",
+                       help="Precomputed WST features file")
     parser.add_argument("--runs", type=int, default=10,
                        help="Number of validation runs")
 
@@ -166,6 +175,7 @@ def main():
     results = validate_checkpoint_simple(
         args.checkpoint,
         args.csv_file,
+        args.wst_file,
         args.runs
     )
 
