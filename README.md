@@ -38,6 +38,21 @@
   - Output: `precomputed_wst/GBPJPY_WST_CLEAN_2022-2025.h5` (99.4 MB)
   - Peak memory usage: Only 410 MB (excellent efficiency)
 
+### ✅ Data Pipeline Infrastructure (September 16, 2025):
+- **Master Database Created**: `data/master.duckdb` with 1.33M rows of GBPJPY M1 data
+  - 333 columns total: OHLCV, 255 close lags, 67 WST features, 4 cyclical time features
+  - Optimized column ordering: base → lag → WST features
+  - All features fully populated and verified
+- **Live Data Puller**: `data/oanda_m1_incremental_puller.py`
+  - OANDA v20 API integration for real-time M1 candles
+  - Functions: get_last_256_m1_closes(), get_latest_m1_close(), update_256_queue()
+  - Successfully tested with live GBPJPY data (199.945 at test time)
+- **Feature Engineering**: `data/handmade_feature_builder.py`
+  - populate_close_lag_features(): Creates c_1 through c_255 shift lags
+  - populate_wst_features(): Computes 67 Kymatio WST features (J=6, Q=4)
+  - populate_time_cyclical_features(): 120-hour trading week encoding
+- **Incremental Builder**: `data/incremental_feature_builder.py` (framework ready)
+
 ### ⚠️ Critical Fixes Required:
 
 #### 1. Fix Weekend Detection in SWTForexEnvironment
