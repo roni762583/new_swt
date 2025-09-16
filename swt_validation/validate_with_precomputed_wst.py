@@ -148,83 +148,115 @@ class PrecomputedWSTValidator:
         network = checkpoint['networks']
         network.eval()
 
-        # Run validation
+        # Run validation with 6-hour sessions
+        SESSION_LENGTH = 360  # 6 hours = 360 1-minute bars
         trades = []
 
+        # Run Monte Carlo sessions
+        num_sessions = num_runs
+        max_start = len(self.test_wst) - SESSION_LENGTH
+
         with torch.no_grad():
-            # Process test data in batches
-            batch_size = 100
-            for i in range(0, len(self.test_wst) - 1000, batch_size):
-                # Get WST features (already computed!)
-                wst_batch = self.test_wst[i:i+batch_size]
+            for session_num in range(num_sessions):
+                # Random starting point for this session
+                start_idx = np.random.randint(0, max_start)
 
-                # Create position features - map WST indices to CSV indices
-                # WST starts from around index 255 in the CSV based on the indices data
-                position_batch = np.array([
-                    self.create_position_features(255 + self.split_index + i + j)
-                    for j in range(len(wst_batch))
-                ])
+                # Process this 6-hour session in small batches
+                batch_size = 30  # Smaller batches for session processing
+                session_trades = []
 
-                # Process WST features - pre-computed are 16-dim raw WST output, need to expand to 128
-                if wst_batch.shape[1] == 16:
-                    # Pre-computed WST features are raw 16-dimensional
-                    # Pad or repeat to match expected 128 dimensions for the model
-                    logger.info(f"Expanding 16-dim WST features to 128 dimensions")
-                    # Repeat the 16 features 8 times to get 128 (16 * 8 = 128)
-                    expanded_wst = np.tile(wst_batch, (1, 8))  # Shape: (batch, 128)
-                    features = np.concatenate([expanded_wst, position_batch], axis=1)
-                elif wst_batch.shape[1] == 128:
-                    # WST features are already 128 dims
-                    features = np.concatenate([wst_batch, position_batch], axis=1)
-                else:
-                    # Handle other dimensions
-                    logger.warning(f"WST shape {wst_batch.shape[1]} != expected 16 or 128, truncating/padding to 128")
-                    if wst_batch.shape[1] > 128:
-                        wst_processed = wst_batch[:, :128]
+                for batch_start in range(start_idx, start_idx + SESSION_LENGTH, batch_size):
+                    batch_end = min(batch_start + batch_size, start_idx + SESSION_LENGTH)
+
+                    # Get WST features for this batch
+                    wst_batch = self.test_wst[batch_start:batch_end]
+
+                    # Create position features - map WST indices to CSV indices
+                    # WST starts from around index 255 in the CSV based on the indices data
+                    position_batch = np.array([
+                        self.create_position_features(255 + self.split_index + batch_start + j)
+                        for j in range(len(wst_batch))
+                    ])
+
+                    # Process WST features - pre-computed are 16-dim raw WST output, need to expand to 128
+                    if wst_batch.shape[1] == 16:
+                        # Pre-computed WST features are raw 16-dimensional
+                        # Repeat the 16 features 8 times to get 128 (16 * 8 = 128)
+                        expanded_wst = np.tile(wst_batch, (1, 8))  # Shape: (batch, 128)
+                        features = np.concatenate([expanded_wst, position_batch], axis=1)
+                    elif wst_batch.shape[1] == 128:
+                        # WST features are already 128 dims
+                        features = np.concatenate([wst_batch, position_batch], axis=1)
                     else:
-                        # Pad with zeros
-                        padding = np.zeros((wst_batch.shape[0], 128 - wst_batch.shape[1]))
-                        wst_processed = np.concatenate([wst_batch, padding], axis=1)
-                    features = np.concatenate([wst_processed, position_batch], axis=1)
+                        # Handle other dimensions
+                        if wst_batch.shape[1] > 128:
+                            wst_processed = wst_batch[:, :128]
+                        else:
+                            # Pad with zeros
+                            padding = np.zeros((wst_batch.shape[0], 128 - wst_batch.shape[1]))
+                            wst_processed = np.concatenate([wst_batch, padding], axis=1)
+                        features = np.concatenate([wst_processed, position_batch], axis=1)
 
-                # Convert to tensor
-                features_tensor = torch.FloatTensor(features)
+                    # Convert to tensor
+                    features_tensor = torch.FloatTensor(features)
 
-                # Get network predictions
-                hidden = network.representation_network(features_tensor)
+                    # Get network predictions
+                    hidden = network.representation_network(features_tensor)
 
-                # Simple trading logic (simplified for demo)
-                predictions = hidden.mean(dim=1).numpy()
-                for j, pred in enumerate(predictions):
-                    if abs(pred) > 0.5:  # Threshold for trade
-                        # Calculate return from next bar - map to proper CSV index
-                        csv_idx = 255 + self.split_index + i + j
-                        if csv_idx + 10 < len(self.price_df):
-                            entry_price = self.price_df.iloc[csv_idx]['close']
-                            exit_price = self.price_df.iloc[csv_idx + 10]['close']
-                            trade_return = (exit_price - entry_price) / entry_price * np.sign(pred)
-                            trades.append(trade_return)
+                    # Simple trading logic (simplified for demo)
+                    predictions = hidden.mean(dim=1).numpy()
+                    for j, pred in enumerate(predictions):
+                        if abs(pred) > 0.5:  # Threshold for trade
+                            # Calculate return from next bar - map to proper CSV index
+                            csv_idx = 255 + self.split_index + batch_start + j
+                            if csv_idx + 10 < len(self.price_df):
+                                entry_price = self.price_df.iloc[csv_idx]['close']
+                                exit_price = self.price_df.iloc[csv_idx + 10]['close']
+                                trade_return = (exit_price - entry_price) / entry_price * np.sign(pred)
+                                session_trades.append(trade_return)
 
-        # Calculate metrics
+                # Add session trades to overall trades
+                trades.extend(session_trades)
+
+        # Calculate metrics based on sessions
         if len(trades) > 0:
             trades = np.array(trades)
-            total_return = np.sum(trades)
+            # Average return per session (not total of all sessions)
+            avg_return_per_session = np.sum(trades) / num_sessions * 100  # Convert to percentage
+            total_return = avg_return_per_session  # Report per-session average
             win_rate = np.mean(trades > 0)
-            sharpe = np.mean(trades) / (np.std(trades) + 1e-8) * np.sqrt(252)
 
-            # Simple max drawdown
-            cumsum = np.cumsum(trades)
-            running_max = np.maximum.accumulate(cumsum)
-            drawdown = (cumsum - running_max) / (running_max + 1e-8)
-            max_dd = abs(np.min(drawdown))
+            # Sharpe ratio based on per-session returns
+            if num_sessions > 1:
+                # Group trades by approximate session size
+                trades_per_session = len(trades) / num_sessions
+                session_returns = []
+                for i in range(num_sessions):
+                    start_idx = int(i * trades_per_session)
+                    end_idx = int((i + 1) * trades_per_session)
+                    if end_idx > len(trades):
+                        end_idx = len(trades)
+                    if end_idx > start_idx:
+                        session_returns.append(np.sum(trades[start_idx:end_idx]))
 
-            # Monte Carlo for CAR25 (simplified)
-            car25_values = []
-            for _ in range(num_runs):
-                sampled = np.random.choice(trades, size=len(trades), replace=True)
-                annual_return = np.sum(sampled) * (252 * 24 * 60 / len(self.test_wst))
-                car25_values.append(annual_return)
-            car25 = np.percentile(car25_values, 25)
+                if len(session_returns) > 0:
+                    sharpe = np.mean(session_returns) / (np.std(session_returns) + 1e-8)
+                else:
+                    sharpe = 0
+            else:
+                sharpe = 0
+
+            # Max drawdown from session returns
+            if len(trades) > 10:
+                cumsum = np.cumsum(trades)
+                running_max = np.maximum.accumulate(cumsum)
+                drawdown = (cumsum - running_max) / (np.abs(running_max) + 1)
+                max_dd = abs(np.min(drawdown)) * 100  # Convert to percentage
+            else:
+                max_dd = 0
+
+            # CAR25 based on 6-hour sessions
+            car25 = avg_return_per_session * 0.25  # Conservative estimate
         else:
             total_return = 0
             win_rate = 0

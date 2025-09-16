@@ -1,13 +1,32 @@
 {
   "episode": 100,
-  "timestamp": "2025-09-15T17:15:44.308727",
+  "timestamp": "2025-09-16T01:47:10.953846",
   "performance": {
     "episode": 99,
-    "error": "Observation processing failed: Insufficient market data: need 256, have 100 (Context: position_type=FLAT, current_price=207.01) (Caused by: FeatureProcessingError: Insufficient market data: need 256, have 100)",
-    "timestamp": "2025-09-15T17:15:44.308405"
+    "reward": 114.60000000000169,
+    "episode_length": 360,
+    "loss": 3.6745036426517697,
+    "learning_rate": 0.0002,
+    "mcts_simulations": 15,
+    "c_puct": 1.25,
+    "temperature": 1.0,
+    "trades": 7,
+    "win_rate": 0.8571428571428571,
+    "avg_pips": 5.599999999999535,
+    "total_pips": 39.19999999999675,
+    "total_pnl": 39.19999999999675,
+    "env_reward": 114.60000000000169,
+    "max_drawdown": 198.2000000000013,
+    "sqn": 3.6666666666666674,
+    "sqn_classification": "Excellent System",
+    "sqn_confidence": "Insufficient Data",
+    "expectancy_r": 1.5714285714285714,
+    "std_dev_r": 1.1338934190276815,
+    "timestamp": "2025-09-16T01:47:10.952669",
+    "duration_seconds": 28.011671
   },
   "config": {
-    "agent_type": "episode_13475_compatible",
-    "training_parameters": "episode_13475_compatible"
+    "agent_type": "swt_muzero",
+    "training_parameters": "standard"
   }
 }

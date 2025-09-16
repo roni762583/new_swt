@@ -579,8 +579,17 @@ class SWTForexEnvironment(gym.Env):
         # Move to next timestep
         self.current_step += 1
         
-        # Check if episode is done
-        done = self.current_step >= self.total_steps
+        # Check if episode is done (6-hour session complete)
+        session_length = 360  # 6 hours in minutes
+        steps_in_episode = self.current_step - self.start_step
+        done = steps_in_episode >= session_length or self.current_step >= self.total_steps
+
+        # Debug logging every 100 steps
+        if steps_in_episode % 100 == 0:
+            logger.info(f"📍 Episode progress: {steps_in_episode}/{session_length} steps, current_step={self.current_step}, start_step={self.start_step}")
+
+        if done:
+            logger.info(f"✅ Episode DONE: {steps_in_episode} steps completed, {len(self.completed_trades)} trades")
         
         # Get next observation
         if not done:
@@ -630,6 +639,10 @@ class SWTForexEnvironment(gym.Env):
             else:
                 # Fallback to beginning if no valid sessions
                 self.current_step = 0
+
+        # Track start of episode for 6-hour session limit
+        self.start_step = self.current_step
+
         self.position = SWTPositionState()
         self.completed_trades = []
         self.total_pnl_pips = 0.0

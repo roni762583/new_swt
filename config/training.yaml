@@ -10,8 +10,8 @@ training:
   gradient_clip: 5.0
 
   # Checkpoint settings
-  checkpoint_interval: 100  # Save every 100 episodes
-  validation_interval: 500  # Validate every 500 episodes
+  checkpoint_interval: 10  # Save every 10 episodes
+  validation_on_best_only: true  # Validate only when new best checkpoint found
   keep_last_checkpoints: 2  # Keep only last 2 checkpoints + best
   track_expectancy: true  # Track and save based on expectancy
 

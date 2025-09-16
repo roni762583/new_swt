@@ -64,23 +64,32 @@ def load_checkpoint_with_proper_config(checkpoint_path: Union[str, Path]) -> Dic
                 logger.info(f"🔍 Auto-detected support_size={config['support_size']}")
                 break
 
-    # Build proper network with detected config
-    from experimental_research.swt_models.swt_stochastic_networks import (
+    # Build proper network with detected config - use same as training
+    from swt_models.swt_stochastic_networks import (
         SWTStochasticMuZeroNetwork,
         SWTStochasticMuZeroConfig
     )
 
+    # Match EXACT training configuration
     network_config = SWTStochasticMuZeroConfig(
         market_wst_features=128,
         position_features=9,
         total_input_dim=137,
         final_input_dim=137,
-        hidden_dim=config.get('hidden_dim', 256),
-        support_size=config.get('support_size', 601),
-        representation_blocks=config.get('num_layers', 2),
-        dynamics_blocks=config.get('num_layers', 2),
-        use_optimized_blocks=True,
-        use_vectorized_ops=True
+        num_actions=4,  # BUY, SELL, HOLD, CLOSE
+        hidden_dim=256,
+        representation_blocks=6,  # Match training
+        dynamics_blocks=6,  # Match training
+        prediction_blocks=2,
+        afterstate_blocks=2,
+        support_size=300,  # Match training
+        chance_space_size=32,
+        chance_history_length=4,
+        afterstate_enabled=True,
+        dropout_rate=0.1,
+        layer_norm=True,
+        residual_connections=True,
+        latent_z_dim=16
     )
 
     networks = SWTStochasticMuZeroNetwork(network_config)

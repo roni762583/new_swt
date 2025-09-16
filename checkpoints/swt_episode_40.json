@@ -1,0 +1,32 @@
+{
+  "episode": 40,
+  "timestamp": "2025-09-16T01:22:17.238142",
+  "performance": {
+    "episode": 39,
+    "reward": -26.199999999999022,
+    "episode_length": 360,
+    "loss": 3.1532165242566004,
+    "learning_rate": 0.0002,
+    "mcts_simulations": 15,
+    "c_puct": 1.25,
+    "temperature": 1.0,
+    "trades": 20,
+    "win_rate": 0.7,
+    "avg_pips": 12.904999999999802,
+    "total_pips": 258.09999999999604,
+    "total_pnl": 258.09999999999604,
+    "env_reward": -26.199999999999022,
+    "max_drawdown": 179.19999999999868,
+    "sqn": 3.487695681108254,
+    "sqn_classification": "Excellent System",
+    "sqn_confidence": "Low Confidence",
+    "expectancy_r": 1.1,
+    "std_dev_r": 1.4104870379448817,
+    "timestamp": "2025-09-16T01:22:17.237807",
+    "duration_seconds": 23.286975
+  },
+  "config": {
+    "agent_type": "swt_muzero",
+    "training_parameters": "standard"
+  }
+}

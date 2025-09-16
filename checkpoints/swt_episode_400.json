@@ -1,13 +1,13 @@
 {
   "episode": 400,
-  "timestamp": "2025-09-15T17:12:17.717936",
+  "timestamp": "2025-09-16T00:48:18.182464",
   "performance": {
     "episode": 399,
-    "error": "too many values to unpack (expected 4)",
-    "timestamp": "2025-09-15T17:12:17.717020"
+    "error": "name 'reward' is not defined",
+    "timestamp": "2025-09-16T00:48:18.181680"
   },
   "config": {
-    "agent_type": "episode_13475_compatible",
-    "training_parameters": "episode_13475_compatible"
+    "agent_type": "swt_muzero",
+    "training_parameters": "standard"
   }
 }

@@ -1,10 +1,10 @@
 {
-  "episode": 300,
-  "timestamp": "2025-09-16T00:45:06.831330",
+  "episode": 370,
+  "timestamp": "2025-09-16T00:47:08.315835",
   "performance": {
-    "episode": 299,
+    "episode": 369,
     "error": "name 'reward' is not defined",
-    "timestamp": "2025-09-16T00:45:06.830699"
+    "timestamp": "2025-09-16T00:47:08.313693"
   },
   "config": {
     "agent_type": "swt_muzero",

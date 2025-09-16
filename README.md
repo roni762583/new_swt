@@ -9,11 +9,12 @@ docker compose up -d --build
 
 This single command will:
 1. **Training Container**: Automatically resumes training from where it left off, targeting 1,000,000 sessions
-   - Uses precomputed WST features for 10x speedup
-   - Checkpoints every 100 episodes
-   - Tracks expectancy and saves best performers
+   - Uses precomputed WST features for 10x speedup (~1000 episodes/hour)
+   - Checkpoints every 10 episodes
+   - **NEW: Uses SQN (System Quality Number) to identify best models**
+   - Tracks both expectancy and SQN for robust performance evaluation
 2. **Validation Container**: Monitors for NEW BEST checkpoints only and validates them
-   - Only runs when training discovers a new best performer
+   - Only runs when training discovers a new best performer (based on SQN)
    - Uses precomputed WST for consistent validation
    - Validates with Monte Carlo simulations
 3. **Live Trading Container**: Starts up and waits for your instruction to begin trading
@@ -115,11 +116,45 @@ This is a **COMPLETE PRODUCTION-READY REIMPLEMENTATION** of the SWT (Stochastic 
 
 #### **Production Training Configuration**
 - **Target**: 1,000,000 training sessions
-- **Checkpointing**: Every 100 episodes with expectancy tracking
-- **Best Selection**: Automatically saves best performers based on expectancy
-- **Validation**: ONLY when new best checkpoint discovered
+- **Checkpointing**: Every 10 episodes with SQN tracking
+- **Best Selection**: Automatically saves best performers based on **SQN (System Quality Number)**
+- **Validation**: ONLY when new best checkpoint discovered (highest SQN)
 - **Config Location**: `config/training.yaml`
 - **State Persistence**: `training_state/last_episode.txt`
+
+### 📊 **SQN (System Quality Number) - NEW Performance Metric**
+
+The system now uses **SQN** instead of simple expectancy for evaluating trading performance:
+
+#### **What is SQN?**
+SQN = (Expectancy / StdDev) × √(Number of Trades)
+
+This provides a **normalized performance metric** that accounts for:
+- **Expectancy**: Average trade outcome (R-multiples)
+- **Consistency**: Standard deviation of results
+- **Statistical Significance**: Sample size consideration
+
+#### **SQN Classifications**
+| SQN Range | Classification | System Quality |
+|-----------|---------------|----------------|
+| ≥ 7.0 | Holy Grail | Exceptional system |
+| 5.0-6.9 | Superb | Outstanding performance |
+| 3.0-4.9 | Excellent | Very good system |
+| 2.5-2.9 | Good | Solid profitable system |
+| 2.0-2.4 | Average | Adequate system |
+| 1.6-1.9 | Below Average | Needs improvement |
+| < 1.6 | Poor | Not viable |
+
+#### **Why SQN is Better**
+- **Expectancy alone** can be misleading with high variance
+- **SQN** normalizes for risk and consistency
+- Accounts for **sample size** (more trades = higher confidence)
+- Industry standard metric (Van Tharp methodology)
+
+#### **Implementation**
+- Location: `swt_core/sqn_calculator.py`
+- Used in: Training (best model selection) & Validation
+- Tracks: Per-episode SQN, rolling SQN, confidence levels
 
 ## **📋 FOCUSED WORKPLAN - QUICK WINS ONLY**
 

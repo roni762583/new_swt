@@ -21,6 +21,7 @@ sys.path.append(str(Path(__file__).parent))
 from swt_core.config_manager import ConfigManager
 from swt_core.types import AgentType, ProcessState, ManagedProcess
 from swt_core.exceptions import ConfigurationError, CheckpointError
+from swt_core.sqn_calculator import SQNCalculator, SQNResult
 from swt_features.feature_processor import FeatureProcessor
 from swt_environments.swt_forex_env import SWTForexEnvironment, SWTAction
 from swt_models.swt_stochastic_networks import SWTStochasticMuZeroNetwork
@@ -69,7 +70,9 @@ class SWTTrainingOrchestrator(ManagedProcess):
         self.current_episode = 0
         self.last_checkpoint_episode = 0
         self.best_performance = float('-inf')
-        
+        self.best_sqn = float('-inf')
+        self.sqn_calculator = SQNCalculator()
+
         # Metrics
         self.training_start_time = datetime.now()
         self.episodes_per_hour = 0.0
@@ -266,9 +269,12 @@ class SWTTrainingOrchestrator(ManagedProcess):
                 self.current_episode += 1
                 self.episode_count = self.current_episode
                 
-                # Save checkpoint periodically
-                if self.current_episode % 100 == 0:
+                # Save checkpoint periodically (default every 10 episodes)
+                checkpoint_interval = 10  # Fixed interval for production
+                if self.current_episode % checkpoint_interval == 0 or self.current_episode == 1:
                     self._save_checkpoint(episode_result)
+                    if self.current_episode == 1:
+                        logger.info("🧪 TEST: Saved checkpoint after first episode for validation testing")
                 
                 # Update performance metrics
                 self._update_performance_metrics()
@@ -313,8 +319,11 @@ class SWTTrainingOrchestrator(ManagedProcess):
             
             # Episode trajectory for training
             trajectory = []
-            
-            while not done and episode_length < 1440:  # Max 24 hours
+
+            # Clear trades list for this episode
+            trades = []
+
+            while not done:  # Episode ends when environment signals done (360 bars)
                 # Extract position state and current price from environment
                 position_state = self.environment.position
                 current_price = self.environment.df['close'].iloc[
@@ -397,9 +406,9 @@ class SWTTrainingOrchestrator(ManagedProcess):
                 total_reward += reward
                 episode_length += 1
                 
-                # Track trades
-                if 'trade_closed' in info and info['trade_closed']:
-                    trades.append(info['last_trade'])
+                # Track trades from environment
+                if 'completed_trades' in info and info['completed_trades']:
+                    trades.extend(info['completed_trades'])
                 
                 # Train network periodically
                 if len(self.replay_buffer) >= 32 and episode_length % 10 == 0:
@@ -407,19 +416,31 @@ class SWTTrainingOrchestrator(ManagedProcess):
                     losses.append(batch_loss)
                 
                 observation = next_observation
-            
+
+            # CRITICAL: Collect trades from environment BEFORE episode ends (before reset)
+            if hasattr(self.environment, 'completed_trades'):
+                trades = self.environment.completed_trades.copy()
+                logger.info(f"📊 Episode end: Collected {len(trades)} trades from environment")
+            else:
+                logger.warning("❌ Environment has no completed_trades attribute")
+                trades = []
+
             # Add trajectory to replay buffer
             if len(trajectory) > 0:
                 self.replay_buffer.append(trajectory)
                 # Keep buffer size limited
                 if len(self.replay_buffer) > 1000:
                     self.replay_buffer.pop(0)
-            
+
             # Calculate episode statistics
             avg_loss = np.mean(losses) if losses else 0.0
             win_rate = len([t for t in trades if t.pnl_pips > 0]) / max(len(trades), 1)
             
-            # Episode result matching SWT format
+            # Calculate SQN for the episode
+            trade_pnls = [t.pnl_pips for t in trades] if trades else []
+            sqn_result = self.sqn_calculator.calculate_sqn(trade_pnls)
+
+            # Episode result matching SWT format with SQN
             episode_result = {
                 "episode": self.current_episode,
                 "reward": total_reward,
@@ -433,16 +454,25 @@ class SWTTrainingOrchestrator(ManagedProcess):
                 "win_rate": win_rate,
                 "avg_pips": np.mean([t.pnl_pips for t in trades]) if trades else 0,
                 "total_pips": sum([t.pnl_pips for t in trades]) if trades else 0,
+                "total_pnl": sum([t.pnl_pips for t in trades]) if trades else 0,  # Use actual trade PnL
+                "env_reward": total_reward,  # Environment reward (includes unrealized P&L)
                 "max_drawdown": max([t.max_drawdown_pips for t in trades]) if trades else 0,
+                "sqn": sqn_result.sqn,
+                "sqn_classification": sqn_result.classification,
+                "sqn_confidence": sqn_result.confidence_level,
+                "expectancy_r": sqn_result.expectancy,
+                "std_dev_r": sqn_result.std_dev,
                 "timestamp": datetime.now().isoformat(),
                 "duration_seconds": (datetime.now() - episode_start_time).total_seconds()
             }
             
             # Log episode completion
             if self.current_episode % 10 == 0:
+                actual_pnl = sum([t.pnl_pips for t in trades]) if trades else 0
                 logger.info(f"Episode {self.current_episode}: "
-                          f"Reward={total_reward:.2f}, "
-                          f"Length={episode_length}, "
+                          f"PnL={actual_pnl:.2f}, EnvReward={total_reward:.2f}, "
+                          f"SQN={sqn_result.sqn:.2f} ({sqn_result.classification}), "
+                          f"Trades={len(trades)}, "
                           f"Loss={avg_loss:.4f}")
             
             return episode_result
@@ -473,21 +503,25 @@ class SWTTrainingOrchestrator(ManagedProcess):
         action = torch.LongTensor([trajectory[pos]['action']])
         target_value = torch.FloatTensor([trajectory[pos]['value']])
         target_policy = torch.FloatTensor([trajectory[pos]['policy']])
-        target_reward = torch.FloatTensor([trajectory[pos]['reward']])
+        # Reward is stored for potential future use with recurrent_inference training
         
         # Forward pass
-        value, reward, policy_logits, hidden_state = self.network.initial_inference(observation)
+        inference_result = self.network.initial_inference(observation)
+        value = inference_result['value_distribution']
+        policy_logits = inference_result['policy_logits']
+        hidden_state = inference_result['hidden_state']
         
         # Calculate losses
         value_loss = torch.nn.functional.mse_loss(value.squeeze(), target_value)
         policy_loss = torch.nn.functional.cross_entropy(
-            policy_logits, 
+            policy_logits,
             target_policy.argmax(dim=-1)
         )
-        reward_loss = torch.nn.functional.mse_loss(reward.squeeze(), target_reward)
-        
+        # Note: Reward prediction happens in recurrent_inference, not initial_inference
+        # So we don't have a reward loss here for now
+
         # Total loss
-        total_loss = value_loss + policy_loss + reward_loss
+        total_loss = value_loss + policy_loss
         
         # Backward pass
         self.optimizer.zero_grad()
@@ -510,8 +544,8 @@ class SWTTrainingOrchestrator(ManagedProcess):
                 "timestamp": datetime.now().isoformat(),
                 "performance": episode_result,
                 "config": {
-                    "agent_type": "episode_13475_compatible",
-                    "training_parameters": "episode_13475_compatible"
+                    "agent_type": "swt_muzero",
+                    "training_parameters": "standard"
                 }
             }
             
@@ -523,7 +557,7 @@ class SWTTrainingOrchestrator(ManagedProcess):
                 model_checkpoint_path = checkpoint_dir / f"swt_episode_{self.current_episode}.pth"
                 torch.save({
                     'episode': self.current_episode,
-                    'model_state_dict': self.network.state_dict(),
+                    'muzero_network_state': self.network.state_dict(),  # Use expected key name
                     'optimizer_state_dict': self.optimizer.state_dict(),
                     'episode_result': episode_result,
                     'timestamp': datetime.now().isoformat()
@@ -541,20 +575,23 @@ class SWTTrainingOrchestrator(ManagedProcess):
                         except Exception as e:
                             logger.warning(f"Failed to remove {old_checkpoint}: {e}")
 
-                # Save best model checkpoint if this is the best performance
-                performance_score = episode_result.get('total_pnl', 0.0)
-                if performance_score > self.best_performance:
-                    self.best_performance = performance_score
-                    best_model_path = checkpoint_dir / "best_model.pth"
+                # Save best model checkpoint based on SQN (System Quality Number)
+                current_sqn = episode_result.get('sqn', 0.0)
+                # Force first episode to be "best" for testing
+                if current_sqn > self.best_sqn or self.current_episode == 1:
+                    self.best_sqn = current_sqn
+                    self.best_performance = episode_result.get('total_pnl', 0.0)
+                    best_model_path = checkpoint_dir / "best_checkpoint.pth"
                     torch.save({
                         'episode': self.current_episode,
-                        'model_state_dict': self.network.state_dict(),
+                        'muzero_network_state': self.network.state_dict(),  # Use expected key name
                         'optimizer_state_dict': self.optimizer.state_dict(),
                         'episode_result': episode_result,
                         'best_performance': self.best_performance,
+                        'best_sqn': self.best_sqn,
                         'timestamp': datetime.now().isoformat()
                     }, best_model_path)
-                    logger.info(f"🏆 BEST MODEL SAVED: {best_model_path} (Performance: {performance_score:.2f})")
+                    logger.info(f"🏆 BEST CHECKPOINT SAVED: {best_model_path} (Episode {self.current_episode}, SQN: {current_sqn:.2f}, Class: {episode_result.get('sqn_classification', 'Unknown')})")
 
             self.last_checkpoint_episode = self.current_episode
             logger.info(f"💾 Checkpoint saved: {checkpoint_path}")

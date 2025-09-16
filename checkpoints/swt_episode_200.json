@@ -1,13 +1,13 @@
 {
   "episode": 200,
-  "timestamp": "2025-09-15T17:17:30.730043",
+  "timestamp": "2025-09-16T00:42:36.085048",
   "performance": {
     "episode": 199,
-    "error": "Observation processing failed: Insufficient market data: need 256, have 200 (Context: position_type=FLAT, current_price=170.925) (Caused by: FeatureProcessingError: Insufficient market data: need 256, have 200)",
-    "timestamp": "2025-09-15T17:17:30.729648"
+    "error": "name 'reward' is not defined",
+    "timestamp": "2025-09-16T00:42:36.084312"
   },
   "config": {
-    "agent_type": "episode_13475_compatible",
-    "training_parameters": "episode_13475_compatible"
+    "agent_type": "swt_muzero",
+    "training_parameters": "standard"
   }
 }
