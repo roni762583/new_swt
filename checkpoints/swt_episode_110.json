@@ -1,29 +1,10 @@
 {
   "episode": 110,
-  "timestamp": "2025-09-16T01:53:39.257252",
+  "timestamp": "2025-09-16T05:11:55.308640",
   "performance": {
     "episode": 109,
-    "reward": -3.700000000000364,
-    "episode_length": 360,
-    "loss": 3.071784680864463,
-    "learning_rate": 0.0002,
-    "mcts_simulations": 15,
-    "c_puct": 1.25,
-    "temperature": 1.0,
-    "trades": 8,
-    "win_rate": 0.5,
-    "avg_pips": 50.94999999999992,
-    "total_pips": 407.59999999999934,
-    "total_pnl": 407.59999999999934,
-    "env_reward": -3.700000000000364,
-    "max_drawdown": 201.3000000000019,
-    "sqn": 0.8819171036881969,
-    "sqn_classification": "Poor System",
-    "sqn_confidence": "Insufficient Data",
-    "expectancy_r": 0.5,
-    "std_dev_r": 1.6035674514745464,
-    "timestamp": "2025-09-16T01:53:39.252756",
-    "duration_seconds": 81.918509
+    "error": "Observation processing failed: Precomputed WST extraction failed for window 1794360: [Errno 2] Unable to open file (unable to open file: name = 'precomputed_wst/GBPJPY_WST_3.5years_streaming.h5', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0) (Context: position_type=FLAT, current_price=197.122) (Caused by: FeatureProcessingError: Precomputed WST extraction failed for window 1794360: [Errno 2] Unable to open file (unable to open file: name = 'precomputed_wst/GBPJPY_WST_3.5years_streaming.h5', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0))",
+    "timestamp": "2025-09-16T05:11:55.308321"
   },
   "config": {
     "agent_type": "swt_muzero",

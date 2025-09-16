@@ -321,21 +321,18 @@ class PrecomputedWSTDataLoader:
 
 def main():
     """Main execution"""
-    
+
     # Configuration
-    data_path = "data/GBPJPY_M1_3.5years_20250912.csv"
+    data_path = "data/GBPJPY_M1_REAL_2022-2025.csv"
     output_dir = Path("precomputed_wst")
     output_dir.mkdir(exist_ok=True)
-    
-    output_path = output_dir / "GBPJPY_WST_3.5years.h5"
-    
+
+    output_path = output_dir / "GBPJPY_WST_CLEAN_2022-2025.h5"
+
     # Check if data exists
     if not Path(data_path).exists():
-        # Try alternative path
-        data_path = "data/GBPJPY_M1_3years_20250912.csv"
-        if not Path(data_path).exists():
-            logger.error(f"❌ Data file not found: {data_path}")
-            return 1
+        logger.error(f"❌ Data file not found: {data_path}")
+        return 1
     
     # Initialize precomputer
     precomputer = WSTDatasetPrecomputer(
@@ -348,7 +345,7 @@ def main():
         },
         window_size=256,
         stride=1,  # Compute for every minute
-        batch_size=1000  # Process 1000 windows at a time
+        batch_size=100  # Process 100 windows at a time (reduced for memory)
     )
     
     # Run precomputation

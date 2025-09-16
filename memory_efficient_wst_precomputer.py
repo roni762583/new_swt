@@ -415,18 +415,16 @@ def main():
     """Main execution with memory-efficient streaming"""
     
     # Configuration
-    data_path = "data/GBPJPY_M1_3.5years_20250912.csv"
+    data_path = "data/GBPJPY_M1_REAL_2022-2025.csv"
     output_dir = Path("precomputed_wst")
     output_dir.mkdir(exist_ok=True)
-    
-    output_path = output_dir / "GBPJPY_WST_3.5years_streaming.h5"
-    
+
+    output_path = output_dir / "GBPJPY_WST_CLEAN_2022-2025.h5"
+
     # Check if data exists
     if not Path(data_path).exists():
-        data_path = "data/GBPJPY_M1_3years_20250912.csv"
-        if not Path(data_path).exists():
-            logger.error(f"❌ Data file not found: {data_path}")
-            return 1
+        logger.error(f"❌ Data file not found: {data_path}")
+        return 1
     
     # Initialize memory-efficient precomputer
     precomputer = MemoryEfficientWSTPrecomputer(

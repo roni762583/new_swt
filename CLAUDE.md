@@ -14,6 +14,7 @@ NEVER proactively create documentation files (*.md) or README files. Only create
 This is a **PRODUCTION-GRADE, MISSION-CRITICAL** trading system. There is **ZERO TOLERANCE** for shortcuts, assumptions, or incomplete implementations.
 
 ## =� ABSOLUTE REQUIREMENTS
+### 0. AVOID WRITTING NEW SCRIPTS, FIX/DEBUG EXISTING ONES!
 
 ### 1. FOLLOW INSTRUCTIONS EXACTLY
 - **DO NOT** assume what the user wants
@@ -80,7 +81,7 @@ Before claiming any task is complete:
 - [ ] No magic numbers
 - [ ] Verified with actual execution
 
-## =4 RED FLAGS - NEVER DO THESE
+### 8. RED FLAGS - NEVER DO THESE
 
 1. **"This should work"** - Test it or don't claim it
 2. **"Approximately correct"** - Exact or nothing
@@ -181,8 +182,7 @@ DEVIATIONS: None [or list any]
 ========================================
 ## 📝 PROJECT-SPECIFIC NOTES AND UPDATES
 ========================================
-REVIEW /Users/shmuelzbaida/Desktop/Aharon2025/new_muzero/README.md , and
-/Users/shmuelzbaida/Desktop/Aharon2025/new_muzero/live/README.md
+REVIEW ALL PROJECT README.md's AND CODEBASE THOROUGHLY
 PLAN:
     Follow user instructions
 ---
@@ -193,4 +193,5 @@ PLAN:
 2. **DATE ALL ENTRIES** - Use format: `[YYYY-MM-DD HH:MM]`
 3. **ARCHIVE PERIODICALLY** - Move old notes to `CLAUDE_ARCHIVE_[DATE].md` when this section exceeds 100 lines
 4. **MOST RECENT FIRST** - Add new entries at the top of this section
-<!-- 🚨 ADD NEW NOTES BELOW THIS LINE 🚨--> !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! !
+<!-- 🚨 ADD NEW NOTES BELOW THIS LINE ( OR IN README.md prefered !) 🚨-->
+>

@@ -1,10 +1,10 @@
 {
   "episode": 360,
-  "timestamp": "2025-09-16T00:46:50.744921",
+  "timestamp": "2025-09-16T05:16:13.744115",
   "performance": {
     "episode": 359,
-    "error": "name 'reward' is not defined",
-    "timestamp": "2025-09-16T00:46:50.742527"
+    "error": "Observation processing failed: Precomputed WST extraction failed for window 1538940: [Errno 2] Unable to open file (unable to open file: name = 'precomputed_wst/GBPJPY_WST_3.5years_streaming.h5', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0) (Context: position_type=FLAT, current_price=187.816) (Caused by: FeatureProcessingError: Precomputed WST extraction failed for window 1538940: [Errno 2] Unable to open file (unable to open file: name = 'precomputed_wst/GBPJPY_WST_3.5years_streaming.h5', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0))",
+    "timestamp": "2025-09-16T05:16:13.743751"
   },
   "config": {
     "agent_type": "swt_muzero",
