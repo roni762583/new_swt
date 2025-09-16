@@ -81,8 +81,7 @@ class KymatioWSTPrecomputer:
             J=self.J,
             shape=(window_size,),
             Q=self.Q,
-            max_order=self.max_order,
-            frontend='torch'
+            max_order=self.max_order
         ).to(self.device)
 
         # Get output dimension from Kymatio
@@ -124,8 +123,7 @@ class KymatioWSTPrecomputer:
                 J=params['J'],
                 shape=(self.window_size,),
                 Q=params['Q'],
-                max_order=params['max_order'],
-                frontend='torch'
+                max_order=params['max_order']
             ).to(self.device)
 
             dummy_input = torch.zeros(1, self.window_size).to(self.device)
