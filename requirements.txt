@@ -29,9 +29,11 @@ structlog==23.1.0
 # System monitoring
 psutil==5.9.5
 
-# Optional performance (install if available)
-# PyWavelets==1.4.1
-# kymatio==0.3.0
+# WST Feature Extraction
+kymatio==0.3.0
+PyWavelets==1.4.1
+
+# Performance optimization
 numba==0.57.1
 
 # Testing dependencies

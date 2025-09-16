@@ -270,9 +270,9 @@ class SWTForexEnvironment(gym.Env):
 
             # Check for weekend (Friday 21:00 to Sunday 21:00 GMT)
             has_weekend = False
-            if hasattr(session_data.index[0], 'weekday'):
-                # Index is datetime
-                for timestamp in session_data.index:
+            if 'timestamp' in session_data.columns:
+                # Check timestamp column
+                for timestamp in session_data['timestamp']:
                     weekday = timestamp.weekday()
                     hour = timestamp.hour
                     # Friday after 21:00 or Saturday or Sunday before 21:00
@@ -284,9 +284,9 @@ class SWTForexEnvironment(gym.Env):
                 continue
 
             # Check for time gaps (more than 10 minutes between consecutive bars)
-            if hasattr(session_data.index[0], 'to_pydatetime'):
-                # Index is datetime - check for gaps
-                time_diffs = session_data.index.to_series().diff()
+            if 'timestamp' in session_data.columns:
+                # Check timestamp column for gaps
+                time_diffs = session_data['timestamp'].diff()
                 max_gap = time_diffs.max()
                 if max_gap > pd.Timedelta(minutes=10):
                     continue
@@ -478,9 +478,10 @@ class SWTForexEnvironment(gym.Env):
                 self.position.entry_price = current_price  # Use market price
                 self.position.entry_time = self.df['timestamp'].iloc[self.current_step + self.price_series_length]
                 self.position.duration_bars = 0
-                # Initial PnL will be calculated in _update_position_state()
-                self.position.max_drawdown_pips = 0.0
-                self.position.accumulated_drawdown_pips = 0.0
+                # Apply spread cost immediately on entry
+                self.position.unrealized_pnl_pips = -self.spread_pips  # Start with spread cost
+                self.position.max_drawdown_pips = self.spread_pips  # Initial drawdown is spread
+                self.position.accumulated_drawdown_pips = self.spread_pips
                 self.position.bars_since_max_drawdown = 0
                 info = "opened_long"
             else:
@@ -493,9 +494,10 @@ class SWTForexEnvironment(gym.Env):
                 self.position.entry_price = current_price  # Use market price
                 self.position.entry_time = self.df['timestamp'].iloc[self.current_step + self.price_series_length]
                 self.position.duration_bars = 0
-                # Initial PnL will be calculated in _update_position_state()
-                self.position.max_drawdown_pips = 0.0
-                self.position.accumulated_drawdown_pips = 0.0
+                # Apply spread cost immediately on entry
+                self.position.unrealized_pnl_pips = -self.spread_pips  # Start with spread cost
+                self.position.max_drawdown_pips = self.spread_pips  # Initial drawdown is spread
+                self.position.accumulated_drawdown_pips = self.spread_pips
                 self.position.bars_since_max_drawdown = 0
                 info = "opened_short"
             else:
