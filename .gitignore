@@ -58,3 +58,4 @@ data/*.parquet
 precomputed_wst/*.h5
 checkpoints/checkpoints/*.pth
 *.pth
+data/master.duckdb
