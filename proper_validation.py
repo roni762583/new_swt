@@ -18,8 +18,8 @@ import os
 # Add parent directory to path for imports
 sys.path.insert(0, '/workspace')
 
-from swt_environments.swt_forex_env import SWTForexEnv, SWTAction
-from swt_validation.fixed_checkpoint_loader import FixedCheckpointLoader
+from swt_environments.swt_forex_env import SWTForexEnvironment as SWTForexEnv, SWTAction
+from swt_validation.fixed_checkpoint_loader import load_checkpoint_with_proper_config
 from swt_features.feature_processor import FeatureProcessor
 from swt_features.precomputed_wst_loader import PrecomputedWSTLoader
 from swt_core.config_manager import ConfigManager
@@ -31,7 +31,7 @@ def run_validation_with_real_environment(checkpoint_path, num_episodes=20):
 
     # Load configuration
     config_manager = ConfigManager('config')
-    config_manager.load_all_configs()
+    config_manager.load_config()
 
     # Load precomputed WST
     wst_loader = PrecomputedWSTLoader(
@@ -46,8 +46,8 @@ def run_validation_with_real_environment(checkpoint_path, num_episodes=20):
     )
 
     # Load the model
-    checkpoint_loader = FixedCheckpointLoader()
-    network = checkpoint_loader.load_checkpoint(checkpoint_path)
+    checkpoint_data = load_checkpoint_with_proper_config(checkpoint_path)
+    network = checkpoint_data['networks']
     network.eval()
 
     # Create environment with proper spread costs

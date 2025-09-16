@@ -93,6 +93,25 @@ This is a **COMPLETE PRODUCTION-READY REIMPLEMENTATION** of the SWT (Stochastic 
 - **Resource Efficiency**: Live trading properly idles when market closed (no CPU spinning)
 - **Checkpoints**: ALL CLEARED for fresh training with corrected position features
 
+### **🚀 Latest Updates (September 16, 2025)**
+
+#### **🔴 Critical Bug Fixes**
+- **Fixed Reward/PnL Tracking Bug**: Trade statistics now correctly use actual closed trade PnL instead of environment rewards
+  - Training showed positive trade PnL (+374 pips) but negative episode rewards (-30.4)
+  - Root cause: Environment rewards include unrealized P&L, trade stats should only use closed trades
+- **Fixed Reward Loss Calculation**: Removed erroneous reward loss from initial_inference
+  - Only recurrent_inference predicts rewards in MuZero architecture
+  - Reduced memory usage from 3GB to 683MB
+- **Updated Validation**: Now uses actual SWTForexEnvironment with proper 4 pip spread costs
+  - All metrics reported in pips after spread, not percentages
+  - Consistent with training environment
+
+#### **📊 Enhanced Validation**
+- **Bootstrap Monte Carlo**: Implemented aggressive stress testing with replacement sampling
+  - 6 scenarios: original, drop 10%, drop 20% tail, resample 150%, adverse selection, early stop
+  - Box-whisker plots show distribution of outcomes
+- **Proper Pip-Based Reports**: All validation now reports actual pips after 4 pip spread cost per trade
+
 ### **🚀 Latest Updates (September 15, 2025)**
 
 #### **🐳 Docker Architecture - SEAMLESS OPERATION**

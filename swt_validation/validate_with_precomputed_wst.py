@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Validation script that uses pre-computed WST features from HDF5
-Avoids memory explosion from recomputing WST on every run
+Uses the actual SWTForexEnv trading environment for consistent simulation
 """
 
 import sys
@@ -20,6 +20,11 @@ from dataclasses import dataclass
 import time
 from datetime import datetime, timedelta
 
+# Import our actual trading environment and components
+from swt_environments.swt_forex_env import SWTForexEnvironment as SWTForexEnv, SWTAction
+from swt_features.feature_processor import FeatureProcessor
+from swt_features.precomputed_wst_loader import PrecomputedWSTLoader
+from swt_core.config_manager import ConfigManager
 from swt_validation.fixed_checkpoint_loader import load_checkpoint_with_proper_config
 
 logging.basicConfig(level=logging.INFO)
@@ -28,249 +33,180 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ValidationMetrics:
-    """Validation metrics for a checkpoint"""
-    total_return: float
+    """Validation metrics for a checkpoint - using pips after spread costs"""
+    total_pips: float  # Total pips after spread costs
+    avg_pips_per_trade: float  # Average pips per trade
     total_trades: int
     win_rate: float
     sharpe_ratio: float
-    max_drawdown: float
-    car25: float = 0.0  # Will be calculated from Monte Carlo
+    max_drawdown_pips: float  # Max drawdown in pips
+    total_return_pct: float = 0.0  # Percentage return for comparison
 
 
 class PrecomputedWSTValidator:
-    """Validator that uses pre-computed WST features"""
+    """Validator that uses the actual SWTForexEnv with pre-computed WST features"""
 
     def __init__(
         self,
         wst_file: str = "precomputed_wst/GBPJPY_WST_3.5years_streaming.h5",
-        csv_file: str = "data/GBPJPY_M1_3.5years_20250912.csv",
-        test_split: float = 0.2
+        csv_file: str = "data/GBPJPY_M1_3.5years_20250912.csv"
     ):
         """
-        Initialize validator with pre-computed WST features
+        Initialize validator with actual trading environment
 
         Args:
             wst_file: Path to pre-computed WST HDF5 file
-            csv_file: Path to CSV with price data (for position features)
-            test_split: Fraction of data to use for testing
+            csv_file: Path to CSV with price data
         """
         self.wst_file = Path(wst_file)
         self.csv_file = Path(csv_file)
-        self.test_split = test_split
 
         if not self.wst_file.exists():
             raise FileNotFoundError(f"Pre-computed WST file not found: {wst_file}")
 
-        self._load_data()
+        # Load configuration
+        self.config_manager = ConfigManager('config')
+        self.config_manager.load_all_configs()
 
-    def _load_data(self):
-        """Load pre-computed WST features and price data"""
-        logger.info(f"Loading pre-computed WST from {self.wst_file}")
+        # Create precomputed WST loader
+        self.wst_loader = PrecomputedWSTLoader(
+            str(self.wst_file),
+            cache_size=10000
+        )
 
-        # Load WST features from HDF5
-        with h5py.File(self.wst_file, 'r') as f:
-            # Check available keys
-            logger.info(f"HDF5 keys: {list(f.keys())}")
+        # Create feature processor with precomputed WST
+        self.feature_processor = FeatureProcessor(
+            self.config_manager,
+            precomputed_loader=self.wst_loader
+        )
 
-            # Load features - try different possible key names
-            if 'features' in f:
-                self.wst_features = f['features'][:]
-            elif 'wst_features' in f:
-                self.wst_features = f['wst_features'][:]
-            else:
-                raise KeyError(f"No WST features found. Available keys: {list(f.keys())}")
+        # Create the actual trading environment
+        self.env = SWTForexEnv(
+            config=self.config_manager.config,
+            csv_file=str(self.csv_file),
+            feature_processor=self.feature_processor,
+            test_mode=True  # Use test data for validation
+        )
 
-            logger.info(f"WST features shape: {self.wst_features.shape}")
+        logger.info(f"Initialized trading environment with {self.csv_file}")
+        logger.info(f"Using precomputed WST from {self.wst_file}")
 
-            # Load timestamps if available
-            if 'timestamps' in f:
-                self.timestamps = f['timestamps'][:]
-            else:
-                self.timestamps = None
-
-        # Load price data for position features
-        logger.info(f"Loading price data from {self.csv_file}")
-        self.price_df = pd.read_csv(self.csv_file)
-
-        # Handle alignment - use indices from HDF5 to align with CSV
-        if len(self.price_df) != len(self.wst_features):
-            logger.warning(f"Length mismatch: CSV has {len(self.price_df)} rows, WST has {len(self.wst_features)}")
-            logger.info("Using WST indices to align with CSV data")
-
-            # WST features start from index 255 based on sample indices
-            if hasattr(self, 'timestamps') and self.timestamps is not None:
-                logger.info(f"WST covers data from index {self.wst_features.shape[0]} bars")
-                # Ensure we have enough CSV data
-                assert len(self.price_df) >= len(self.wst_features) + 255, \
-                    f"CSV too short: need {len(self.wst_features) + 255}, have {len(self.price_df)}"
-
-        # Split data
-        self.split_index = int(len(self.wst_features) * (1 - self.test_split))
-        logger.info(f"Using last {len(self.wst_features) - self.split_index:,} bars for testing")
-
-        # Prepare test data
-        self.test_wst = self.wst_features[self.split_index:]
-        self.test_prices = self.price_df.iloc[self.split_index:]
-
-    def create_position_features(self, csv_index: int) -> np.ndarray:
-        """
-        Create position features for a given CSV index
-
-        Returns 9 position features: spread, volatility, time features, etc.
-        """
-        # Simple position features (9 dimensions to match training)
-        position_features = np.zeros(9)
-
-        # Add some basic features (simplified for validation)
-        if csv_index > 20 and csv_index < len(self.price_df) - 1:
-            recent_prices = self.price_df.iloc[csv_index-20:csv_index]['close'].values
-            if len(recent_prices) > 1 and np.mean(recent_prices) > 0:
-                position_features[0] = (recent_prices[-1] - recent_prices[0]) / recent_prices[0]  # Return
-                position_features[1] = np.std(recent_prices) / np.mean(recent_prices)  # Volatility
-
-        return position_features
 
     def validate_checkpoint(self, checkpoint_path: str, num_runs: int = 10) -> ValidationMetrics:
         """
-        Validate a checkpoint using pre-computed WST features
+        Validate a checkpoint using the actual trading environment
 
         Args:
             checkpoint_path: Path to checkpoint file
-            num_runs: Number of Monte Carlo runs for CAR25
+            num_runs: Number of Monte Carlo runs (6-hour sessions)
 
         Returns:
-            ValidationMetrics with results
+            ValidationMetrics with results in pips after spread costs
         """
         logger.info(f"\nValidating checkpoint: {checkpoint_path}")
+        logger.info(f"Using actual SWTForexEnv with 4 pip spread cost")
 
-        # Load checkpoint
-        checkpoint = load_checkpoint_with_proper_config(checkpoint_path)
-        network = checkpoint['networks']
+        # Load checkpoint using the fixed loader function
+        checkpoint_data = load_checkpoint_with_proper_config(checkpoint_path)
+        network = checkpoint_data['networks']
         network.eval()
 
-        # Run validation with 6-hour sessions
+        # Run validation with multiple 6-hour sessions
         SESSION_LENGTH = 360  # 6 hours = 360 1-minute bars
-        trades = []
-
-        # Run Monte Carlo sessions
-        num_sessions = num_runs
-        max_start = len(self.test_wst) - SESSION_LENGTH
+        all_trades = []  # Store all completed trades
+        session_results = []  # Store per-session results
 
         with torch.no_grad():
-            for session_num in range(num_sessions):
-                # Random starting point for this session
-                start_idx = np.random.randint(0, max_start)
+            for session_num in range(num_runs):
+                logger.info(f"  Session {session_num + 1}/{num_runs}...")
 
-                # Process this 6-hour session in small batches
-                batch_size = 30  # Smaller batches for session processing
+                # Reset environment for new session
+                observation = self.env.reset()
+
                 session_trades = []
+                session_pips = 0
+                done = False
+                steps = 0
 
-                for batch_start in range(start_idx, start_idx + SESSION_LENGTH, batch_size):
-                    batch_end = min(batch_start + batch_size, start_idx + SESSION_LENGTH)
+                while not done and steps < SESSION_LENGTH:
+                    # Convert observation to tensor
+                    obs_tensor = torch.FloatTensor(observation).unsqueeze(0)
 
-                    # Get WST features for this batch
-                    wst_batch = self.test_wst[batch_start:batch_end]
+                    # Get model prediction using initial_inference
+                    inference_result = network.initial_inference(obs_tensor)
+                    policy_logits = inference_result['policy_logits']
 
-                    # Create position features - map WST indices to CSV indices
-                    # WST starts from around index 255 in the CSV based on the indices data
-                    position_batch = np.array([
-                        self.create_position_features(255 + self.split_index + batch_start + j)
-                        for j in range(len(wst_batch))
-                    ])
+                    # Select action (greedy for validation)
+                    action = policy_logits.argmax().item()
 
-                    # Process WST features - pre-computed are 16-dim raw WST output, need to expand to 128
-                    if wst_batch.shape[1] == 16:
-                        # Pre-computed WST features are raw 16-dimensional
-                        # Repeat the 16 features 8 times to get 128 (16 * 8 = 128)
-                        expanded_wst = np.tile(wst_batch, (1, 8))  # Shape: (batch, 128)
-                        features = np.concatenate([expanded_wst, position_batch], axis=1)
-                    elif wst_batch.shape[1] == 128:
-                        # WST features are already 128 dims
-                        features = np.concatenate([wst_batch, position_batch], axis=1)
-                    else:
-                        # Handle other dimensions
-                        if wst_batch.shape[1] > 128:
-                            wst_processed = wst_batch[:, :128]
-                        else:
-                            # Pad with zeros
-                            padding = np.zeros((wst_batch.shape[0], 128 - wst_batch.shape[1]))
-                            wst_processed = np.concatenate([wst_batch, padding], axis=1)
-                        features = np.concatenate([wst_processed, position_batch], axis=1)
+                    # Step environment - THIS PROPERLY HANDLES SPREAD COSTS
+                    observation, reward, terminated, truncated, info = self.env.step(action)
+                    done = terminated or truncated
+                    steps += 1
 
-                    # Convert to tensor
-                    features_tensor = torch.FloatTensor(features)
+                    # Collect completed trades with actual pip results after spread
+                    if 'completed_trades' in info and info['completed_trades']:
+                        for trade in info['completed_trades']:
+                            trade_pips = trade.pnl_pips  # Actual pips after 4 pip spread
+                            session_trades.append(trade_pips)
+                            all_trades.append(trade_pips)
+                            session_pips += trade_pips
 
-                    # Get network predictions
-                    hidden = network.representation_network(features_tensor)
+                # Store session results
+                session_results.append({
+                    'total_pips': session_pips,
+                    'num_trades': len(session_trades),
+                    'trades': session_trades
+                })
 
-                    # Simple trading logic (simplified for demo)
-                    predictions = hidden.mean(dim=1).numpy()
-                    for j, pred in enumerate(predictions):
-                        if abs(pred) > 0.5:  # Threshold for trade
-                            # Calculate return from next bar - map to proper CSV index
-                            csv_idx = 255 + self.split_index + batch_start + j
-                            if csv_idx + 10 < len(self.price_df):
-                                entry_price = self.price_df.iloc[csv_idx]['close']
-                                exit_price = self.price_df.iloc[csv_idx + 10]['close']
-                                trade_return = (exit_price - entry_price) / entry_price * np.sign(pred)
-                                session_trades.append(trade_return)
+        # Calculate metrics based on actual pip results after spread costs
+        if len(all_trades) > 0:
+            trades_array = np.array(all_trades)
 
-                # Add session trades to overall trades
-                trades.extend(session_trades)
+            # Total and average pips (after 4 pip spread cost)
+            total_pips = np.sum(trades_array)
+            avg_pips_per_trade = np.mean(trades_array)
 
-        # Calculate metrics based on sessions
-        if len(trades) > 0:
-            trades = np.array(trades)
-            # Average return per session (not total of all sessions)
-            avg_return_per_session = np.sum(trades) / num_sessions * 100  # Convert to percentage
-            total_return = avg_return_per_session  # Report per-session average
-            win_rate = np.mean(trades > 0)
+            # Win rate (trades that made money after spread)
+            win_rate = np.mean(trades_array > 0)
 
-            # Sharpe ratio based on per-session returns
-            if num_sessions > 1:
-                # Group trades by approximate session size
-                trades_per_session = len(trades) / num_sessions
-                session_returns = []
-                for i in range(num_sessions):
-                    start_idx = int(i * trades_per_session)
-                    end_idx = int((i + 1) * trades_per_session)
-                    if end_idx > len(trades):
-                        end_idx = len(trades)
-                    if end_idx > start_idx:
-                        session_returns.append(np.sum(trades[start_idx:end_idx]))
-
-                if len(session_returns) > 0:
-                    sharpe = np.mean(session_returns) / (np.std(session_returns) + 1e-8)
-                else:
-                    sharpe = 0
+            # Sharpe ratio based on per-session pip results
+            if len(session_results) > 1:
+                session_pips = [s['total_pips'] for s in session_results]
+                sharpe = np.mean(session_pips) / (np.std(session_pips) + 1e-8)
             else:
                 sharpe = 0
 
-            # Max drawdown from session returns
-            if len(trades) > 10:
-                cumsum = np.cumsum(trades)
+            # Max drawdown in pips
+            if len(trades_array) > 10:
+                cumsum = np.cumsum(trades_array)
                 running_max = np.maximum.accumulate(cumsum)
-                drawdown = (cumsum - running_max) / (np.abs(running_max) + 1)
-                max_dd = abs(np.min(drawdown)) * 100  # Convert to percentage
+                drawdown_pips = cumsum - running_max
+                max_dd_pips = abs(np.min(drawdown_pips))
             else:
-                max_dd = 0
+                max_dd_pips = 0
 
-            # CAR25 based on 6-hour sessions
-            car25 = avg_return_per_session * 0.25  # Conservative estimate
+            # Calculate percentage return for comparison (optional)
+            # Assuming starting capital and pip value
+            initial_capital = 10000  # Example starting capital
+            pip_value = 0.01  # Example pip value for GBPJPY
+            total_return_pct = (total_pips * pip_value) / initial_capital * 100
         else:
-            total_return = 0
+            total_pips = 0
+            avg_pips_per_trade = 0
             win_rate = 0
             sharpe = 0
-            max_dd = 0
-            car25 = 0
+            max_dd_pips = 0
+            total_return_pct = 0
 
         metrics = ValidationMetrics(
-            total_return=total_return,
-            total_trades=len(trades),
+            total_pips=total_pips,
+            avg_pips_per_trade=avg_pips_per_trade,
+            total_trades=len(all_trades),
             win_rate=win_rate,
             sharpe_ratio=sharpe,
-            max_drawdown=max_dd,
-            car25=car25
+            max_drawdown_pips=max_dd_pips,
+            total_return_pct=total_return_pct
         )
 
         return metrics
@@ -284,13 +220,14 @@ class PrecomputedWSTValidator:
             metrics = self.validate_checkpoint(path)
             results[name] = metrics
 
-            logger.info(f"\n{name} Results:")
-            logger.info(f"  Trades: {metrics.total_trades}")
-            logger.info(f"  Total Return: {metrics.total_return:.2%}")
+            logger.info(f"\n{name} Results (Pips After Spread):")
+            logger.info(f"  Total Trades: {metrics.total_trades}")
+            logger.info(f"  Total Pips: {metrics.total_pips:.1f}")
+            logger.info(f"  Avg Pips/Trade: {metrics.avg_pips_per_trade:.2f}")
             logger.info(f"  Win Rate: {metrics.win_rate:.2%}")
             logger.info(f"  Sharpe: {metrics.sharpe_ratio:.2f}")
-            logger.info(f"  Max DD: {metrics.max_drawdown:.2%}")
-            logger.info(f"  CAR25: {metrics.car25:.2%}")
+            logger.info(f"  Max DD: {metrics.max_drawdown_pips:.1f} pips")
+            logger.info(f"  Return %: {metrics.total_return_pct:.2f}%")
 
         return results
 
@@ -336,14 +273,15 @@ def main():
             metrics = validator.validate_checkpoint(checkpoint, num_runs=args.runs)
             results[name] = metrics
 
-            # Print results
-            print(f"\n📊 {name} Validation Results:")
-            print(f"  ✅ Trades: {metrics.total_trades}")
-            print(f"  ✅ Total Return: {metrics.total_return:.2%}")
+            # Print results in pips after spread costs
+            print(f"\n📊 {name} Validation Results (ACTUAL PIPS AFTER SPREAD):")
+            print(f"  ✅ Total Trades: {metrics.total_trades}")
+            print(f"  ✅ Total Pips: {metrics.total_pips:.1f} pips (after 4 pip spread)")
+            print(f"  ✅ Avg per Trade: {metrics.avg_pips_per_trade:.2f} pips")
             print(f"  ✅ Win Rate: {metrics.win_rate:.2%}")
             print(f"  ✅ Sharpe Ratio: {metrics.sharpe_ratio:.2f}")
-            print(f"  ✅ Max Drawdown: {metrics.max_drawdown:.2%}")
-            print(f"  ✅ CAR25: {metrics.car25:.2%}")
+            print(f"  ✅ Max Drawdown: {metrics.max_drawdown_pips:.1f} pips")
+            print(f"  ✅ Return %: {metrics.total_return_pct:.2f}%")
 
     # Compare results
     if len(results) > 1:
@@ -351,8 +289,8 @@ def main():
         print("📈 COMPARISON")
         print('='*60)
 
-        best_car25 = max(results.items(), key=lambda x: x[1].car25)
-        print(f"🏆 Best CAR25: {best_car25[0]} with {best_car25[1].car25:.2%}")
+        best_pips = max(results.items(), key=lambda x: x[1].total_pips)
+        print(f"🏆 Best Total Pips: {best_pips[0]} with {best_pips[1].total_pips:.1f} pips")
 
         best_sharpe = max(results.items(), key=lambda x: x[1].sharpe_ratio)
         print(f"🏆 Best Sharpe: {best_sharpe[0]} with {best_sharpe[1].sharpe_ratio:.2f}")
