@@ -26,7 +26,7 @@ services:
       resources:
         limits:
           cpus: '6'
-          memory: 12G
+          memory: 16G
     command: ["bash", "/workspace/scripts/start_training.sh"]
     healthcheck:
       test: ["CMD", "python", "-c", "print('Training container healthy')"]
@@ -58,7 +58,7 @@ services:
       resources:
         limits:
           cpus: '6'
-          memory: 8G
+          memory: 12G
     command: ["bash", "/workspace/scripts/start_validation.sh"]
     depends_on:
       - training

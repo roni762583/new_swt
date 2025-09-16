@@ -1,10 +1,29 @@
 {
   "episode": 250,
-  "timestamp": "2025-09-16T00:43:52.768555",
+  "timestamp": "2025-09-16T03:33:50.166040",
   "performance": {
     "episode": 249,
-    "error": "name 'reward' is not defined",
-    "timestamp": "2025-09-16T00:43:52.766626"
+    "reward": -2.799999999999818,
+    "episode_length": 360,
+    "loss": 1.2205429653258761,
+    "learning_rate": 0.0002,
+    "mcts_simulations": 15,
+    "c_puct": 1.25,
+    "temperature": 1.0,
+    "trades": 8,
+    "win_rate": 0.125,
+    "avg_pips": -48.837500000000134,
+    "total_pips": -390.70000000000107,
+    "total_pnl": -390.70000000000107,
+    "env_reward": -2.799999999999818,
+    "max_drawdown": 160.39999999999986,
+    "sqn": -1.3228756555322954,
+    "sqn_classification": "Losing System",
+    "sqn_confidence": "Insufficient Data",
+    "expectancy_r": -0.5,
+    "std_dev_r": 1.0690449676496976,
+    "timestamp": "2025-09-16T03:33:50.165452",
+    "duration_seconds": 29.691868
   },
   "config": {
     "agent_type": "swt_muzero",
