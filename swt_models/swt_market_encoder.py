@@ -298,7 +298,7 @@ def test_market_encoder():
     assert final_state.shape == (batch_size, 137), f"Output shape mismatch: {final_state.shape}"
     
     # Test precomputed WST if available
-    precomputed_path = "precomputed_wst/GBPJPY_WST_3.5years_streaming.h5"
+    precomputed_path = "precomputed_wst/GBPJPY_WST_CLEAN_2022-2025.h5"
     if Path(precomputed_path).exists():
         logger.info("🗃️ Testing with precomputed WST features")
         encoder_precomputed = SWTMarketStateEncoder(precomputed_wst_path=precomputed_path)

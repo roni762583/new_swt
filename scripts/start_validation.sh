@@ -24,8 +24,8 @@ while true; do
         # Run validation and capture results
         VALIDATION_OUTPUT=$(python swt_validation/validate_with_precomputed_wst.py \
             --checkpoints "${BEST_CHECKPOINT}" \
-            --wst-file precomputed_wst/GBPJPY_WST_3.5years_streaming.h5 \
-            --csv-file data/GBPJPY_M1_3.5years_20250912.csv \
+            --wst-file precomputed_wst/GBPJPY_WST_CLEAN_2022-2025.h5 \
+            --csv-file data/GBPJPY_M1_REAL_2022-2025.csv \
             --runs 100 2>&1) || true
 
         echo "${VALIDATION_OUTPUT}"
@@ -51,8 +51,8 @@ while true; do
         # Run comprehensive validation with distribution plots
         python validation_with_plots.py \
             --checkpoint "${BEST_CHECKPOINT}" \
-            --wst-file precomputed_wst/GBPJPY_WST_3.5years_streaming.h5 \
-            --csv-file data/GBPJPY_M1_3.5years_20250912.csv \
+            --wst-file precomputed_wst/GBPJPY_WST_CLEAN_2022-2025.h5 \
+            --csv-file data/GBPJPY_M1_REAL_2022-2025.csv \
             --runs 50 \
             --output-dir /workspace/validation_results || echo "Validation with plots failed"
 

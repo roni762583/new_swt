@@ -27,8 +27,8 @@ class SWTPrecomputedMarketStateEncoder(nn.Module):
     
     def __init__(
         self, 
-        precomputed_path: str = "precomputed_wst/GBPJPY_WST_3.5years.h5",
-        fallback_csv_path: str = "data/GBPJPY_M1_3.5years_20250912.csv",
+        precomputed_path: str = "precomputed_wst/GBPJPY_WST_CLEAN_2022-2025.h5",
+        fallback_csv_path: str = "data/GBPJPY_M1_REAL_2022-2025.csv",
         config_dict: dict = None
     ):
         super().__init__()

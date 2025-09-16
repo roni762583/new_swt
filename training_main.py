@@ -149,7 +149,7 @@ class SWTTrainingOrchestrator(ManagedProcess):
             
             # Initialize feature processor
             # Use precomputed WST if available
-            precomputed_path = "precomputed_wst/GBPJPY_WST_3.5years_streaming.h5"
+            precomputed_path = "precomputed_wst/GBPJPY_WST_CLEAN_2022-2025.h5"
             self.feature_processor = FeatureProcessor(
                 self.config,
                 precomputed_wst_path=precomputed_path if Path(precomputed_path).exists() else None
@@ -169,7 +169,7 @@ class SWTTrainingOrchestrator(ManagedProcess):
             }
 
             self.environment = SWTForexEnvironment(
-                data_path="data/GBPJPY_M1_3.5years_20250912.csv",
+                data_path="data/GBPJPY_M1_REAL_2022-2025.csv",
                 config_dict=env_config
             )
             

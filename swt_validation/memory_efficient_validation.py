@@ -150,7 +150,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description='Memory-efficient validation')
     parser.add_argument('--checkpoint', required=True, help='Checkpoint path')
-    parser.add_argument('--data', default='data/GBPJPY_M1_3.5years_20250912.csv', help='Data path')
+    parser.add_argument('--data', default='data/GBPJPY_M1_REAL_2022-2025.csv', help='Data path')
     parser.add_argument('--simulations', type=int, default=10, help='Number of simulations')
     args = parser.parse_args()
     

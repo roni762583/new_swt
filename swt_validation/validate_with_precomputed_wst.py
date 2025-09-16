@@ -49,8 +49,8 @@ class PrecomputedWSTValidator:
 
     def __init__(
         self,
-        wst_file: str = "precomputed_wst/GBPJPY_WST_3.5years_streaming.h5",
-        csv_file: str = "data/GBPJPY_M1_3.5years_20250912.csv"
+        wst_file: str = "precomputed_wst/GBPJPY_WST_CLEAN_2022-2025.h5",
+        csv_file: str = "data/GBPJPY_M1_REAL_2022-2025.csv"
     ):
         """
         Initialize validator with actual trading environment
@@ -271,10 +271,10 @@ def main():
                                "checkpoints/episode_775_aggressive.pth"],
                        help="Checkpoint paths to validate")
     parser.add_argument("--wst-file",
-                       default="precomputed_wst/GBPJPY_WST_3.5years_streaming.h5",
+                       default="precomputed_wst/GBPJPY_WST_CLEAN_2022-2025.h5",
                        help="Pre-computed WST HDF5 file")
     parser.add_argument("--csv-file",
-                       default="data/GBPJPY_M1_3.5years_20250912.csv",
+                       default="data/GBPJPY_M1_REAL_2022-2025.csv",
                        help="CSV price data file")
     parser.add_argument("--runs", type=int, default=100,
                        help="Number of Monte Carlo runs")

@@ -55,7 +55,7 @@ class SimpleCsvSessionManager:
     """
     
     def __init__(self, 
-                 data_path: str = "data/GBPJPY_M1_3.5years_20250912.csv",
+                 data_path: str = "data/GBPJPY_M1_REAL_2022-2025.csv",
                  config: Optional[SWTSessionConfig] = None):
         self.data_path = Path(data_path)
         self.config = config or SWTSessionConfig()

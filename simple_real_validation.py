@@ -161,9 +161,9 @@ def validate_checkpoint_simple(checkpoint_path: str, csv_file: str, wst_file: st
 def main():
     parser = argparse.ArgumentParser(description="Simple validation with real environment")
     parser.add_argument("--checkpoint", required=True, help="Path to checkpoint")
-    parser.add_argument("--csv-file", default="data/GBPJPY_M1_3.5years_20250912.csv",
+    parser.add_argument("--csv-file", default="data/GBPJPY_M1_REAL_2022-2025.csv",
                        help="CSV file with price data")
-    parser.add_argument("--wst-file", default="precomputed_wst/GBPJPY_WST_3.5years_streaming.h5",
+    parser.add_argument("--wst-file", default="precomputed_wst/GBPJPY_WST_CLEAN_2022-2025.h5",
                        help="Precomputed WST features file")
     parser.add_argument("--runs", type=int, default=10,
                        help="Number of validation runs")
