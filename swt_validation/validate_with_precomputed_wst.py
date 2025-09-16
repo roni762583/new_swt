@@ -67,7 +67,7 @@ class PrecomputedWSTValidator:
 
         # Load configuration
         self.config_manager = ConfigManager('config')
-        self.config_manager.load_all_configs()
+        self.config_manager.load_config()
 
         # Create precomputed WST loader
         self.wst_loader = PrecomputedWSTLoader(
