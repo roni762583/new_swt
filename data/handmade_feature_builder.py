@@ -556,6 +556,397 @@ def populate_time_cyclical_features(
         raise RuntimeError(f"Failed to populate time features: {e}")
 
 
+def populate_technical_indicators(
+    db_path: str = "/home/aharon/projects/new_swt/data/master.duckdb",
+    batch_size: int = 50000,
+    L: int = 60,  # long-term window
+    S: int = 5    # short-term lag
+) -> None:
+    """
+    Populate four technical indicator columns based on momentum and range analysis.
+
+    Indicators:
+    1. position_in_range_60: Where price sits in 60-bar high/low range (0-1)
+    2. min_max_scaled_momentum_60: 60-bar momentum scaled to 0-1
+    3. min_max_scaled_rolling_range: 60-bar volatility scaled to 0-1
+    4. min_max_scaled_momentum_5: 5-bar momentum in 60-bar context
+
+    Args:
+        db_path: Path to the DuckDB database
+        batch_size: Number of rows to process at a time
+        L: Long-term window (default 60)
+        S: Short-term lag (default 5)
+
+    Raises:
+        RuntimeError: If database operations fail
+    """
+    import numpy as np
+    import pandas as pd
+
+    eps = 1e-9  # Small epsilon to avoid division by zero
+
+    try:
+        conn = duckdb.connect(db_path)
+
+        # Verify table exists
+        tables = conn.execute("SHOW TABLES").fetchall()
+        if ('master',) not in tables:
+            raise RuntimeError(f"Table 'master' not found in {db_path}")
+
+        logger.info(f"Connected to {db_path}")
+
+        # Get total row count
+        total_rows = conn.execute("SELECT COUNT(*) FROM master").fetchone()[0]
+        logger.info(f"Total rows in master table: {total_rows:,}")
+
+        # Check if columns exist, if not create them
+        indicator_columns = [
+            'position_in_range_60',
+            'min_max_scaled_momentum_60',
+            'min_max_scaled_rolling_range',
+            'min_max_scaled_momentum_5'
+        ]
+
+        existing_cols = [row[0] for row in conn.execute("DESCRIBE master").fetchall()]
+
+        for col in indicator_columns:
+            if col not in existing_cols:
+                conn.execute(f"ALTER TABLE master ADD COLUMN {col} DOUBLE")
+                logger.info(f"Added column {col}")
+
+        # Load all data for proper rolling calculations
+        logger.info("Loading price data for indicator calculation...")
+
+        price_data = conn.execute("""
+            SELECT bar_index, timestamp, close
+            FROM master
+            ORDER BY timestamp
+        """).fetchdf()
+
+        logger.info(f"Loaded {len(price_data):,} rows")
+
+        # Calculate rolling statistics
+        logger.info(f"Calculating rolling statistics with L={L}, S={S}...")
+
+        # Rolling high/low/range over L periods
+        price_data['rolling_high'] = price_data['close'].rolling(window=L, min_periods=1).max()
+        price_data['rolling_low'] = price_data['close'].rolling(window=L, min_periods=1).min()
+        price_data['rolling_range'] = price_data['rolling_high'] - price_data['rolling_low']
+
+        # Momentum calculations
+        price_data['momentum60'] = price_data['close'] - price_data['close'].shift(L)
+        price_data['momentum5'] = price_data['close'] - price_data['close'].shift(S)
+
+        # Rolling min/max for momentum60
+        mom60_max = price_data['momentum60'].rolling(window=L, min_periods=1).max()
+        mom60_min = price_data['momentum60'].rolling(window=L, min_periods=1).min()
+        mom60_range = (mom60_max - mom60_min).clip(lower=eps)
+
+        # Rolling min/max for rolling_range
+        roll_range_max = price_data['rolling_range'].rolling(window=L, min_periods=1).max()
+        roll_range_min = price_data['rolling_range'].rolling(window=L, min_periods=1).min()
+        roll_range_rng = (roll_range_max - roll_range_min).clip(lower=eps)
+
+        # Calculate indicators
+        logger.info("Calculating technical indicators...")
+
+        # 1. Position in Range (60-bar)
+        price_data['position_in_range_60'] = (
+            (price_data['close'] - price_data['rolling_low']) /
+            price_data['rolling_range'].clip(lower=eps)
+        )
+
+        # 2. Min-Max Scaled Momentum (60-bar)
+        price_data['min_max_scaled_momentum_60'] = (
+            (price_data['momentum60'] - mom60_min) / mom60_range
+        )
+
+        # 3. Min-Max Scaled Rolling Range
+        price_data['min_max_scaled_rolling_range'] = (
+            (price_data['rolling_range'] - roll_range_min) / roll_range_rng
+        )
+
+        # 4. Min-Max Scaled Momentum (5-bar in 60-bar context)
+        # Use 60-bar momentum range for scaling to see short-term in long-term context
+        price_data['min_max_scaled_momentum_5'] = (
+            (price_data['momentum5'] - price_data['momentum60'].rolling(S, min_periods=1).min()) /
+            mom60_range
+        )
+
+        # Clip to [0, 1] range for safety (NaN values remain as NaN)
+        for col in indicator_columns:
+            price_data[col] = price_data[col].clip(0, 1)
+
+        # Process in batches for database update
+        start_time = time.time()
+        rows_processed = 0
+
+        for batch_start in range(0, total_rows, batch_size):
+            batch_end = min(batch_start + batch_size, total_rows)
+            batch_time = time.time()
+
+            logger.info(f"Updating rows {batch_start:,} to {batch_end:,}...")
+
+            # Get batch data
+            batch_df = price_data.iloc[batch_start:batch_end][['bar_index'] + indicator_columns].copy()
+
+            # Register as temporary table
+            conn.register('indicators_temp', batch_df)
+
+            # Update master table
+            set_clauses = [f"{col} = indicators_temp.{col}" for col in indicator_columns]
+            update_sql = f"""
+            UPDATE master
+            SET {', '.join(set_clauses)}
+            FROM indicators_temp
+            WHERE master.bar_index = indicators_temp.bar_index
+            """
+
+            conn.execute(update_sql)
+            conn.unregister('indicators_temp')
+
+            rows_processed += len(batch_df)
+            elapsed = time.time() - batch_time
+            logger.info(f"  Updated {len(batch_df)} rows in {elapsed:.1f}s")
+
+        total_elapsed = time.time() - start_time
+        logger.info(f"\nProcessed {rows_processed:,} rows in {total_elapsed:.1f} seconds")
+
+        # Verification
+        logger.info("\nVerifying technical indicators...")
+
+        # Check for nulls and value ranges
+        for col in indicator_columns:
+            stats = conn.execute(f"""
+                SELECT
+                    COUNT(*) as total,
+                    COUNT({col}) as non_null,
+                    MIN({col}) as min_val,
+                    MAX({col}) as max_val,
+                    AVG({col}) as mean_val
+                FROM master
+            """).fetchone()
+
+            logger.info(f"  {col}:")
+            logger.info(f"    Non-null: {stats[1]:,}/{stats[0]:,}")
+            logger.info(f"    Range: [{stats[2]:.4f}, {stats[3]:.4f}]")
+            logger.info(f"    Mean: {stats[4]:.4f}")
+
+        # Show sample values
+        logger.info("\nSample indicator values (rows 1000-1005):")
+        sample = conn.execute(f"""
+            SELECT
+                bar_index,
+                close,
+                {', '.join(indicator_columns)}
+            FROM master
+            WHERE bar_index BETWEEN 1000 AND 1005
+            ORDER BY bar_index
+        """).fetchall()
+
+        for row in sample:
+            logger.info(f"  Row {row[0]} (close={row[1]:.5f}):")
+            for i, col in enumerate(indicator_columns):
+                logger.info(f"    {col}: {row[i+2]:.4f}")
+
+        conn.close()
+        logger.info("\n✅ Successfully populated technical indicator columns")
+
+    except Exception as e:
+        logger.error(f"Failed to populate technical indicators: {e}")
+        raise RuntimeError(f"Failed to populate technical indicators: {e}")
+
+
+def drop_null_rows(
+    db_path: str = "/home/aharon/projects/new_swt/data/master.duckdb",
+    create_clean_table: bool = False
+) -> None:
+    """
+    Drop rows with NULL values from the master table and report what was dropped.
+
+    Analyzes which rows contain NULLs, particularly checking if they're at the
+    beginning of the dataframe (which is expected due to lag features and WST).
+
+    Args:
+        db_path: Path to the DuckDB database
+        create_clean_table: If True, creates a new 'master_clean' table instead of modifying master
+
+    Raises:
+        RuntimeError: If database operations fail
+    """
+    import numpy as np
+    import pandas as pd
+
+    try:
+        conn = duckdb.connect(db_path)
+
+        # Verify table exists
+        tables = conn.execute("SHOW TABLES").fetchall()
+        if ('master',) not in tables:
+            raise RuntimeError(f"Table 'master' not found in {db_path}")
+
+        logger.info(f"Connected to {db_path}")
+
+        # Get total row count
+        total_rows = conn.execute("SELECT COUNT(*) FROM master").fetchone()[0]
+        logger.info(f"Total rows in master table: {total_rows:,}")
+
+        # Get all columns except those we know can have NULLs
+        cols = conn.execute("DESCRIBE master").fetchall()
+        all_columns = [col[0] for col in cols]
+
+        # Identify columns with NULLs
+        logger.info("\nAnalyzing NULL values by column...")
+        columns_with_nulls = []
+
+        for col_name in all_columns:
+            null_count = conn.execute(f"SELECT COUNT(*) FROM master WHERE {col_name} IS NULL").fetchone()[0]
+            if null_count > 0:
+                columns_with_nulls.append((col_name, null_count))
+
+        # Report columns with NULLs
+        if columns_with_nulls:
+            logger.info(f"\nColumns with NULL values ({len(columns_with_nulls)} total):")
+            for col_name, null_count in sorted(columns_with_nulls, key=lambda x: -x[1])[:10]:
+                logger.info(f"  {col_name}: {null_count:,} NULLs ({null_count/total_rows*100:.2f}%)")
+            if len(columns_with_nulls) > 10:
+                logger.info(f"  ... and {len(columns_with_nulls)-10} more columns")
+
+        # Find rows with ANY NULL values
+        logger.info("\nIdentifying rows with NULL values...")
+
+        # Get the bar_index of rows with NULLs
+        null_rows_query = """
+        SELECT bar_index, timestamp
+        FROM master
+        WHERE """ + " OR ".join([f"{col} IS NULL" for col, _ in columns_with_nulls]) + """
+        ORDER BY bar_index
+        """
+
+        null_rows_df = conn.execute(null_rows_query).fetchdf()
+        rows_with_nulls = len(null_rows_df)
+
+        logger.info(f"\nRows with NULL values: {rows_with_nulls:,} ({rows_with_nulls/total_rows*100:.2f}%)")
+
+        if rows_with_nulls > 0:
+            # Analyze location of NULL rows
+            first_null_idx = null_rows_df['bar_index'].iloc[0]
+            last_null_idx = null_rows_df['bar_index'].iloc[-1]
+
+            # Check if NULLs are at the beginning (expected pattern)
+            expected_nulls_at_start = 255  # Maximum lag is c_255, WST needs 255 rows
+            consecutive_nulls_at_start = 0
+
+            for i in range(min(expected_nulls_at_start + 100, len(null_rows_df))):
+                if null_rows_df['bar_index'].iloc[i] == i:
+                    consecutive_nulls_at_start += 1
+                else:
+                    break
+
+            logger.info(f"\nNULL rows distribution:")
+            logger.info(f"  First NULL at bar_index: {first_null_idx}")
+            logger.info(f"  Last NULL at bar_index: {last_null_idx}")
+            logger.info(f"  Consecutive NULLs from start: {consecutive_nulls_at_start}")
+
+            # Show sample of NULL row indices
+            if rows_with_nulls <= 20:
+                logger.info(f"  All NULL row indices: {null_rows_df['bar_index'].tolist()}")
+            else:
+                logger.info(f"  First 10 NULL indices: {null_rows_df['bar_index'].head(10).tolist()}")
+                logger.info(f"  Last 10 NULL indices: {null_rows_df['bar_index'].tail(10).tolist()}")
+
+            # Check if all NULLs are at the beginning (expected pattern)
+            if consecutive_nulls_at_start == rows_with_nulls:
+                logger.info(f"\n✅ All NULL rows are at the beginning (rows 0-{rows_with_nulls-1})")
+                logger.info("This is EXPECTED due to lag features and WST requiring historical data")
+            else:
+                logger.warning(f"\n⚠️ NULL rows found beyond the beginning of the dataset")
+                logger.warning("This may indicate data quality issues")
+
+        # Create clean table or modify master
+        if rows_with_nulls > 0:
+            if create_clean_table:
+                logger.info(f"\nCreating 'master_clean' table without NULL rows...")
+
+                # Drop existing clean table if it exists
+                conn.execute("DROP TABLE IF EXISTS master_clean")
+
+                # Create new clean table
+                conn.execute("""
+                    CREATE TABLE master_clean AS
+                    SELECT * FROM master
+                    WHERE bar_index >= ?
+                """, [consecutive_nulls_at_start])
+
+                clean_rows = conn.execute("SELECT COUNT(*) FROM master_clean").fetchone()[0]
+                logger.info(f"Created 'master_clean' with {clean_rows:,} rows")
+                logger.info(f"Removed {total_rows - clean_rows:,} rows with NULLs")
+
+                # Verify no NULLs remain
+                verify_query = """
+                SELECT COUNT(*)
+                FROM master_clean
+                WHERE """ + " OR ".join([f"{col} IS NULL" for col, _ in columns_with_nulls])
+
+                remaining_nulls = conn.execute(verify_query).fetchone()[0]
+                if remaining_nulls == 0:
+                    logger.info("✅ Verified: master_clean contains no NULL values")
+                else:
+                    logger.warning(f"⚠️ Warning: {remaining_nulls} rows with NULLs remain in master_clean")
+            else:
+                logger.info(f"\nDeleting {rows_with_nulls:,} rows with NULL values from master table...")
+
+                # Delete rows with NULLs
+                delete_query = """
+                DELETE FROM master
+                WHERE """ + " OR ".join([f"{col} IS NULL" for col, _ in columns_with_nulls])
+
+                conn.execute(delete_query)
+
+                # Verify deletion
+                new_total = conn.execute("SELECT COUNT(*) FROM master").fetchone()[0]
+                logger.info(f"Rows after deletion: {new_total:,}")
+                logger.info(f"Removed: {total_rows - new_total:,} rows")
+
+                # Update bar_index to be sequential
+                logger.info("Updating bar_index to be sequential...")
+                conn.execute("""
+                    UPDATE master
+                    SET bar_index = bar_index - ?
+                """, [consecutive_nulls_at_start])
+
+                logger.info("✅ Successfully removed NULL rows and updated indices")
+        else:
+            logger.info("\n✅ No NULL values found - table is already clean!")
+
+        # Final statistics
+        if create_clean_table and rows_with_nulls > 0:
+            table_name = "master_clean"
+        else:
+            table_name = "master"
+
+        logger.info(f"\nFinal {table_name} table statistics:")
+        final_stats = conn.execute(f"""
+            SELECT
+                COUNT(*) as total_rows,
+                MIN(timestamp) as min_date,
+                MAX(timestamp) as max_date,
+                MIN(bar_index) as min_idx,
+                MAX(bar_index) as max_idx
+            FROM {table_name}
+        """).fetchone()
+
+        logger.info(f"  Total rows: {final_stats[0]:,}")
+        logger.info(f"  Date range: {final_stats[1]} to {final_stats[2]}")
+        logger.info(f"  Bar index range: {final_stats[3]} to {final_stats[4]}")
+
+        conn.close()
+
+    except Exception as e:
+        logger.error(f"Failed to drop NULL rows: {e}")
+        raise RuntimeError(f"Failed to drop NULL rows: {e}")
+
+
 if __name__ == "__main__":
     import sys
     import numpy as np
@@ -572,8 +963,17 @@ if __name__ == "__main__":
         elif sys.argv[1] == "time":
             print("\nPopulating cyclical time features...")
             populate_time_cyclical_features()
+        elif sys.argv[1] == "indicators":
+            print("\nPopulating technical indicators...")
+            populate_technical_indicators()
+        elif sys.argv[1] == "drop_nulls":
+            print("\nDropping NULL rows from master table...")
+            drop_null_rows(create_clean_table=False)
+        elif sys.argv[1] == "create_clean":
+            print("\nCreating master_clean table without NULL rows...")
+            drop_null_rows(create_clean_table=True)
         else:
             print(f"Unknown command: {sys.argv[1]}")
-            print("Usage: python handmade_feature_builder.py [discover|wst|time]")
+            print("Usage: python handmade_feature_builder.py [discover|wst|time|indicators|drop_nulls|create_clean]")
     else:
         populate_close_lag_features()

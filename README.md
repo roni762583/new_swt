@@ -89,6 +89,28 @@ if hasattr(self.current_step, 'weekday'):  # Wrong - current_step is int
 
 ---
 
+## 🎯 Micro Variant - NEW!
+
+A streamlined proof-of-concept using only **14 essential features** for rapid development and baseline testing:
+
+### Features
+- **14 features total**: 4 technical indicators + 4 cyclical time + 6 position features
+- **TCN integration**: Temporal Convolutional Network embedded in Representation network
+- **10x faster training**: Reduced from 337 to 14 features
+- **Clean architecture**: 5 Stochastic MuZero networks with attention pooling
+
+### Quick Start
+```bash
+cd micro/
+# See micro/README.md for detailed implementation
+python prepare_micro_data.py  # Extract 14 features from master.duckdb
+python train_micro_muzero.py  # Train the micro variant
+```
+
+For full details, see [micro/README.md](micro/README.md)
+
+---
+
 ## ⚡ Quick Start (AFTER FIXING DATA)
 
 Simply run:
