@@ -99,11 +99,14 @@ class SQNCalculator:
         risk_values: Optional[List[float]] = None
     ) -> List[float]:
         """
-        Convert P&L values to R-multiples.
+        Convert P&L values to R-multiples using Van Tharp's methodology.
+
+        Van Tharp's R-multiple = (Exit Price - Entry Price) / Initial Risk
+        Where Initial Risk = amount you stood to lose at your initial stop loss.
 
         Args:
             pnl_values: List of profit/loss values
-            risk_values: List of risk amounts per trade (optional)
+            risk_values: List of initial risk amounts per trade (optional)
 
         Returns:
             List of R-multiples
@@ -113,20 +116,39 @@ class SQNCalculator:
 
         r_multiples = []
 
+        # Van Tharp approach: Estimate risk from losses if not provided
+        if not risk_values and not self.risk_per_trade:
+            # Use average of absolute losses as risk estimate
+            losses = [abs(pnl) for pnl in pnl_values if pnl < 0]
+            if losses:
+                estimated_risk = np.mean(losses)
+                logger.debug(f"Estimated risk from {len(losses)} losses: {estimated_risk:.2f}")
+            else:
+                # No losses - use 1% of average absolute P&L
+                avg_abs_pnl = np.mean([abs(pnl) for pnl in pnl_values])
+                estimated_risk = max(avg_abs_pnl * 0.01, 1.0)  # Minimum risk of 1.0
+                logger.debug(f"No losses found, using 1% of avg |P&L|: {estimated_risk:.2f}")
+        else:
+            estimated_risk = None
+
         for i, pnl in enumerate(pnl_values):
-            # Determine risk for this trade
+            # Van Tharp: Use consistent risk per trade
             if risk_values and i < len(risk_values):
                 risk = risk_values[i]
             elif self.risk_per_trade:
                 risk = self.risk_per_trade
+            elif estimated_risk:
+                risk = estimated_risk
             else:
-                # Use absolute value of loss as risk proxy
-                risk = abs(pnl) if pnl < 0 else abs(pnl) * 0.5
-
-            # Avoid division by zero
-            if risk == 0:
+                # Fallback: Use 1.0 to avoid division by zero
                 risk = 1.0
 
+            # Validate risk value
+            if risk <= 0 or np.isnan(risk) or np.isinf(risk):
+                logger.warning(f"Invalid risk {risk} for trade {i}, using 1.0")
+                risk = 1.0
+
+            # Van Tharp's R-multiple: P&L divided by initial risk
             r_multiple = pnl / risk
             r_multiples.append(r_multiple)
 

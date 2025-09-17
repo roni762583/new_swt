@@ -99,6 +99,14 @@ class Experience:
         """Calculate quality score with heavy emphasis on trading performance and SQN."""
         score = 0.0
 
+        # Validate inputs to prevent NaN propagation
+        if np.isnan(self.pip_pnl) or np.isnan(self.reward):
+            logger.error(
+                f"NaN detected in quality score inputs: "
+                f"pip_pnl={self.pip_pnl}, reward={self.reward}, action={self.action}"
+            )
+            return 0.1  # Return minimum valid score
+
         # PRIMARY FACTOR: Pip P&L (heaviest weight for actual trading performance)
         if self.pip_pnl > 0:
             score += self.pip_pnl * 2.0  # Much heavier weight on profitable trades
@@ -212,15 +220,60 @@ class QualityExperienceBuffer:
         logger.debug(f"Evicted {len(to_remove)} low quality experiences (total: {self.total_evicted})")
 
     def sample(self, batch_size: int) -> List[Experience]:
-        """Sample with priority on quality."""
+        """Sample with priority on quality, with proper NaN detection and handling."""
         if len(self.buffer) <= batch_size:
             return self.buffer.copy()
 
         # Weighted sampling based on quality scores
-        weights = np.array([exp.quality_score for exp in self.buffer])
+        weights = []
+        valid_indices = []
+        nan_count = 0
+        negative_count = 0
+
+        for i, exp in enumerate(self.buffer):
+            score = exp.quality_score
+
+            # Track and log NaN/Inf values to identify root causes
+            if np.isnan(score) or np.isinf(score):
+                nan_count += 1
+                if nan_count <= 3:  # Log first few to avoid spam
+                    logger.warning(
+                        f"NaN/Inf quality score at index {i}: "
+                        f"pip_pnl={exp.pip_pnl}, reward={exp.reward}, "
+                        f"expectancy={exp.session_expectancy}, action={exp.action}"
+                    )
+                continue  # Skip this experience
+
+            if score <= 0:
+                negative_count += 1
+                score = 0.01  # Minimum weight for valid experiences
+
+            weights.append(score)
+            valid_indices.append(i)
+
+        if nan_count > 0:
+            logger.error(f"Found {nan_count}/{len(self.buffer)} experiences with NaN/Inf quality scores")
+
+        if negative_count > 0:
+            logger.debug(f"Found {negative_count} experiences with non-positive scores")
+
+        # Fall back to uniform sampling if too few valid experiences
+        if len(valid_indices) < batch_size:
+            logger.error(
+                f"Insufficient valid experiences ({len(valid_indices)}) for batch size {batch_size}. "
+                f"Using uniform sampling."
+            )
+            indices = np.random.choice(len(self.buffer), batch_size, replace=False)
+            return [self.buffer[i] for i in indices]
+
+        # Normalize valid weights
+        weights = np.array(weights)
         weights = weights / weights.sum()
 
-        indices = np.random.choice(len(self.buffer), batch_size, replace=False, p=weights)
+        # Sample from valid experiences only
+        sampled_valid_idx = np.random.choice(len(valid_indices), batch_size, replace=False, p=weights)
+        indices = [valid_indices[i] for i in sampled_valid_idx]
+
         return [self.buffer[i] for i in indices]
 
     def reassign_trade_rewards(self, trade_id: int, final_amddp1_reward: float, pip_pnl: float):
