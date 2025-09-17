@@ -62,19 +62,19 @@ class TrainingConfig:
     final_temperature: float = 0.5    # Lower exploration later
     temperature_decay_episodes: int = 20000  # Faster decay for exploration
     weight_decay: float = 1e-5
-    gradient_clip: float = 2.0  # More aggressive clipping  # More aggressive clipping
+    gradient_clip: float = 1.0  # Even more aggressive clipping for stability
 
     # Replay buffer
     buffer_size: int = 100000
-    min_buffer_size: int = 1000
+    min_buffer_size: int = 50  # Much smaller initial buffer for quick start
 
     # MuZero
     num_unroll_steps: int = 5
     td_steps: int = 10
     discount: float = 0.997
 
-    # MCTS
-    num_simulations: int = 15
+    # MCTS - MINIMAL FOR FAST COLLECTION
+    num_simulations: int = 3  # Minimal simulations for ultra-fast collection
     temperature: float = 1.0
 
     # Training loop
@@ -704,12 +704,12 @@ class MicroMuZeroTrainer:
         self.current_temperature = config.initial_temperature
         self.temperature_decay_rate = (config.final_temperature / config.initial_temperature) ** (1.0 / config.temperature_decay_episodes)
 
-        # Initialize MCTS
+        # Initialize MCTS with minimal simulations for ultra-fast collection
         self.mcts = MCTS(
             model=self.model,
             num_actions=config.action_dim,
             discount=config.discount,
-            num_simulations=config.num_simulations
+            num_simulations=config.num_simulations  # Use config value (3)
         )
 
         # Initialize data loader
@@ -746,13 +746,16 @@ class MicroMuZeroTrainer:
             device=self.device
         ).unsqueeze(0)  # Add batch dimension
 
-        # Run MCTS
+        # Run MCTS - use minimal simulations during initial collection
         self.model.eval()
+        num_sims = 1 if len(self.buffer) < self.config.min_buffer_size else self.config.num_simulations
+        self.mcts.num_simulations = num_sims  # Temporarily override
         mcts_result = self.mcts.run(
             observation,
             add_exploration_noise=True,
             temperature=self.current_temperature
         )
+        self.mcts.num_simulations = self.config.num_simulations  # Restore
 
         # Calculate AMDDP1 reward (simplified for training)
         # In production, this comes from environment
@@ -817,8 +820,8 @@ class MicroMuZeroTrainer:
             }
 
         try:
-            with torch.autograd.detect_anomaly():
-                hidden, policy_logits, value_probs = self.model.initial_inference(observations)
+            # Anomaly detection disabled for performance
+            hidden, policy_logits, value_probs = self.model.initial_inference(observations)
         except RuntimeError as e:
             logger.error(f"Forward pass failed: {e}")
             self.optimizer.zero_grad()
@@ -1018,14 +1021,27 @@ class MicroMuZeroTrainer:
             logger.info("Initial checkpoint saved as both latest.pth and best.pth")
 
         # Collect initial experiences if not resumed
-        if not resumed or len(self.buffer) < self.config.min_buffer_size:
-            logger.info("Collecting initial experiences...")
-            while len(self.buffer) < self.config.min_buffer_size:
+        # REDUCED to 100 experiences for faster startup (was 1000)
+        min_buffer = min(100, self.config.min_buffer_size)
+        if not resumed or len(self.buffer) < min_buffer:
+            logger.info(f"Collecting {min_buffer} initial experiences... Current buffer size: {len(self.buffer)}")
+            collection_count = 0
+            start_time = time.time()
+
+            while len(self.buffer) < min_buffer:
+                if collection_count % 10 == 0:
+                    elapsed = time.time() - start_time
+                    logger.info(f"Experience {collection_count}... Buffer: {len(self.buffer)}/{min_buffer} ({elapsed:.1f}s elapsed)")
+
                 experience = self.collect_experience()
                 self.buffer.add(experience)
+                collection_count += 1
 
-                if len(self.buffer) % 100 == 0:
-                    logger.info(f"Buffer size: {len(self.buffer)}/{self.config.min_buffer_size}")
+                if len(self.buffer) % 25 == 0:
+                    logger.info(f"Buffer size: {len(self.buffer)}/{min_buffer}")
+
+            total_time = time.time() - start_time
+            logger.info(f"Collected {min_buffer} experiences in {total_time:.1f} seconds")
 
         logger.info("Starting main training loop...")
 
