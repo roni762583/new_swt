@@ -1,115 +1,110 @@
 version: '3.8'
 
 services:
-  # Training Container - Resumes from last checkpoint, targets 1M sessions
+  # Micro Training Container - Trains micro variant with 15 features
   training:
     build:
       context: .
-      dockerfile: Dockerfile.training
-    image: swt-training:latest
-    container_name: swt_training_container
+      dockerfile: Dockerfile.micro
+    image: micro-muzero:latest
+    container_name: micro_training
     restart: unless-stopped
     working_dir: /workspace
     volumes:
       - .:/workspace
-      - ./checkpoints:/workspace/checkpoints
-      - ./logs/training:/workspace/logs
-      - ./cache:/workspace/cache
-      - ./training_state:/workspace/training_state
+      - ./micro/checkpoints:/workspace/micro/checkpoints
+      - ./micro/logs:/workspace/micro/logs
+      - ./data:/workspace/data:ro
     environment:
       - PYTHONPATH=/workspace
       - OMP_NUM_THREADS=6
       - MKL_NUM_THREADS=6
-      - NUMBA_NUM_THREADS=6
       - TARGET_EPISODES=1000000
     deploy:
       resources:
         limits:
           cpus: '6'
-          memory: 16G
-    command: ["bash", "/workspace/scripts/start_training.sh"]
+          memory: 8G
+    command: ["python3", "/workspace/micro/training/train_micro_muzero.py"]
     healthcheck:
-      test: ["CMD", "python", "-c", "print('Training container healthy')"]
+      test: ["CMD", "python3", "-c", "import os; exit(0 if os.path.exists('/workspace/micro/checkpoints') else 1)"]
       interval: 60s
       timeout: 10s
       retries: 3
 
-  # Validation Container - Monitors for new best checkpoints
+  # Micro Validation Container - Validates checkpoints automatically
   validation:
     build:
       context: .
-      dockerfile: Dockerfile.validation
-    image: swt-validation:latest
-    container_name: swt_validation_container
+      dockerfile: Dockerfile.micro
+    image: micro-muzero:latest
+    container_name: micro_validation
     restart: unless-stopped
     working_dir: /workspace
     volumes:
       - .:/workspace
-      - ./validation_results:/workspace/validation_results
-      - ./logs/validation:/workspace/logs
-      - ./checkpoints:/workspace/checkpoints
-      - ./cache:/workspace/cache
-    environment:
-      - PYTHONPATH=/workspace
-      - OMP_NUM_THREADS=6
-      - MKL_NUM_THREADS=6
-      - NUMBA_NUM_THREADS=6
-    deploy:
-      resources:
-        limits:
-          cpus: '6'
-          memory: 12G
-    command: ["bash", "/workspace/scripts/start_validation.sh"]
-    depends_on:
-      - training
-    healthcheck:
-      test: ["CMD", "python", "-c", "print('Validation container healthy')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # Live Trading Container - Ready but waiting for explicit instruction
-  live:
-    build:
-      context: .
-      dockerfile: Dockerfile.training
-    image: swt-training:latest
-    container_name: swt_live_trading
-    restart: unless-stopped
-    working_dir: /workspace
-    volumes:
-      - .:/workspace
-      - ./sessions:/workspace/sessions
-      - ./logs/live:/workspace/logs
-      - ./checkpoints:/workspace/checkpoints
-      - ./live_state:/workspace/live_state
+      - ./micro/checkpoints:/workspace/micro/checkpoints:ro
+      - ./micro/validation_results:/workspace/micro/validation_results
+      - ./micro/logs:/workspace/micro/logs
+      - ./data:/workspace/data:ro
     environment:
       - PYTHONPATH=/workspace
       - OMP_NUM_THREADS=4
       - MKL_NUM_THREADS=4
-      - NUMBA_NUM_THREADS=4
-      - OANDA_API_KEY=${OANDA_API_KEY}
-      - OANDA_ACCOUNT_ID=${OANDA_ACCOUNT_ID}
-      - OANDA_ENVIRONMENT=${OANDA_ENVIRONMENT:-practice}
-      - IS_DEMO=${IS_DEMO:-true}
-      - INSTRUMENT=${INSTRUMENT:-GBP_JPY}
-      - MAX_POSITION_SIZE=${MAX_POSITION_SIZE:-1}
     deploy:
       resources:
         limits:
           cpus: '4'
           memory: 4G
-    command: ["bash", "/workspace/scripts/start_live.sh"]
+    command: ["python3", "/workspace/micro/validation/validate_micro.py"]
     depends_on:
-      - validation
+      - training
     healthcheck:
-      test: ["CMD", "python", "-c", "print('Live trading container healthy')"]
+      test: ["CMD", "python3", "-c", "import os; exit(0 if os.path.exists('/workspace/micro/validation_results') else 1)"]
       interval: 30s
       timeout: 10s
       retries: 3
-    network_mode: host  # Use host network for OANDA API access
+
+  # Micro Live Trading Container - Uses incremental feature builder
+  live:
+    build:
+      context: .
+      dockerfile: Dockerfile.micro
+    image: micro-muzero:latest
+    container_name: micro_live
+    restart: unless-stopped
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - ./micro/checkpoints:/workspace/micro/checkpoints:ro
+      - ./micro/live_state:/workspace/micro/live_state
+      - ./micro/logs:/workspace/micro/logs
+      - ./data:/workspace/data:ro
+    environment:
+      - PYTHONPATH=/workspace
+      - OMP_NUM_THREADS=2
+      - MKL_NUM_THREADS=2
+      - OANDA_API_KEY=${OANDA_API_KEY}
+      - OANDA_ACCOUNT_ID=${OANDA_ACCOUNT_ID}
+      - OANDA_ENVIRONMENT=${OANDA_ENVIRONMENT:-practice}
+      - IS_DEMO=${IS_DEMO:-true}
+      - INSTRUMENT=${INSTRUMENT:-GBP_JPY}
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+    command: ["python3", "/workspace/micro/live/trade_micro.py", "--checkpoint", "/workspace/micro/checkpoints/latest.pth"]
+    depends_on:
+      - validation
+    healthcheck:
+      test: ["CMD", "python3", "-c", "print('Live trading ready')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    network_mode: host  # For OANDA API access
 
 networks:
   default:
-    name: swt_network
+    name: micro_network
     driver: bridge

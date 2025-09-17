@@ -7,6 +7,8 @@
 data/*.csv
 data/*.parquet
 *.db
+*.duckdb
+data/*.duckdb
 
 # Model files
 checkpoints/*.pth
