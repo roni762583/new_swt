@@ -23,11 +23,11 @@ from datetime import datetime
 
 # Add parent directory to path
 import sys
-sys.path.append('/home/aharon/projects/new_swt/micro')
+sys.path.append('/workspace')
 
-from models.micro_networks import MicroStochasticMuZero
-from training.mcts_micro import MCTS
-from training.session_queue_manager import SessionQueueManager, ValidSession
+from micro.models.micro_networks import MicroStochasticMuZero
+from micro.training.mcts_micro import MCTS
+from micro.training.session_queue_manager import SessionQueueManager, ValidSession
 
 logging.basicConfig(
     level=logging.INFO,
@@ -68,13 +68,13 @@ class TrainingConfig:
 
     # Training loop
     num_episodes: int = 1000000
-    checkpoint_interval: int = 10000
+    checkpoint_interval: int = 50  # Save every 50 episodes
     log_interval: int = 100
 
     # Paths
-    data_path: str = "/home/aharon/projects/new_swt/data/micro_features.duckdb"
-    checkpoint_dir: str = "/home/aharon/projects/new_swt/micro/checkpoints"
-    log_dir: str = "/home/aharon/projects/new_swt/micro/logs"
+    data_path: str = os.environ.get("DATA_PATH", "/workspace/data/micro_features.duckdb")
+    checkpoint_dir: str = os.environ.get("CHECKPOINT_DIR", "/workspace/micro/checkpoints")
+    log_dir: str = os.environ.get("LOG_DIR", "/workspace/micro/logs")
 
 
 @dataclass
@@ -96,40 +96,62 @@ class Experience:
     trade_id: Optional[int] = None
 
     def calculate_quality_score(self) -> float:
-        """Calculate quality score for smart eviction (matching main system)."""
+        """Calculate quality score with heavy emphasis on trading performance and SQN."""
         score = 0.0
 
-        # Primary: Pip P&L (most important for trading)
+        # PRIMARY FACTOR: Pip P&L (heaviest weight for actual trading performance)
         if self.pip_pnl > 0:
-            score += self.pip_pnl * 0.5  # Heavy weight on profitable trades
+            score += self.pip_pnl * 2.0  # Much heavier weight on profitable trades
         else:
-            score += self.pip_pnl * 0.1  # Light penalty for losses
+            score += self.pip_pnl * 0.3  # Still penalize losses but proportionally
 
-        # Trade completion bonus
+        # CRITICAL: AMDDP1 reward (risk-adjusted returns)
+        # AMDDP1 already incorporates drawdown penalty, so it's crucial
+        score += self.reward * 1.5  # Heavily weight risk-adjusted returns
+
+        # Trade completion bonus (emphasize full trade cycles)
         if self.trade_complete:
             if self.pip_pnl > 0:
-                score += 5.0  # Major bonus for profitable completed trades
+                score += 10.0  # Major bonus for profitable completed trades
             else:
-                score += 1.0  # Minor bonus for completed losing trades
+                score += 2.0   # Small bonus for completed losing trades
 
-        # Position change and terminal bonuses
-        if self.position_change:
-            score += 3.0
-        if self.done:
-            score += 1.5
-
-        # TD error contribution (learning signal strength)
-        score += min(abs(self.td_error), 5.0) * 0.15
-
-        # Reward contribution
-        if self.reward > 0:
-            score += min(self.reward * 0.1, 2.0)
-
-        # Session expectancy bonus
+        # SQN-based quality component
+        # SQN = (expectancy / std_dev) * sqrt(num_trades)
+        # We use session_expectancy as proxy for now
         if self.session_expectancy > 0:
-            score += min(self.session_expectancy * 0.3, 3.0)
+            # Scale expectancy to pseudo-SQN range
+            pseudo_sqn = self.session_expectancy * 2.5  # Approximate scaling
 
-        return max(score, 0.05)  # Minimum quality score
+            if pseudo_sqn >= 3.0:      # Excellent system
+                score += 15.0
+            elif pseudo_sqn >= 2.5:    # Good system
+                score += 10.0
+            elif pseudo_sqn >= 2.0:    # Average system
+                score += 7.0
+            elif pseudo_sqn >= 1.6:    # Below average
+                score += 4.0
+            else:                       # Poor system
+                score += 1.0
+
+        # Position change (important for learning diverse actions)
+        if self.position_change:
+            score += 3.0  # Increased - encourages action exploration
+
+        # Terminal state bonus (episode completion)
+        if self.done:
+            score += 2.0  # Increased - terminal states are valuable
+
+        # TD error (important learning signal - low error means good value estimates)
+        if abs(self.td_error) < 1.0:
+            score += 5.0  # High bonus for accurate predictions
+        elif abs(self.td_error) < 2.0:
+            score += 3.0  # Medium bonus
+        elif abs(self.td_error) < 5.0:
+            score += 1.0  # Small bonus
+        # High TD errors get no bonus but aren't penalized
+
+        return max(score, 0.1)  # Minimum quality score
 
 
 class QualityExperienceBuffer:
@@ -681,8 +703,8 @@ class MicroMuZeroTrainer:
             'value_loss': value_loss.item()
         }
 
-    def save_checkpoint(self):
-        """Save training checkpoint."""
+    def save_checkpoint(self, is_best=False):
+        """Save training checkpoint with cleanup of old files."""
         checkpoint_path = os.path.join(
             self.config.checkpoint_dir,
             f"micro_checkpoint_ep{self.episode:06d}.pth"
@@ -694,33 +716,99 @@ class MicroMuZeroTrainer:
             'model_state': self.model.get_weights(),
             'optimizer_state': self.optimizer.state_dict(),
             'config': asdict(self.config),
-            'training_stats': self.training_stats
+            'training_stats': self.training_stats,
+            'buffer_state': self.buffer.get_state() if hasattr(self.buffer, 'get_state') else None
         }
 
         torch.save(checkpoint, checkpoint_path)
         logger.info(f"Checkpoint saved: {checkpoint_path}")
 
-        # Also save as 'latest'
+        # Save as latest
         latest_path = os.path.join(self.config.checkpoint_dir, "latest.pth")
         torch.save(checkpoint, latest_path)
 
+        # Save as best if specified
+        if is_best:
+            best_path = os.path.join(self.config.checkpoint_dir, "best.pth")
+            torch.save(checkpoint, best_path)
+            logger.info(f"Best checkpoint saved: {best_path}")
+
+        # Clean up old checkpoints (keep only last 2 + best + latest)
+        self.cleanup_old_checkpoints()
+
+    def cleanup_old_checkpoints(self, keep_last=2):
+        """Remove old checkpoints, keeping only recent ones."""
+        checkpoint_files = []
+        for f in os.listdir(self.config.checkpoint_dir):
+            if f.startswith('micro_checkpoint_ep') and f.endswith('.pth'):
+                checkpoint_files.append(f)
+
+        # Sort by episode number
+        checkpoint_files.sort()
+
+        # Remove old checkpoints
+        if len(checkpoint_files) > keep_last:
+            for f in checkpoint_files[:-keep_last]:
+                path = os.path.join(self.config.checkpoint_dir, f)
+                os.remove(path)
+                logger.debug(f"Removed old checkpoint: {f}")
+
+    def resume_from_checkpoint(self):
+        """Resume training from latest checkpoint if exists."""
+        latest_path = os.path.join(self.config.checkpoint_dir, "latest.pth")
+
+        if os.path.exists(latest_path):
+            logger.info(f"Resuming from checkpoint: {latest_path}")
+            checkpoint = torch.load(latest_path, map_location=self.device)
+
+            # Restore model and optimizer
+            self.model.set_weights(checkpoint['model_state'])
+            self.optimizer.load_state_dict(checkpoint['optimizer_state'])
+
+            # Restore training state
+            self.episode = checkpoint['episode']
+            self.total_steps = checkpoint['total_steps']
+            self.training_stats = checkpoint['training_stats']
+
+            # Restore buffer if available
+            if checkpoint.get('buffer_state') and hasattr(self.buffer, 'set_state'):
+                self.buffer.set_state(checkpoint['buffer_state'])
+
+            logger.info(f"Resumed from episode {self.episode}, total steps {self.total_steps}")
+            return True
+
+        return False
+
     def train(self):
-        """Main training loop."""
-        logger.info("Starting training...")
+        """Main training loop with resume support."""
+        # Try to resume from checkpoint
+        resumed = self.resume_from_checkpoint()
+        start_episode = self.episode if resumed else 0
+
+        logger.info(f"Starting training from episode {start_episode}...")
         start_time = time.time()
+        best_loss = float('inf')
 
-        # Collect initial experiences
-        logger.info("Collecting initial experiences...")
-        while len(self.buffer) < self.config.min_buffer_size:
-            experience = self.collect_experience()
-            self.buffer.add(experience)
+        # Save initial checkpoint for testing BEFORE buffer collection
+        if start_episode == 0 and not resumed:
+            logger.info("Saving initial checkpoint for testing...")
+            self.episode = 0
+            self.save_checkpoint(is_best=True)  # Save as best to trigger validation
+            logger.info("Initial checkpoint saved as both latest.pth and best.pth")
 
-            if len(self.buffer) % 100 == 0:
-                logger.info(f"Buffer size: {len(self.buffer)}/{self.config.min_buffer_size}")
+        # Collect initial experiences if not resumed
+        if not resumed or len(self.buffer) < self.config.min_buffer_size:
+            logger.info("Collecting initial experiences...")
+            while len(self.buffer) < self.config.min_buffer_size:
+                experience = self.collect_experience()
+                self.buffer.add(experience)
+
+                if len(self.buffer) % 100 == 0:
+                    logger.info(f"Buffer size: {len(self.buffer)}/{self.config.min_buffer_size}")
 
         logger.info("Starting main training loop...")
 
-        for episode in range(self.config.num_episodes):
+        for episode in range(start_episode, self.config.num_episodes):
             self.episode = episode
 
             # Collect new experience
@@ -760,7 +848,13 @@ class MicroMuZeroTrainer:
 
             # Save checkpoint
             if episode % self.config.checkpoint_interval == 0 and episode > 0:
-                self.save_checkpoint()
+                # Check if this is the best model
+                recent_loss = np.mean(self.training_stats['losses'][-50:]) if len(self.training_stats['losses']) >= 50 else float('inf')
+                is_best = recent_loss < best_loss
+                if is_best:
+                    best_loss = recent_loss
+
+                self.save_checkpoint(is_best=is_best)
 
         # Final checkpoint
         self.save_checkpoint()

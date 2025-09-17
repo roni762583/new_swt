@@ -16,12 +16,11 @@ import logging
 import sys
 
 # Add parent directories to path
-sys.path.append('/home/aharon/projects/new_swt')
-sys.path.append('/home/aharon/projects/new_swt/micro')
+sys.path.append('/workspace')
 
 from data.incremental_feature_builder import IncrementalFeatureBuilder
-from models.micro_networks import MicroStochasticMuZero
-from training.mcts_micro import MCTS
+from micro.models.micro_networks import MicroStochasticMuZero
+from micro.training.mcts_micro import MCTS
 
 logging.basicConfig(
     level=logging.INFO,

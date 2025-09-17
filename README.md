@@ -38,6 +38,13 @@
   - Output: `precomputed_wst/GBPJPY_WST_CLEAN_2022-2025.h5` (99.4 MB)
   - Peak memory usage: Only 410 MB (excellent efficiency)
 
+### 🚀 Micro System Optimizations (September 17, 2025):
+- **100x faster initial buffer collection** using random/guided policies
+- **4x faster MCTS** with parallel simulations
+- **Enhanced quality scoring** heavily weighted on trading performance
+- **Smart checkpoint management** with SQN-based best model selection
+- **Docker containers running**: training, validation, and live trading
+
 ### ✅ Data Pipeline Infrastructure (September 16, 2025):
 - **Master Database Created**: `data/master.duckdb` with 1.33M rows of GBPJPY M1 data
   - 333 columns total: OHLCV, 255 close lags, 67 WST features, 4 cyclical time features

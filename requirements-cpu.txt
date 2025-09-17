@@ -1,0 +1,43 @@
+# Core dependencies - CPU-only version
+numpy==1.24.3
+scipy==1.10.1
+pandas==2.0.3
+h5py==3.9.0
+
+# Configuration and validation
+pydantic==2.3.0
+pyyaml==6.0.1
+python-dotenv==1.0.0
+
+# Networking and async
+aiohttp==3.8.5
+asyncio-throttle==1.0.2
+
+# CLI and display
+click==8.1.7
+rich==13.5.2
+python-dateutil==2.8.2
+
+# Monitoring and logging
+prometheus-client==0.17.1
+structlog==23.1.0
+
+# System utilities
+psutil==5.9.5
+
+# Wavelet transforms (NOT NEEDED FOR MICRO)
+# kymatio==0.3.0
+# PyWavelets==1.4.1
+
+# Numba for JIT compilation (optional for micro)
+# numba==0.57.1
+
+# Database
+duckdb==1.4.0
+
+# Testing
+pytest==7.4.3
+pytest-cov==4.1.0
+
+# PyTorch CPU-only (install separately to avoid CUDA download)
+# Install with: pip install torch==2.0.1+cpu -f https://download.pytorch.org/whl/torch_stable.html

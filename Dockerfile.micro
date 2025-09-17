@@ -10,11 +10,12 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /workspace
 
 # Copy requirements first for better caching
-COPY requirements.txt /workspace/
+COPY requirements-cpu.txt /workspace/
 
-# Use BuildKit cache mount for pip cache
+# Use BuildKit cache mount for pip cache - CPU only version
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r requirements.txt
+    pip install -r requirements-cpu.txt && \
+    pip install torch==2.0.1+cpu -f https://download.pytorch.org/whl/torch_stable.html
 
 # Additional packages already in requirements.txt
 

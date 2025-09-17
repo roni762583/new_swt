@@ -17,10 +17,10 @@ import logging
 import sys
 
 # Add parent directory to path
-sys.path.append('/home/aharon/projects/new_swt/micro')
+sys.path.append('/workspace')
 
-from models.micro_networks import MicroStochasticMuZero
-from training.mcts_micro import MCTS
+from micro.models.micro_networks import MicroStochasticMuZero
+from micro.training.mcts_micro import MCTS
 
 logging.basicConfig(
     level=logging.INFO,
@@ -286,17 +286,58 @@ class MicroValidator:
 
         # Update best checkpoint if needed
         best_file = os.path.join(self.results_dir, "best_checkpoint.json")
+        is_new_best = False
+
         if os.path.exists(best_file):
             with open(best_file, 'r') as f:
                 best = json.load(f)
             if results['quality_score'] > best.get('quality_score', -999):
+                is_new_best = True
                 with open(best_file, 'w') as f:
                     json.dump(results, f, indent=2)
                 logger.info(f"🎯 New best checkpoint! Quality: {results['quality_score']:.2f}, Expectancy: {results['expectancy']:.3f}")
         else:
+            is_new_best = True
             with open(best_file, 'w') as f:
                 json.dump(results, f, indent=2)
             logger.info(f"First checkpoint validated")
+
+        # Copy best checkpoint to validation directory to preserve it
+        if is_new_best:
+            self.preserve_best_checkpoint(results['checkpoint'])
+
+    def preserve_best_checkpoint(self, checkpoint_path: str):
+        """Copy best checkpoint to validation directory to prevent overwrite."""
+        try:
+            import shutil
+
+            # Create preserved checkpoints directory
+            preserved_dir = os.path.join(self.results_dir, "preserved_checkpoints")
+            os.makedirs(preserved_dir, exist_ok=True)
+
+            # Copy checkpoint to preserved location
+            checkpoint_name = os.path.basename(checkpoint_path)
+            preserved_path = os.path.join(preserved_dir, f"best_{checkpoint_name}")
+
+            # Also save with timestamp for history
+            timestamped_path = os.path.join(
+                preserved_dir,
+                f"best_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{checkpoint_name}"
+            )
+
+            shutil.copy2(checkpoint_path, preserved_path)
+            shutil.copy2(checkpoint_path, timestamped_path)
+
+            logger.info(f"✅ Best checkpoint preserved: {preserved_path}")
+            logger.info(f"📁 History saved: {timestamped_path}")
+
+            # Also copy to a fixed "best_validated.pth" for easy access
+            best_validated_path = os.path.join(preserved_dir, "best_validated.pth")
+            shutil.copy2(checkpoint_path, best_validated_path)
+            logger.info(f"🏆 Best validated checkpoint: {best_validated_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to preserve best checkpoint: {e}")
 
     def monitor_checkpoints(self):
         """Continuously monitor for new checkpoints."""

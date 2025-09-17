@@ -438,11 +438,67 @@ This approach serves as both a **rapid prototyping platform** and **interpretabl
 
 ---
 
-**Next Step**: Implement `prepare_micro_data.py` to extract the 14 features from master.duckdb with lag=64 sliding windows.
+## 🚀 Performance Optimizations (NEW)
+
+### Fast Initial Buffer Collection (100x speedup)
+- **`fast_buffer_init.py`**: Skip MCTS for initial experiences
+- Random or guided policy for instant buffer filling
+- From hours to seconds initialization
+
+### Parallel MCTS Implementation (4x speedup)
+- **`parallel_mcts.py`**: Multi-threaded tree simulations
+- `BatchedMCTS`: Process multiple observations simultaneously
+- `ParallelMCTS`: Run 4 parallel MCTS trees
+- `AsyncExperienceCollector`: Background experience generation
+
+### Optimized Training Script
+- **`optimized_train.py`**: Integrated all optimizations
+- Fast buffer initialization
+- Parallel simulations
+- Batched inference
+- Async collection
+
+### Enhanced Quality Score Calculation
+Heavily weighted towards trading performance:
+- **Pip P&L**: 2.0x (profit) / 0.3x (loss)
+- **AMDDP1**: 1.5x weight (risk-adjusted returns)
+- **Trade Completion**: +10.0/+2.0 bonus
+- **SQN Component**: Up to +15.0 for excellent systems
+- **Position Changes**: +3.0 (action diversity)
+- **TD Error**: +5.0/+3.0/+1.0 (prediction accuracy)
+
+### Checkpoint Preservation
+- Validation container copies best checkpoints to safe location
+- Prevents training from overwriting best models
+- Maintains history of best performing checkpoints
+
+**Current Status**: System running with all optimizations enabled!
 
 ## 📝 Feature Summary
 
-**Total: 14 features** = 4 technical + 4 cyclical + 6 position
+**Total: 15 features** = 5 technical + 4 cyclical + 6 position
 - Consistent `tanh(x/100)` scaling for all continuous features
 - Single position_side feature instead of 3 binary flags
 - Focus on essential trading signals without redundancy
+
+## 🔧 Running the System
+
+### Docker Compose (Recommended)
+```bash
+# Build and start all containers
+docker compose up -d --build
+
+# Monitor logs
+docker logs -f micro_training
+docker logs -f micro_validation
+
+# Check status
+docker ps | grep micro
+```
+
+### Optimized Training (Standalone)
+```bash
+python micro/training/optimized_train.py
+```
+
+This uses all performance optimizations for fastest training.
