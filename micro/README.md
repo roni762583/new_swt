@@ -16,13 +16,14 @@ The TCN encoder is **integrated directly inside the Representation Network** as 
 
 ---
 
-## 📊 Feature Set (14 Features)
+## 📊 Feature Set (15 Features)
 
-### 1. Technical Indicators (4)
+### 1. Technical Indicators (5)
 - `position_in_range_60` - Price position in 60-bar range [0,1]
 - `min_max_scaled_momentum_60` - Long-term momentum normalized
 - `min_max_scaled_rolling_range` - Volatility indicator
 - `min_max_scaled_momentum_5` - Short momentum in long context
+- `price_change_pips` - Recent price change in pips
 
 ### 2. Cyclical Time Features (4)
 - `dow_cos_final` - Day of week cosine encoding
@@ -45,7 +46,7 @@ Simplified and consistently scaled position features:
 
 ### Input Pipeline
 ```
-Input: (batch_size, 64, 14)
+Input: (batch_size, 64, 15)
        ↓
 TCN Encoder (inside Representation)
        ↓
@@ -60,7 +61,7 @@ class RepresentationNetwork(nn.Module):
     def __init__(self):
         # TCN Front-End (integrated for end-to-end learning)
         self.tcn_encoder = TCNBlock(
-            in_channels=14,
+            in_channels=15,
             out_channels=48,  # Optimal compression
             kernel_size=3,
             dilations=[1, 2, 4, 8],  # Multi-scale: 1-min, 2-min, 4-min, 8-min
