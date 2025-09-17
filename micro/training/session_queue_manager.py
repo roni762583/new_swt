@@ -176,9 +176,13 @@ class SessionQueueManager:
 
             prev_time = timestamp
 
-        # Reject sessions with open positions at end
+        # FIXED: Don't reject sessions with open positions
+        # Sessions with open positions are valid for training
+        # We only warn about them for debugging
         if has_open_position:
-            return False, "open_position_at_end"
+            logger.debug(f"Session ends with open position (this is OK for training)")
+
+        # Always return True - all sessions are valid
 
         return True, None
 

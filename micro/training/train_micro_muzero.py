@@ -8,6 +8,8 @@ Implements the complete training loop with experience replay.
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.optim.lr_scheduler as lr_scheduler
+import math
 import numpy as np
 import pandas as pd
 import duckdb
@@ -49,7 +51,15 @@ class TrainingConfig:
 
     # Training
     batch_size: int = 64
-    learning_rate: float = 2e-4
+        # Learning rate scheduling
+    initial_lr: float = 5e-4  # Higher initial learning rate
+    min_lr: float = 1e-5      # Minimum learning rate
+    lr_decay_episodes: int = 50000  # Episodes for full decay
+
+    # Exploration decay (critical for escaping Hold-only behavior)
+    initial_temperature: float = 2.0  # High exploration initially
+    final_temperature: float = 0.5    # Lower exploration later
+    temperature_decay_episodes: int = 20000  # Faster decay for exploration
     weight_decay: float = 1e-5
     gradient_clip: float = 10.0
 
@@ -141,6 +151,14 @@ class Experience:
                 score += 4.0
             else:                       # Poor system
                 score += 1.0
+
+        
+        # CRITICAL: Action diversity bonus (combat Hold-only behavior)
+        # Heavily reward non-Hold actions to encourage trading
+        if self.action == 0:  # Hold action
+            score -= 2.0  # Penalty for Hold (encourage active trading)
+        else:  # Active trading actions (Buy, Sell, Close)
+            score += 5.0  # Strong bonus for trading actions
 
         # Position change (important for learning diverse actions)
         if self.position_change:
@@ -399,9 +417,13 @@ class DataLoader:
 
             prev_time = timestamp
 
-        # Reject sessions with open positions at end
+        # FIXED: Don't reject sessions with open positions
+        # Sessions with open positions are valid for training
+        # We only warn about them for debugging
         if has_open_position:
-            return False, "open_position_at_end"
+            logger.debug(f"Session ends with open position (this is OK for training)")
+
+        # Always return True - all sessions are valid
 
         return True, None
 
@@ -614,6 +636,15 @@ class MicroMuZeroTrainer:
             lr=config.learning_rate,
             weight_decay=config.weight_decay
         )
+        # Learning rate scheduler (exponential decay)
+        self.scheduler = lr_scheduler.ExponentialLR(
+            self.optimizer,
+            gamma=0.9999  # Slow decay
+        )
+
+        # Track current temperature for exploration decay
+        self.current_temperature = config.initial_temperature
+        self.temperature_decay_rate = (config.final_temperature / config.initial_temperature) ** (1.0 / config.temperature_decay_episodes)
 
         # Initialize MCTS
         self.mcts = MCTS(
@@ -661,7 +692,7 @@ class MicroMuZeroTrainer:
         mcts_result = self.mcts.run(
             observation,
             add_exploration_noise=True,
-            temperature=self.config.temperature
+            temperature=self.current_temperature
         )
 
         # Calculate AMDDP1 reward (simplified for training)
@@ -880,6 +911,14 @@ class MicroMuZeroTrainer:
                 self.training_stats['value_losses'].append(losses['value_loss'])
 
             self.total_steps += 1
+            # Update learning rate
+            if episode % 100 == 0:  # Every 100 episodes
+                self.scheduler.step()
+
+            # Decay exploration temperature
+            if episode < self.config.temperature_decay_episodes:
+                self.current_temperature *= self.temperature_decay_rate
+                self.current_temperature = max(self.current_temperature, self.config.final_temperature)
 
             # Logging
             if episode % self.config.log_interval == 0 and episode > 0:

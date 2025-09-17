@@ -119,9 +119,9 @@ class MCTS:
         discount: float = 0.997,
         pb_c_base: float = 19652,
         pb_c_init: float = 1.25,
-        num_simulations: int = 15,
-        dirichlet_alpha: float = 0.25,
-        exploration_fraction: float = 0.25
+        num_simulations: int = 25  # Increased for better search,
+        dirichlet_alpha: float = 0.5,   # More exploration noise
+        exploration_fraction: float = 0.4
     ):
         """
         Initialize MCTS.

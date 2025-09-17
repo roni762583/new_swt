@@ -119,9 +119,9 @@ class FastBufferInitializer:
                 temperature = 1.5
                 policy = torch.softmax(policy_logits / temperature, dim=1)
 
-                # Bias towards hold (action 0) for safety
-                policy[0, 0] *= 1.5  # Increase hold probability
-                policy = policy / policy.sum()
+                # FIXED: No artificial bias towards Hold
+                # Let the model learn natural action preferences
+                policy = policy / policy.sum()  # Just normalize
 
                 action = torch.multinomial(policy, 1).item()
 
