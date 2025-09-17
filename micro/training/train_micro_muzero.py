@@ -51,9 +51,10 @@ class TrainingConfig:
 
     # Training
     batch_size: int = 64
-        # Learning rate scheduling
-    initial_lr: float = 5e-4  # Higher initial learning rate
-    min_lr: float = 1e-5      # Minimum learning rate
+    # Learning rate scheduling
+    learning_rate: float = 2e-4   # Fixed learning rate (changed from initial_lr)
+    initial_lr: float = 2e-4      # Stable learning rate to prevent NaN
+    min_lr: float = 1e-5          # Minimum learning rate
     lr_decay_episodes: int = 50000  # Episodes for full decay
 
     # Exploration decay (critical for escaping Hold-only behavior)
@@ -61,7 +62,7 @@ class TrainingConfig:
     final_temperature: float = 0.5    # Lower exploration later
     temperature_decay_episodes: int = 20000  # Faster decay for exploration
     weight_decay: float = 1e-5
-    gradient_clip: float = 10.0
+    gradient_clip: float = 5.0  # More aggressive clipping
 
     # Replay buffer
     buffer_size: int = 100000
@@ -761,6 +762,16 @@ class MicroMuZeroTrainer:
 
         # Total loss
         total_loss = policy_loss + value_loss
+
+        # Critical: Check for NaN loss and skip if detected
+        if torch.isnan(total_loss) or torch.isinf(total_loss):
+            logger.error(f"NaN/Inf loss detected: {total_loss.item():.6f} - skipping this batch")
+            self.optimizer.zero_grad()
+            return {
+                'total_loss': float('nan'),
+                'policy_loss': float('nan'),
+                'value_loss': float('nan')
+            }
 
         # Calculate TD errors for quality scoring
         with torch.no_grad():
