@@ -24,7 +24,7 @@ services:
       resources:
         limits:
           cpus: '6'
-          memory: 8G
+          memory: 6G
     command: ["python3", "/workspace/micro/training/train_micro_muzero.py"]
     healthcheck:
       test: ["CMD", "python3", "-c", "import os; exit(0 if os.path.exists('/workspace/micro/checkpoints') else 1)"]
