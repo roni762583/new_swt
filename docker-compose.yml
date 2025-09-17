@@ -1,110 +1,98 @@
 version: '3.8'
 
 services:
-  # Micro Training Container - Trains micro variant with 15 features
-  training:
-    build:
-      context: .
-      dockerfile: Dockerfile.micro
+  # Micro Training Container
+  micro-training:
     image: micro-muzero:latest
     container_name: micro_training
     restart: unless-stopped
-    working_dir: /workspace
-    volumes:
-      - .:/workspace
-      - ./micro/checkpoints:/workspace/micro/checkpoints
-      - ./micro/logs:/workspace/micro/logs
-      - ./data:/workspace/data:ro
     environment:
       - PYTHONPATH=/workspace
-      - OMP_NUM_THREADS=6
-      - MKL_NUM_THREADS=6
-      - TARGET_EPISODES=1000000
+      - MODE=train
+      - TZ=UTC
+    volumes:
+      - ./data:/workspace/data:ro
+      - ./micro/checkpoints:/workspace/micro/checkpoints
+      - ./micro/logs:/workspace/micro/logs
+    command: python3 /workspace/micro/training/train_micro_muzero.py
+    networks:
+      - micro-network
     deploy:
       resources:
         limits:
-          cpus: '6'
           memory: 6G
-    command: ["python3", "/workspace/micro/training/train_micro_muzero.py"]
+          cpus: '4.0'
+        reservations:
+          memory: 3G
+          cpus: '2.0'
     healthcheck:
-      test: ["CMD", "python3", "-c", "import os; exit(0 if os.path.exists('/workspace/micro/checkpoints') else 1)"]
-      interval: 60s
+      test: ["CMD", "python3", "-c", "import torch; print('OK')"]
+      interval: 30s
       timeout: 10s
       retries: 3
 
-  # Micro Validation Container - Validates checkpoints automatically
-  validation:
-    build:
-      context: .
-      dockerfile: Dockerfile.micro
+  # Micro Validation Container
+  micro-validation:
     image: micro-muzero:latest
     container_name: micro_validation
     restart: unless-stopped
-    working_dir: /workspace
-    volumes:
-      - .:/workspace
-      - ./micro/checkpoints:/workspace/micro/checkpoints:ro
-      - ./micro/validation_results:/workspace/micro/validation_results
-      - ./micro/logs:/workspace/micro/logs
-      - ./data:/workspace/data:ro
     environment:
       - PYTHONPATH=/workspace
-      - OMP_NUM_THREADS=4
-      - MKL_NUM_THREADS=4
+      - MODE=validate
+      - TZ=UTC
+    volumes:
+      - ./data:/workspace/data:ro
+      - ./micro/checkpoints:/workspace/micro/checkpoints:ro
+      - ./micro/validation_results:/workspace/micro/validation_results
+    command: python3 /workspace/micro/validation/validate_micro.py
+    networks:
+      - micro-network
     deploy:
       resources:
         limits:
-          cpus: '4'
           memory: 4G
-    command: ["python3", "/workspace/micro/validation/validate_micro.py"]
+          cpus: '2.0'
+        reservations:
+          memory: 2G
+          cpus: '1.0'
     depends_on:
-      - training
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import os; exit(0 if os.path.exists('/workspace/micro/validation_results') else 1)"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      - micro-training
 
-  # Micro Live Trading Container - Uses incremental feature builder
-  live:
-    build:
-      context: .
-      dockerfile: Dockerfile.micro
+  # Micro Live Trading Container
+  micro-live:
     image: micro-muzero:latest
     container_name: micro_live
     restart: unless-stopped
-    working_dir: /workspace
-    volumes:
-      - .:/workspace
-      - ./micro/checkpoints:/workspace/micro/checkpoints:ro
-      - ./micro/live_state:/workspace/micro/live_state
-      - ./micro/logs:/workspace/micro/logs
-      - ./data:/workspace/data:ro
     environment:
       - PYTHONPATH=/workspace
-      - OMP_NUM_THREADS=2
-      - MKL_NUM_THREADS=2
-      - OANDA_API_KEY=${OANDA_API_KEY}
+      - MODE=live
+      - TZ=UTC
+      - OANDA_API_TOKEN=${OANDA_API_TOKEN}
       - OANDA_ACCOUNT_ID=${OANDA_ACCOUNT_ID}
       - OANDA_ENVIRONMENT=${OANDA_ENVIRONMENT:-practice}
-      - IS_DEMO=${IS_DEMO:-true}
-      - INSTRUMENT=${INSTRUMENT:-GBP_JPY}
+    volumes:
+      - ./micro/checkpoints:/workspace/micro/checkpoints:ro
+      - ./micro/logs:/workspace/micro/logs
+    command: python3 /workspace/micro/live/trade_micro.py
+    networks:
+      - micro-network
+    ports:
+      - "8081:8081"  # Micro monitoring dashboard
     deploy:
       resources:
         limits:
-          cpus: '2'
           memory: 2G
-    command: ["python3", "/workspace/micro/live/trade_micro.py", "--checkpoint", "/workspace/micro/checkpoints/latest.pth"]
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
     depends_on:
-      - validation
-    healthcheck:
-      test: ["CMD", "python3", "-c", "print('Live trading ready')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    network_mode: host  # For OANDA API access
+      - micro-training
 
 networks:
-  default:
-    name: micro_network
+  micro-network:
     driver: bridge
+
+volumes:
+  micro-cache:
+    driver: local

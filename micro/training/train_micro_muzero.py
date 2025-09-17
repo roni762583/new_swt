@@ -724,6 +724,7 @@ class MicroMuZeroTrainer:
         # Training stats
         self.episode = 0
         self.total_steps = 0
+        self.last_optimizer_step_episode = -1  # Track when optimizer.step() was last called
         self.training_stats = {
             'episodes': [],
             'rewards': [],
@@ -914,6 +915,9 @@ class MicroMuZeroTrainer:
 
         self.optimizer.step()
 
+        # Mark that optimizer step was successful (for scheduler)
+        self.last_optimizer_step_episode = self.episode
+
         return {
             'total_loss': total_loss.item(),
             'policy_loss': policy_loss.item(),
@@ -1044,8 +1048,8 @@ class MicroMuZeroTrainer:
                 self.training_stats['value_losses'].append(losses['value_loss'])
 
             self.total_steps += 1
-            # Update learning rate
-            if episode % 100 == 0:  # Every 100 episodes
+            # Update learning rate (only if optimizer stepped recently)
+            if episode % 100 == 0 and self.last_optimizer_step_episode >= episode - 10:
                 self.scheduler.step()
 
             # Decay exploration temperature

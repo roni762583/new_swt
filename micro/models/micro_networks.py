@@ -449,6 +449,9 @@ class MicroStochasticMuZero(nn.Module):
         self.action_dim = action_dim
         self.z_dim = z_dim
 
+        # Initialize weights properly to prevent NaN
+        self._initialize_weights()
+
     def initial_inference(
         self,
         observation: torch.Tensor
@@ -523,6 +526,33 @@ class MicroStochasticMuZero(nn.Module):
             Afterstate (batch, 256)
         """
         return self.afterstate(hidden, action)
+
+    def _initialize_weights(self):
+        """Initialize weights with proper values to prevent NaN."""
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                # Xavier initialization for linear layers
+                nn.init.xavier_uniform_(module.weight, gain=1.0)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0.0)
+            elif isinstance(module, nn.Conv1d):
+                # Kaiming initialization for convolutional layers
+                nn.init.kaiming_normal_(module.weight, mode='fan_out', nonlinearity='relu')
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0.0)
+            elif isinstance(module, nn.BatchNorm1d):
+                # Batch norm initialization
+                nn.init.constant_(module.weight, 1.0)
+                nn.init.constant_(module.bias, 0.0)
+            elif isinstance(module, nn.LSTM):
+                # LSTM initialization
+                for name, param in module.named_parameters():
+                    if 'weight_ih' in name:
+                        nn.init.xavier_uniform_(param.data)
+                    elif 'weight_hh' in name:
+                        nn.init.orthogonal_(param.data)
+                    elif 'bias' in name:
+                        nn.init.constant_(param.data, 0.0)
 
     def get_weights(self) -> dict:
         """Get model weights for checkpointing."""
