@@ -38,7 +38,7 @@
   - Output: `precomputed_wst/GBPJPY_WST_CLEAN_2022-2025.h5` (99.4 MB)
   - Peak memory usage: Only 410 MB (excellent efficiency)
 
-### ✅ Data Pipeline Infrastructure (September 16-17, 2025):
+### ✅ Data Pipeline Infrastructure (September 16, 2025):
 - **Master Database Created**: `data/master.duckdb` with 1.33M rows of GBPJPY M1 data
   - 333 columns total: OHLCV, 255 close lags, 67 WST features, 4 cyclical time features
   - Optimized column ordering: base → lag → WST features
@@ -52,10 +52,6 @@
   - populate_wst_features(): Computes 67 Kymatio WST features (J=6, Q=4)
   - populate_time_cyclical_features(): 120-hour trading week encoding
 - **Incremental Builder**: `data/incremental_feature_builder.py` (framework ready)
-- **Micro Feature Builder**: `data/prepare_micro_features.py`
-  - Creates optimized 297-column feature table for micro variant
-  - Processes 1.33M rows with lagged features in ~17 seconds
-  - Simulates position features for training
 
 ### ⚠️ Critical Fixes Required:
 
@@ -93,43 +89,23 @@ if hasattr(self.current_step, 'weekday'):  # Wrong - current_step is int
 
 ---
 
-## 🎯 Micro Variant - READY FOR TRAINING!
+## 🎯 Micro Variant - NEW!
 
-A streamlined proof-of-concept using only **15 essential features** for rapid development and baseline testing.
+A streamlined proof-of-concept using only **14 essential features** for rapid development and baseline testing:
 
-### ✅ Micro Features Database Created
-- **Database**: `data/micro_features.duckdb`
-- **Total rows**: 1,333,657
-- **Total columns**: 297
-  - 3 metadata columns (timestamp, bar_index, close)
-  - 160 technical indicator columns (5 indicators × 32 lags)
-  - 128 cyclical time columns (4 features × 32 lags)
-  - 6 position features (current only, no lags)
-
-### Features (15 Total)
-- **Technical (5)**: position_in_range_60, min_max_scaled_momentum_60, min_max_scaled_rolling_range, min_max_scaled_momentum_5, price_change_pips
-- **Cyclical (4)**: dow_cos_final, dow_sin_final, hour_cos_final, hour_sin_final
-- **Position (6)**: position_side, position_pips, bars_since_entry, pips_from_peak, max_drawdown_pips, accumulated_dd
-
-### Architecture
-- **TCN integration**: Temporal Convolutional Network embedded directly in Representation network
-- **Lag window**: 32 timesteps (optimized from 64)
-- **20x faster training**: Reduced from 337 to 15 features
+### Features
+- **14 features total**: 4 technical indicators + 4 cyclical time + 6 position features
+- **TCN integration**: Temporal Convolutional Network embedded in Representation network
+- **10x faster training**: Reduced from 337 to 14 features
 - **Clean architecture**: 5 Stochastic MuZero networks with attention pooling
-- **Receptive field**: 15 timesteps with dilations [1, 2, 4]
 
-### 🚀 Quick Start - Micro Variant
+### Quick Start
 ```bash
-# Single command builds and runs all containers
-docker compose up -d --build
-
-# Monitor progress
-docker compose logs -f training     # Training logs
-docker compose logs -f validation   # Validation logs
-docker compose logs -f live         # Live trading logs
+cd micro/
+# See micro/README.md for detailed implementation
+python prepare_micro_data.py  # Extract 14 features from master.duckdb
+python train_micro_muzero.py  # Train the micro variant
 ```
-
-**Status**: Training 1M episodes with AMDDP1 rewards, quality-based eviction, expectancy tracking.
 
 For full details, see [micro/README.md](micro/README.md)
 

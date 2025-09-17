@@ -2,10 +2,10 @@
 
 ## Executive Summary
 
-A streamlined proof-of-concept implementation of Stochastic MuZero for forex trading using only **15 essential features** instead of the full 337-feature WST pipeline. This micro variant serves as both a **rapid development testbed** and **performance baseline** for the larger system.
+A streamlined proof-of-concept implementation of Stochastic MuZero for forex trading using only **14 essential features** instead of the full 337-feature WST pipeline. This micro variant serves as both a **rapid development testbed** and **performance baseline** for the larger system.
 
 ### Key Advantages
-- **20x faster training** - Reduced input dimension (15 vs 337) and lag window (32 vs 64)
+- **10x faster training** - Reduced input dimension (14 vs 337)
 - **Cleaner signal** - Focus on proven technical indicators
 - **Parallel development** - Can run alongside main WST version
 - **Baseline metrics** - Direct comparison with full model
@@ -16,14 +16,13 @@ The TCN encoder is **integrated directly inside the Representation Network** as 
 
 ---
 
-## 📊 Feature Set (15 Features)
+## 📊 Feature Set (14 Features)
 
-### 1. Technical Indicators (5)
+### 1. Technical Indicators (4)
 - `position_in_range_60` - Price position in 60-bar range [0,1]
 - `min_max_scaled_momentum_60` - Long-term momentum normalized
 - `min_max_scaled_rolling_range` - Volatility indicator
 - `min_max_scaled_momentum_5` - Short momentum in long context
-- `price_change_pips` - Immediate price change: tanh(change_pips/10)
 
 ### 2. Cyclical Time Features (4)
 - `dow_cos_final` - Day of week cosine encoding
@@ -46,7 +45,7 @@ Simplified and consistently scaled position features:
 
 ### Input Pipeline
 ```
-Input: (batch_size, 32, 15)
+Input: (batch_size, 64, 14)
        ↓
 TCN Encoder (inside Representation)
        ↓
@@ -61,10 +60,10 @@ class RepresentationNetwork(nn.Module):
     def __init__(self):
         # TCN Front-End (integrated for end-to-end learning)
         self.tcn_encoder = TCNBlock(
-            in_channels=15,
+            in_channels=14,
             out_channels=48,  # Optimal compression
             kernel_size=3,
-            dilations=[1, 2, 4],  # Receptive field = 15 (perfect for 32 lag)
+            dilations=[1, 2, 4, 8],  # Multi-scale: 1-min, 2-min, 4-min, 8-min
             dropout=0.1,
             causal=True
         )
@@ -72,8 +71,8 @@ class RepresentationNetwork(nn.Module):
         # Temporal attention pooling (learns which timesteps matter)
         self.time_attention = nn.Linear(48, 1)
 
-        # Skip connection projection (48D TCN + 15D raw = 63D)
-        self.projection = nn.Linear(63, 256)
+        # Skip connection projection (48D TCN + 14D raw = 62D)
+        self.projection = nn.Linear(62, 256)
 
         # Standard residual blocks with dropout
         self.residual_blocks = nn.ModuleList([
@@ -84,21 +83,21 @@ class RepresentationNetwork(nn.Module):
         self.layer_norm = nn.LayerNorm(256)
 
     def forward(self, x):
-        # x shape: (batch, 32, 15)
+        # x shape: (batch, 64, 14)
         batch_size = x.size(0)
 
         # TCN encoding with multi-scale temporal patterns
-        tcn_out = self.tcn_encoder(x)  # (batch, 48, 32)
+        tcn_out = self.tcn_encoder(x)  # (batch, 48, 64)
         tcn_out = self.dropout(tcn_out)  # Dropout after TCN
 
         # Attention-weighted temporal pooling
-        attention_logits = self.time_attention(tcn_out.transpose(1, 2))  # (batch, 32, 1)
+        attention_logits = self.time_attention(tcn_out.transpose(1, 2))  # (batch, 64, 1)
         attention_weights = F.softmax(attention_logits, dim=1)
         pooled = (tcn_out * attention_weights.transpose(1, 2)).sum(dim=2)  # (batch, 48)
 
         # Skip connection: combine temporal features with current state
-        current_features = x[:, -1, :]  # Last timestep raw features (batch, 15)
-        combined = torch.cat([pooled, current_features], dim=1)  # (batch, 63)
+        current_features = x[:, -1, :]  # Last timestep raw features (batch, 14)
+        combined = torch.cat([pooled, current_features], dim=1)  # (batch, 62)
 
         # Project to hidden dimension
         hidden = self.projection(combined)  # (batch, 256)
@@ -242,8 +241,8 @@ class AfterstateNetwork(nn.Module):
 
 ### Phase 1: Data Pipeline (Week 1)
 - [ ] Create micro data loader using master.duckdb
-- [ ] Extract 15 features for training windows
-- [ ] Implement sliding window with lag=32
+- [ ] Extract 14 features for training windows
+- [ ] Implement sliding window with lag=64
 - [ ] Create position state calculator
 - [ ] Setup train/validation/test splits
 
@@ -284,15 +283,15 @@ Key enhancements over basic design:
 ### TCN Configuration
 ```python
 tcn_config = {
-    'in_channels': 15,
+    'in_channels': 14,
     'out_channels': 48,  # Optimal compression ratio
     'kernel_size': 3,
-    'dilations': [1, 2, 4],  # Receptive field = 15 (optimal for 32 lag)
+    'dilations': [1, 2, 4, 8],  # Multi-scale temporal patterns
     'causal': True,
     'dropout': 0.1,
     'activation': 'relu',
     'use_batch_norm': True,
-    'receptive_field': 15  # Covers ~half of 32-step input
+    'receptive_field': 64  # Covers full input window
 }
 ```
 
@@ -376,7 +375,7 @@ python evaluate_micro.py \
 
 ## 🔬 Research Questions
 
-1. **Can 15 features match WST performance?**
+1. **Can 14 features match WST performance?**
    - Direct A/B testing on same data splits
    - Statistical significance testing
 
@@ -389,9 +388,8 @@ python evaluate_micro.py \
    - Analyze uncertainty estimates
 
 4. **Optimal lag window size?**
-   - Using lag=32 (reduced from 64 for efficiency)
-   - TCN receptive field=15 covers half the input window
-   - Balances temporal context with computational efficiency
+   - Test lag ∈ {32, 64, 128}
+   - Receptive field analysis
 
 ---
 
@@ -440,11 +438,11 @@ This approach serves as both a **rapid prototyping platform** and **interpretabl
 
 ---
 
-**Next Step**: Implement `prepare_micro_data.py` to extract the 15 features from master.duckdb with lag=32 sliding windows.
+**Next Step**: Implement `prepare_micro_data.py` to extract the 14 features from master.duckdb with lag=64 sliding windows.
 
 ## 📝 Feature Summary
 
-**Total: 15 features** = 5 technical + 4 cyclical + 6 position
+**Total: 14 features** = 4 technical + 4 cyclical + 6 position
 - Consistent `tanh(x/100)` scaling for all continuous features
 - Single position_side feature instead of 3 binary flags
 - Focus on essential trading signals without redundancy
