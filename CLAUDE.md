@@ -194,4 +194,56 @@ PLAN:
 3. **ARCHIVE PERIODICALLY** - Move old notes to `CLAUDE_ARCHIVE_[DATE].md` when this section exceeds 100 lines
 4. **MOST RECENT FIRST** - Add new entries at the top of this section
 <!-- 🚨 ADD NEW NOTES BELOW THIS LINE ( OR IN README.md prefered !) 🚨-->
+
+---
+### [2025-09-18] CRITICAL OPERATING PROCEDURES
+
+#### 🔴 SCRIPT CREATION POLICY - STRICT RULES
+1. **AVOID CREATING NEW SCRIPTS** - Always fix/debug/improve existing scripts first
+2. **IF A NEW SCRIPT IS ABSOLUTELY NECESSARY:**
+   - **Temporary scripts** (testing/debugging/one-off operations):
+     - MUST be placed in `/tmp/` directory (create if needed)
+     - Name with descriptive prefix: `temp_[purpose]_[timestamp].py`
+   - **Permanent scripts** (essential project functionality):
+     - MUST inform user and get explicit confirmation BEFORE creation
+     - Explain WHY existing scripts cannot be modified
+     - Show exact location and purpose
+
+#### 🔵 DOCKER COMPOSE STANDARDIZATION
+**STANDARD LAUNCH COMMAND:**
+```bash
+docker compose up -d --build
+```
+
+**THREE-CONTAINER ARCHITECTURE:**
+1. **Training Container** (`micro-training`)
+   - Runs continuous training loop
+   - Saves checkpoints
+   - Memory: 8GB limit
+
+2. **Validation Container** (`micro-validation`)
+   - Validates checkpoints
+   - Generates performance metrics
+   - Memory: 4GB limit
+
+3. **Live Trading Container** (`micro-live`)
+   - Production trading execution
+   - Uses best validated checkpoint
+   - Memory: 2GB limit
+
+#### 🟢 DEVELOPMENT WORKFLOW
+1. **ALWAYS check existing scripts first** - Use `grep`, `find`, or search tools
+2. **Iterate on existing code** - Improve what we have before adding new
+3. **Use Docker Compose** for all operations - No standalone script execution
+4. **Verify container health** - Check logs and status after launch
+
+#### ⚠️ FILE MODIFICATION PRIORITY
+```
+1. Fix existing script → ALWAYS FIRST CHOICE
+2. Modify existing script → If fix isn't enough
+3. Create temp script in /tmp/ → For testing only
+4. Create new permanent script → ONLY with user permission
+```
+
+---
 >

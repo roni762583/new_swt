@@ -45,22 +45,37 @@
 - **Smart checkpoint management** with SQN-based best model selection
 - **Docker containers running**: training, validation, and live trading
 
-### 🎯 Hold-Only Training Problem RESOLVED (September 17, 2025):
-**Critical Fixes Applied:**
-- ✅ **Session rejection bug fixed** - was rejecting entire sessions with open positions (massive data loss)
-- ✅ **Hold bias removed** - eliminated artificial 1.5x Hold probability boost in fast buffer
-- ✅ **Learning rate decay added** - exponential decay from 5e-4 to 1e-5 over training
-- ✅ **Exploration decay implemented** - temperature decay from 2.0 to 0.5 over 20k episodes
-- ✅ **Action diversity penalties** - Hold -2.0, Trading actions +5.0 quality score bonus
-- ✅ **MCTS improvements** - increased simulations 15→25, improved exploration parameters
-- ✅ **Training stability** - NaN detection and recovery, gradient clipping
+### 🎯 Hold-Only Training Problem - CLEAN REDESIGN (September 18, 2025):
 
-**Root Causes Identified & Fixed:**
-1. Session filtering rejecting sessions instead of just trades → FIXED
-2. Explicit Hold bias in fast buffer initialization → REMOVED
-3. Fixed learning rate preventing escape from local optima → DYNAMIC DECAY
-4. Missing exploration decay never transitioning to exploitation → IMPLEMENTED
-5. Conservative MCTS parameters limiting action discovery → ENHANCED
+**🔴 NEW CLEAN REWARD SYSTEM:**
+```
+Action Rewards:
+- BUY (Entry):    +1.0  (immediate reward for decisive action)
+- SELL (Entry):   +1.0  (immediate reward for decisive action)
+- HOLD (In-Trade): 0.0  (neutral - don't overweight patience)
+- HOLD (Idle):    -0.05 (small penalty to discourage inactivity)
+- CLOSE:          AMDDP1 (based on actual P&L)
+```
+
+**🔵 QUOTA-BASED BUFFER EVICTION (Replaced PER):**
+- **Simple Balanced Buffer**: No priority experience replay
+- **Trade/Hold Quota**: Maintains minimum 30% trading trajectories
+- **FIFO with Smart Eviction**:
+  - If below quota: evict random hold trajectory
+  - If above quota: standard FIFO eviction
+- **No TD-error priority**: Removed quality scoring completely
+
+**🟢 EXPLORATION ENHANCEMENTS:**
+- **Stronger Dirichlet Noise**: α=1.0, fraction=0.5 at MCTS root
+- **Aggressive Weight Randomization**: Complete re-init on restart
+- **Temperature-based Exploration**: Decay from 2.0→0.5 over 20k episodes
+
+**Previous Attempts (Archived):**
+- ✅ Session rejection bug fixed
+- ✅ Hold bias removed from buffer
+- ✅ Learning rate decay added
+- ✅ Action diversity penalties applied
+- ✅ MCTS improvements implemented
 
 ### ✅ Data Pipeline Infrastructure (September 16, 2025):
 - **Master Database Created**: `data/master.duckdb` with 1.33M rows of GBPJPY M1 data

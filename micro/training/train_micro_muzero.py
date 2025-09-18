@@ -22,6 +22,10 @@ from dataclasses import dataclass, asdict, field
 import heapq
 import logging
 from datetime import datetime
+import multiprocessing as mp
+from multiprocessing import Queue, Process, Manager
+import queue as queue_module
+import threading
 
 # Add parent directory to path
 import sys
@@ -52,30 +56,34 @@ class TrainingConfig:
     # Training
     batch_size: int = 64
     # Learning rate scheduling
-    learning_rate: float = 5e-5  # Reduced for stability   # Fixed learning rate (changed from initial_lr)
-    initial_lr: float = 5e-5  # Reduced for stability      # Stable learning rate to prevent NaN
-    min_lr: float = 1e-5          # Minimum learning rate
-    lr_decay_episodes: int = 50000  # Episodes for full decay
+    learning_rate: float = 2e-3  # Fixed at 0.002 as requested
+    initial_lr: float = 2e-3  # Fixed learning rate - NO DECAY
+    min_lr: float = 2e-3          # Same as initial - NO DECAY
+    lr_decay_episodes: int = 1000000  # Effectively no decay
 
     # Exploration decay (critical for escaping Hold-only behavior)
-    initial_temperature: float = 2.0  # High exploration initially
-    final_temperature: float = 0.5    # Lower exploration later
-    temperature_decay_episodes: int = 20000  # Faster decay for exploration
+    initial_temperature: float = 10.0  # EXTREME exploration to force action diversity
+    final_temperature: float = 1.0     # Standard exploration later
+    temperature_decay_episodes: int = 50000  # Faster decay once diversity achieved
     weight_decay: float = 1e-5
     gradient_clip: float = 1.0  # Even more aggressive clipping for stability
 
     # Replay buffer
     buffer_size: int = 100000
-    min_buffer_size: int = 50  # Much smaller initial buffer for quick start
+    min_buffer_size: int = 100  # Slightly larger for more diverse initial experiences
 
     # MuZero
     num_unroll_steps: int = 5
     td_steps: int = 10
     discount: float = 0.997
 
-    # MCTS - MINIMAL FOR FAST COLLECTION
-    num_simulations: int = 3  # Minimal simulations for ultra-fast collection
-    temperature: float = 1.0
+    # MCTS - BALANCED FOR EXPLORATION
+    num_simulations: int = 15  # Balanced for speed and exploration
+    temperature: float = 2.0  # Higher MCTS temperature for more exploration
+
+    # Multiprocessing
+    num_workers: int = 4  # Parallel session collectors
+    session_queue_size: int = 100  # Pre-validated sessions
 
     # Training loop
     num_episodes: int = 1000000
@@ -89,228 +97,162 @@ class TrainingConfig:
 
 
 @dataclass
+class Trajectory:
+    """Trajectory segment for replay buffer."""
+    observations: np.ndarray  # (seq_len, lag_window, features)
+    actions: np.ndarray       # (seq_len,)
+    rewards: np.ndarray       # (seq_len,)
+    policies: np.ndarray      # (seq_len, action_dim)
+    values: np.ndarray        # (seq_len,)
+    td_errors: np.ndarray     # (seq_len,)
+    priority: float = 1.0
+    has_trade: bool = False
+
+    def __len__(self):
+        return len(self.actions)
+
+@dataclass
 class Experience:
-    """Experience with quality scoring."""
+    """Single experience for compatibility."""
     observation: np.ndarray
     action: int
     policy: np.ndarray
     value: float
     reward: float
     done: bool
-    # Quality metrics
-    quality_score: float = 0.0
-    pip_pnl: float = 0.0
-    trade_complete: bool = False
-    position_change: bool = False
     td_error: float = 0.0
-    session_expectancy: float = 0.0
-    trade_id: Optional[int] = None
-
-    def calculate_quality_score(self) -> float:
-        """Calculate quality score with heavy emphasis on trading performance and SQN."""
-        score = 0.0
-
-        # Validate inputs to prevent NaN propagation
-        if np.isnan(self.pip_pnl) or np.isnan(self.reward):
-            logger.error(
-                f"NaN detected in quality score inputs: "
-                f"pip_pnl={self.pip_pnl}, reward={self.reward}, action={self.action}"
-            )
-            return 0.1  # Return minimum valid score
-
-        # PRIMARY FACTOR: Pip P&L (heaviest weight for actual trading performance)
-        if self.pip_pnl > 0:
-            score += self.pip_pnl * 2.0  # Much heavier weight on profitable trades
-        else:
-            score += self.pip_pnl * 0.3  # Still penalize losses but proportionally
-
-        # CRITICAL: AMDDP1 reward (risk-adjusted returns)
-        # AMDDP1 already incorporates drawdown penalty, so it's crucial
-        score += self.reward * 1.5  # Heavily weight risk-adjusted returns
-
-        # Trade completion bonus (emphasize full trade cycles)
-        if self.trade_complete:
-            if self.pip_pnl > 0:
-                score += 10.0  # Major bonus for profitable completed trades
-            else:
-                score += 2.0   # Small bonus for completed losing trades
-
-        # SQN-based quality component
-        # SQN = (expectancy / std_dev) * sqrt(num_trades)
-        # We use session_expectancy as proxy for now
-        if self.session_expectancy > 0:
-            # Scale expectancy to pseudo-SQN range
-            pseudo_sqn = self.session_expectancy * 2.5  # Approximate scaling
-
-            if pseudo_sqn >= 3.0:      # Excellent system
-                score += 15.0
-            elif pseudo_sqn >= 2.5:    # Good system
-                score += 10.0
-            elif pseudo_sqn >= 2.0:    # Average system
-                score += 7.0
-            elif pseudo_sqn >= 1.6:    # Below average
-                score += 4.0
-            else:                       # Poor system
-                score += 1.0
-
-        
-        # CRITICAL: Action diversity bonus (combat Hold-only behavior)
-        # Heavily reward non-Hold actions to encourage trading
-        if self.action == 0:  # Hold action
-            score -= 2.0  # Penalty for Hold (encourage active trading)
-        else:  # Active trading actions (Buy, Sell, Close)
-            score += 5.0  # Strong bonus for trading actions
-
-        # Position change (important for learning diverse actions)
-        if self.position_change:
-            score += 3.0  # Increased - encourages action exploration
-
-        # Terminal state bonus (episode completion)
-        if self.done:
-            score += 2.0  # Increased - terminal states are valuable
-
-        # TD error (important learning signal - low error means good value estimates)
-        if abs(self.td_error) < 1.0:
-            score += 5.0  # High bonus for accurate predictions
-        elif abs(self.td_error) < 2.0:
-            score += 3.0  # Medium bonus
-        elif abs(self.td_error) < 5.0:
-            score += 1.0  # Small bonus
-        # High TD errors get no bonus but aren't penalized
-
-        return max(score, 0.1)  # Minimum quality score
 
 
-class QualityExperienceBuffer:
-    """Experience buffer with quality-based smart eviction."""
 
-    def __init__(self, capacity: int, eviction_batch: int = 2000):
-        self.capacity = capacity
-        self.eviction_batch = eviction_batch
-        self.buffer: List[Experience] = []
-        self.quality_heap: List[Tuple[float, int]] = []  # Min-heap for eviction
-        self.trade_experiences = {}  # Map trade_id to experience indices
-        self.current_trade_id = 0
-        self.total_evicted = 0
+class BalancedReplayBuffer:
+    """Simple balanced buffer with quota-based eviction (no PER)."""
+
+    def __init__(self, max_size: int = 10000, min_trade_fraction: float = 0.2,
+                 trajectory_length: int = 10):
+        self.buffer = []
+        self.max_size = max_size
+        self.min_trade_fraction = min_trade_fraction
+        self.trajectory_length = trajectory_length
+        self.current_trajectory = []  # Accumulate experiences for trajectory
 
     def add(self, experience: Experience):
-        """Add experience with quality scoring."""
-        # Calculate quality score
-        experience.quality_score = experience.calculate_quality_score()
+        """Add experience to current trajectory."""
+        self.current_trajectory.append(experience)
 
-        # Add to buffer
-        self.buffer.append(experience)
+        # Create trajectory segment when we reach trajectory_length
+        if len(self.current_trajectory) >= self.trajectory_length:
+            self._create_trajectory_from_buffer()
 
-        # Add to quality heap for smart eviction
-        heapq.heappush(self.quality_heap, (experience.quality_score, len(self.buffer) - 1))
-
-        # Track trade experiences
-        if experience.trade_id is not None:
-            if experience.trade_id not in self.trade_experiences:
-                self.trade_experiences[experience.trade_id] = []
-            self.trade_experiences[experience.trade_id].append(len(self.buffer) - 1)
-
-        # Smart eviction if over capacity
-        if len(self.buffer) > self.capacity:
-            self._evict_low_quality()
-
-    def _evict_low_quality(self):
-        """Evict lowest quality experiences."""
-        # Remove eviction_batch lowest quality experiences
-        to_remove = set()
-
-        # Get indices of lowest quality experiences
-        while len(to_remove) < self.eviction_batch and self.quality_heap:
-            quality, idx = heapq.heappop(self.quality_heap)
-            if idx < len(self.buffer):  # Valid index
-                to_remove.add(idx)
-
-        # Remove in reverse order to maintain indices
-        for idx in sorted(to_remove, reverse=True):
-            if idx < len(self.buffer):
-                del self.buffer[idx]
-                self.total_evicted += 1
-
-        # Rebuild heap with updated indices
-        self.quality_heap = []
-        for i, exp in enumerate(self.buffer):
-            heapq.heappush(self.quality_heap, (exp.quality_score, i))
-
-        logger.debug(f"Evicted {len(to_remove)} low quality experiences (total: {self.total_evicted})")
-
-    def sample(self, batch_size: int) -> List[Experience]:
-        """Sample with priority on quality, with proper NaN detection and handling."""
-        if len(self.buffer) <= batch_size:
-            return self.buffer.copy()
-
-        # Weighted sampling based on quality scores
-        weights = []
-        valid_indices = []
-        nan_count = 0
-        negative_count = 0
-
-        for i, exp in enumerate(self.buffer):
-            score = exp.quality_score
-
-            # Track and log NaN/Inf values to identify root causes
-            if np.isnan(score) or np.isinf(score):
-                nan_count += 1
-                if nan_count <= 3:  # Log first few to avoid spam
-                    logger.warning(
-                        f"NaN/Inf quality score at index {i}: "
-                        f"pip_pnl={exp.pip_pnl}, reward={exp.reward}, "
-                        f"expectancy={exp.session_expectancy}, action={exp.action}"
-                    )
-                continue  # Skip this experience
-
-            if score <= 0:
-                negative_count += 1
-                score = 0.01  # Minimum weight for valid experiences
-
-            weights.append(score)
-            valid_indices.append(i)
-
-        if nan_count > 0:
-            logger.error(f"Found {nan_count}/{len(self.buffer)} experiences with NaN/Inf quality scores")
-
-        if negative_count > 0:
-            logger.debug(f"Found {negative_count} experiences with non-positive scores")
-
-        # Fall back to uniform sampling if too few valid experiences
-        if len(valid_indices) < batch_size:
-            logger.error(
-                f"Insufficient valid experiences ({len(valid_indices)}) for batch size {batch_size}. "
-                f"Using uniform sampling."
-            )
-            indices = np.random.choice(len(self.buffer), batch_size, replace=False)
-            return [self.buffer[i] for i in indices]
-
-        # Normalize valid weights
-        weights = np.array(weights)
-        weights = weights / weights.sum()
-
-        # Sample from valid experiences only
-        sampled_valid_idx = np.random.choice(len(valid_indices), batch_size, replace=False, p=weights)
-        indices = [valid_indices[i] for i in sampled_valid_idx]
-
-        return [self.buffer[i] for i in indices]
-
-    def reassign_trade_rewards(self, trade_id: int, final_amddp1_reward: float, pip_pnl: float):
-        """Reassign rewards for all actions in a trade (equal partners)."""
-        if trade_id not in self.trade_experiences:
+    def _create_trajectory_from_buffer(self):
+        """Convert accumulated experiences into a trajectory."""
+        if not self.current_trajectory:
             return
 
-        # Update all experiences in this trade
-        for exp_idx in self.trade_experiences[trade_id]:
-            if exp_idx < len(self.buffer):
-                exp = self.buffer[exp_idx]
-                exp.reward = final_amddp1_reward
-                exp.pip_pnl = pip_pnl
-                exp.trade_complete = True
-                # Recalculate quality score
-                exp.quality_score = exp.calculate_quality_score()
+        # Extract data from experiences
+        observations = [exp.observation for exp in self.current_trajectory]
+        actions = [exp.action for exp in self.current_trajectory]
+        rewards = [exp.reward for exp in self.current_trajectory]
+        policies = [exp.policy for exp in self.current_trajectory]
+        values = [exp.value for exp in self.current_trajectory]
+        td_errors = [exp.td_error for exp in self.current_trajectory]
 
-        logger.debug(f"Reassigned {len(self.trade_experiences[trade_id])} experiences for trade {trade_id}")
+        # Check if trajectory contains trades (Buy, Sell, Close)
+        has_trade = any(a in [1, 2, 3] for a in actions)
+
+        # Create trajectory (NO PRIORITY - uniform sampling)
+        trajectory = Trajectory(
+            observations=np.array(observations),
+            actions=np.array(actions),
+            rewards=np.array(rewards),
+            policies=np.array(policies),
+            values=np.array(values),
+            td_errors=np.array(td_errors),
+            priority=1.0,  # Uniform priority - no PER
+            has_trade=has_trade
+        )
+
+        self.buffer.append(trajectory)
+
+        # Clear current trajectory
+        self.current_trajectory = []
+
+        # Evict if needed
+        if len(self.buffer) > self.max_size:
+            self._evict()
+
+    def _evict(self):
+        """Quota-based eviction to maintain trade diversity."""
+        trade_trajs = [t for t in self.buffer if t.has_trade]
+        hold_trajs = [t for t in self.buffer if not t.has_trade]
+
+        trade_fraction = len(trade_trajs) / len(self.buffer) if self.buffer else 0
+
+        if trade_fraction < self.min_trade_fraction and hold_trajs:
+            # Too few trades - evict a random hold-only trajectory
+            victim = np.random.choice(hold_trajs)
+        else:
+            # Sufficient trades - evict random trajectory (FIFO-like)
+            victim = self.buffer[0]  # Simple FIFO eviction
+
+        self.buffer.remove(victim)
+
+    def sample_batch(self, batch_size: int) -> Dict:
+        """Sample batch of experiences for training."""
+        if not self.buffer:
+            return None
+
+        # Sample trajectories
+        sampled_trajs = self.sample_trajectories(min(batch_size, len(self.buffer)))
+
+        # Extract random experiences from trajectories
+        all_observations = []
+        all_actions = []
+        all_rewards = []
+        all_policies = []
+        all_values = []
+
+        for traj in sampled_trajs:
+            if len(traj) > 0:
+                # Sample random index from trajectory
+                idx = np.random.randint(0, len(traj))
+                all_observations.append(traj.observations[idx])
+                all_actions.append(traj.actions[idx])
+                all_rewards.append(traj.rewards[idx])
+                all_policies.append(traj.policies[idx])
+                all_values.append(traj.values[idx])
+
+        if not all_observations:
+            return None
+
+        return {
+            'observations': np.array(all_observations),
+            'actions': np.array(all_actions),
+            'rewards': np.array(all_rewards),
+            'policies': np.array(all_policies),
+            'values': np.array(all_values)
+        }
+
+    def sample_trajectories(self, num_trajectories: int) -> List[Trajectory]:
+        """Uniform random sampling (no priority)."""
+        if len(self.buffer) <= num_trajectories:
+            return self.buffer.copy()
+
+        # Uniform random sampling
+        indices = np.random.choice(len(self.buffer), size=num_trajectories, replace=False)
+        return [self.buffer[i] for i in indices]
+
+    def get_stats(self) -> Dict:
+        """Get buffer statistics."""
+        if not self.buffer:
+            return {'total': 0, 'trade_fraction': 0}
+
+        trade_trajs = [t for t in self.buffer if t.has_trade]
+        return {
+            'total': len(self.buffer),
+            'trade_trajs': len(trade_trajs),
+            'hold_trajs': len(self.buffer) - len(trade_trajs),
+            'trade_fraction': len(trade_trajs) / len(self.buffer)
+        }
 
     def __len__(self):
         return len(self.buffer)
@@ -667,8 +609,202 @@ class DataLoader:
         self.conn.close()
 
 
+class SessionCollector(Process):
+    """Worker process for parallel experience collection."""
+
+    def __init__(self, worker_id: int, config: TrainingConfig,
+                 session_queue: Queue, experience_queue: Queue,
+                 stop_event: mp.Event):
+        super().__init__()
+        self.worker_id = worker_id
+        self.config = config
+        self.session_queue = session_queue
+        self.experience_queue = experience_queue
+        self.stop_event = stop_event
+
+    def run(self):
+        """Worker main loop."""
+        # Initialize components for this worker
+        device = torch.device("cpu")  # Workers use CPU
+        model = MicroStochasticMuZero(
+            input_features=self.config.input_features,
+            lag_window=self.config.lag_window,
+            hidden_dim=self.config.hidden_dim,
+            action_dim=self.config.action_dim,
+            z_dim=self.config.z_dim,
+            support_size=self.config.support_size
+        ).to(device)
+
+        mcts = MCTS(
+            model=model,
+            num_actions=self.config.action_dim,
+            discount=self.config.discount,
+            num_simulations=self.config.num_simulations
+        )
+
+        data_loader = DataLoader(self.config.data_path, self.config.lag_window)
+
+        logger.info(f"Worker {self.worker_id} started")
+
+        # Position tracking for AMDDP1
+        position = 0
+        entry_price = 0.0
+        entry_step = -1
+
+        while not self.stop_event.is_set():
+            try:
+                # Get session from queue (with timeout)
+                session_data = self.session_queue.get(timeout=1)
+                if session_data is None:  # Poison pill
+                    break
+
+                # Process session with post-trade rewards
+                experiences = []
+                trade_experiences = []  # Track current trade
+                trade_start_idx = -1
+
+                for step in range(360):  # 360 minute session
+                    # Get observation
+                    observation = session_data['observations'][step]
+
+                    # Run MCTS
+                    obs_tensor = torch.tensor(observation, dtype=torch.float32).unsqueeze(0)
+                    with torch.no_grad():
+                        mcts_result = mcts.run(
+                            obs_tensor,
+                            add_exploration_noise=True,
+                            temperature=self.config.initial_temperature
+                        )
+
+                    action = mcts_result['action']
+                    value = mcts_result['value']
+                    policy = mcts_result['policy']
+
+                    # Calculate reward with post-trade system
+                    current_price = session_data['prices'][step]
+                    next_price = session_data['prices'][step + 1] if step < 359 else current_price
+
+                    (reward, position, entry_price, entry_step,
+                     trade_closed, final_amddp1, pnl_pips) = self._calculate_reward(
+                        action, current_price, next_price,
+                        position, entry_price, entry_step, step
+                    )
+
+                    # Track trade experiences
+                    if action in [1, 2] and position != 0:  # New trade started
+                        trade_experiences = [len(experiences)]
+                        trade_start_idx = len(experiences)
+                    elif position != 0 and trade_start_idx >= 0:  # In trade
+                        trade_experiences.append(len(experiences))
+
+                    # Create experience with all required fields
+                    exp = Experience(
+                        observation=observation,
+                        action=action,
+                        policy=policy,
+                        value=value,
+                        reward=reward,
+                        done=False,
+                        pip_pnl=pnl_pips if trade_closed else 0.0,
+                        trade_complete=trade_closed,
+                        position_change=(action in [1, 2, 3]),
+                        td_error=0.0,
+                        session_expectancy=0.0,
+                        trade_id=None
+                    )
+                    experiences.append(exp)
+
+                    # Retroactively assign rewards if trade closed
+                    if trade_closed and trade_experiences:
+                        # Update all trade experiences with final AMDDP1
+                        for idx in trade_experiences:
+                            experiences[idx].reward = final_amddp1
+                            experiences[idx].pip_pnl = pnl_pips
+                            experiences[idx].trade_complete = True
+                        trade_experiences = []  # Reset for next trade
+                        trade_start_idx = -1
+
+                # Put experiences in queue
+                for exp in experiences:
+                    self.experience_queue.put(exp)
+
+            except queue_module.Empty:
+                continue
+            except Exception as e:
+                logger.error(f"Worker {self.worker_id} error: {e}")
+
+        logger.info(f"Worker {self.worker_id} stopped")
+
+    def _calculate_reward(self, action, current_price, next_price,
+                         position, entry_price, entry_step, current_step):
+        """Calculate POST-TRADE rewards with placeholders."""
+        reward = 0.0
+        trade_closed = False
+        final_amddp1 = 0.0
+        pnl_pips = 0.0
+
+        if action == 0:  # HOLD
+            # Placeholder - will be reassigned if part of trade
+            reward = 0.0
+        elif action == 1:  # BUY
+            if position == 0:
+                reward = 0.0  # Placeholder - NO immediate reward
+                position = 1
+                entry_price = current_price
+                entry_step = current_step
+            else:
+                reward = -1.0  # Invalid
+        elif action == 2:  # SELL
+            if position == 0:
+                reward = 0.0  # Placeholder - NO immediate reward
+                position = -1
+                entry_price = current_price
+                entry_step = current_step
+            else:
+                reward = -1.0  # Invalid
+        elif action == 3:  # CLOSE
+            if position != 0:
+                # Calculate final P&L
+                if position == 1:
+                    pnl_pips = (current_price - entry_price) * 100 - 4
+                else:
+                    pnl_pips = (entry_price - current_price) * 100 - 4
+
+                final_amddp1 = self._calculate_amddp1(pnl_pips)
+                reward = final_amddp1  # Close gets final reward
+                trade_closed = True
+
+                # Reset position
+                position = 0
+                entry_price = 0
+                entry_step = -1
+            else:
+                reward = -1.0  # Invalid
+
+        return (np.clip(reward, -3.0, 3.0), position, entry_price, entry_step,
+                trade_closed, final_amddp1, pnl_pips)
+
+    def _calculate_amddp1(self, pnl_pips):
+        """AMDDP1 calculation."""
+        if pnl_pips > 0:
+            if pnl_pips < 10:
+                return 1.0 + pnl_pips * 0.05
+            elif pnl_pips < 30:
+                return 1.5 + (pnl_pips - 10) * 0.025
+            else:
+                return 2.0 + np.tanh((pnl_pips - 30) / 50)
+        else:
+            pnl_abs = abs(pnl_pips)
+            if pnl_abs < 10:
+                return -1.0 - pnl_abs * 0.1
+            elif pnl_abs < 30:
+                return -2.0 - (pnl_abs - 10) * 0.05
+            else:
+                return -3.0 - np.tanh((pnl_abs - 30) / 30)
+
+
 class MicroMuZeroTrainer:
-    """Main trainer for Micro Stochastic MuZero."""
+    """Main trainer for Micro Stochastic MuZero with multiprocessing."""
 
     def __init__(self, config: TrainingConfig):
         self.config = config
@@ -688,16 +824,23 @@ class MicroMuZeroTrainer:
             support_size=config.support_size
         ).to(self.device)
 
+        # Force complete weight randomization for fresh start
+        if hasattr(self.model, 'randomize_weights'):
+            self.model.randomize_weights()
+            logger.info("Model weights randomized for fresh start")
+        else:
+            logger.info("Using default weight initialization")
+
         # Initialize optimizer
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=config.learning_rate,
             weight_decay=config.weight_decay
         )
-        # Learning rate scheduler (exponential decay)
+        # Learning rate scheduler - DISABLED for fixed learning rate
         self.scheduler = lr_scheduler.ExponentialLR(
             self.optimizer,
-            gamma=0.9999  # Slow decay
+            gamma=1.0  # NO DECAY - fixed learning rate
         )
 
         # Track current temperature for exploration decay
@@ -709,16 +852,19 @@ class MicroMuZeroTrainer:
             model=self.model,
             num_actions=config.action_dim,
             discount=config.discount,
-            num_simulations=config.num_simulations  # Use config value (3)
+            num_simulations=config.num_simulations,
+            dirichlet_alpha=1.0,  # Strong exploration noise
+            exploration_fraction=0.5  # 50% exploration mix at root
         )
 
         # Initialize data loader
         self.data_loader = DataLoader(config.data_path, config.lag_window)
 
-        # Initialize quality experience buffer with smart eviction
-        self.buffer = QualityExperienceBuffer(
-            capacity=config.buffer_size,
-            eviction_batch=max(100, config.buffer_size // 50)  # Evict 2% when full
+        # Initialize balanced replay buffer (no PER, quota-based)
+        self.buffer = BalancedReplayBuffer(
+            max_size=config.buffer_size,
+            min_trade_fraction=0.2,
+            trajectory_length=10
         )
 
         # Training stats
@@ -734,17 +880,100 @@ class MicroMuZeroTrainer:
             'reward_losses': []
         }
 
+        # Initialize position tracking for AMDDP1 rewards
+        self.position = 0  # -1: short, 0: flat, 1: long
+        self.entry_price = 0.0
+        self.position_pnl = 0.0
+        self.entry_step = -1  # Track entry step for retroactive AMDDP1
+
+
+        # Multiprocessing setup
+        self.session_queue = Queue(maxsize=config.session_queue_size)
+        self.experience_queue = Queue(maxsize=1000)
+        self.stop_event = mp.Event()
+        self.workers = []
+
+        # Session pre-validator thread
+        self.session_validator = None
+
         logger.info(f"Trainer initialized on {self.device}")
         logger.info(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
+        logger.info(f"Multiprocessing: {config.num_workers} workers")
+
+    def start_workers(self):
+        """Start worker processes for parallel collection."""
+        for i in range(self.config.num_workers):
+            worker = SessionCollector(
+                worker_id=i,
+                config=self.config,
+                session_queue=self.session_queue,
+                experience_queue=self.experience_queue,
+                stop_event=self.stop_event
+            )
+            worker.start()
+            self.workers.append(worker)
+        logger.info(f"Started {self.config.num_workers} worker processes")
+
+    def stop_workers(self):
+        """Stop all worker processes."""
+        # Signal workers to stop
+        self.stop_event.set()
+
+        # Send poison pills
+        for _ in self.workers:
+            self.session_queue.put(None)
+
+        # Wait for workers to finish
+        for worker in self.workers:
+            worker.join(timeout=5)
+            if worker.is_alive():
+                worker.terminate()
+
+        self.workers.clear()
+        logger.info("All workers stopped")
+
+    def populate_session_queue(self):
+        """Pre-populate session queue with validated sessions."""
+        sessions_added = 0
+        while sessions_added < self.config.session_queue_size // 2:
+            try:
+                # Get random window
+                window = self.data_loader.get_random_window(split='train')
+
+                # Create session data
+                session_data = {
+                    'observations': [window['observation']] * 360,  # Simplified for now
+                    'prices': [window.get('close', 180.0)] * 361
+                }
+
+                self.session_queue.put(session_data, timeout=0.1)
+                sessions_added += 1
+            except queue_module.Full:
+                break
+            except Exception as e:
+                logger.error(f"Error populating session queue: {e}")
+                break
+
+        logger.info(f"Session queue populated with {sessions_added} sessions")
 
     def collect_experience(self) -> Dict:
-        """Collect experience using MCTS with AMDDP1 reward."""
+        """Collect experience using MCTS with post-trade reward system."""
         # Get random window from TRAINING data only
         window = self.data_loader.get_random_window(split='train')
         observation = torch.tensor(
-            window['observation'],
+            window['observation'],  # Use observation from the window
+            dtype=torch.float32,
             device=self.device
         ).unsqueeze(0)  # Add batch dimension
+
+        # Get current and next prices for reward calculation
+        # Use the data from window to get price
+        current_data = window['data']
+        current_price = current_data['close'].iloc[0] if 'close' in current_data.columns else 1.0
+
+        # For next price, just use a small offset from current
+        # (This is simplified - in real episode we'd track sequential prices)
+        next_price = current_price * 1.0001  # Small synthetic change
 
         # Run MCTS - use minimal simulations during initial collection
         self.model.eval()
@@ -757,53 +986,129 @@ class MicroMuZeroTrainer:
         )
         self.mcts.num_simulations = self.config.num_simulations  # Restore
 
-        # Calculate AMDDP1 reward (simplified for training)
-        # In production, this comes from environment
-        base_reward = np.random.randn() * 10  # Simulated P&L
-        drawdown_penalty = abs(np.random.randn()) * 0.01  # 1% drawdown penalty
-        amddp1_reward = base_reward - drawdown_penalty
+        # Calculate POST-TRADE REWARDS (placeholders until trade closes)
+        action = mcts_result['action']
+        reward = self._calculate_action_reward(action, current_price, next_price)
 
-        # Apply profit protection (matching main system)
-        if base_reward > 0 and amddp1_reward < 0:
-            amddp1_reward = 0.01  # Min protected reward
-
-        # Create experience with quality metrics
+        # Create experience
         experience = Experience(
-            observation=window['observation'],
-            action=mcts_result['action'],
+            observation=window['observation'],  # Use observation from window
+            action=action,
             policy=mcts_result['policy'],
             value=mcts_result['value'],
-            reward=amddp1_reward,
+            reward=reward,
             done=False,
-            pip_pnl=base_reward,  # Simplified P&L tracking
-            trade_complete=False,
-            position_change=(mcts_result['action'] in [1, 2, 3]),  # Buy/Sell/Close
-            td_error=0.0,  # Will be calculated during training
-            session_expectancy=0.0,  # Will be updated per session
-            trade_id=None
+            td_error=0.0  # Will be calculated during training
         )
 
         return experience
 
-    def train_batch(self, batch: List[Experience]) -> Dict[str, float]:
-        """Train on a batch of experiences."""
+    def _calculate_action_reward(self, action: int, current_price: float, next_price: float) -> float:
+        """
+        Calculate CLEAN rewards with clear signals.
+
+        Reward Structure:
+        0: HOLD - 0.0 (intra-trade) or -0.05 (idle/extra-trade)
+        1: BUY - +1.0 immediate reward for decisive entry
+        2: SELL - +1.0 immediate reward for decisive entry
+        3: CLOSE - AMDDP1 based on actual P&L
+        """
+        reward = 0.0
+
+        if action == 0:  # HOLD
+            if self.position != 0:
+                # INTRA-TRADE HOLD: Neutral (don't overweight patience)
+                reward = 0.0
+            else:
+                # IDLE HOLD: Small penalty to discourage inactivity
+                reward = -0.05
+
+        elif action == 1:  # BUY (open long ONLY)
+            if self.position == 0:  # Can only buy when flat
+                # IMMEDIATE REWARD for taking action
+                reward = 1.0
+                self.position = 1
+                self.entry_price = current_price
+                self.entry_step = self.total_steps
+            else:
+                # Invalid - already have position
+                reward = -1.0
+
+        elif action == 2:  # SELL (open short ONLY)
+            if self.position == 0:  # Can only sell when flat
+                # IMMEDIATE REWARD for taking action
+                reward = 1.0
+                self.position = -1
+                self.entry_price = current_price
+                self.entry_step = self.total_steps
+            else:
+                # Invalid - already have position
+                reward = -1.0
+
+        elif action == 3:  # CLOSE
+            if self.position != 0:  # Have position to close
+                # Calculate P&L with 4 pip spread
+                if self.position == 1:  # Close long
+                    pnl_pips = (current_price - self.entry_price) * 100 - 4
+                else:  # Close short
+                    pnl_pips = (self.entry_price - current_price) * 100 - 4
+
+                # AMDDP1 reward for close
+                reward = self._calculate_amddp1(pnl_pips)
+
+                # Reset position
+                self.position = 0
+                self.entry_price = 0
+                self.entry_step = -1
+            else:  # No position to close
+                reward = -0.5  # Penalty for invalid action
+        else:
+            reward = -1.0  # Invalid action
+
+        # Clamp reward to reasonable range
+        return np.clip(reward, -3.0, 3.0)
+
+    def _calculate_amddp1(self, pnl_pips: float) -> float:
+        """
+        AMDDP1 (Asymmetric Mean Deviation Drawdown Penalty) calculation.
+        """
+        if pnl_pips > 0:
+            # Winning trade - progressive reward
+            if pnl_pips < 10:
+                return 1.0 + pnl_pips * 0.05  # 1.0 to 1.5
+            elif pnl_pips < 30:
+                return 1.5 + (pnl_pips - 10) * 0.025  # 1.5 to 2.0
+            else:
+                return 2.0 + np.tanh((pnl_pips - 30) / 50)  # 2.0 to ~3.0
+        else:
+            # Losing trade - asymmetric penalty
+            pnl_abs = abs(pnl_pips)
+            if pnl_abs < 10:
+                return -1.0 - pnl_abs * 0.1  # -1.0 to -2.0
+            elif pnl_abs < 30:
+                return -2.0 - (pnl_abs - 10) * 0.05  # -2.0 to -3.0
+            else:
+                return -3.0 - np.tanh((pnl_abs - 30) / 30)  # -3.0 to ~-4.0
+
+    def train_batch(self, batch_data: Dict) -> Dict[str, float]:
+        """Train on a batch of data."""
         self.model.train()
 
         # Prepare batch tensors
         observations = torch.tensor(
-            np.array([e.observation for e in batch]),
+            batch_data['observations'],
             device=self.device,
             dtype=torch.float32
         )
 
         target_policies = torch.tensor(
-            np.array([e.policy for e in batch]),
+            batch_data['policies'],
             device=self.device,
             dtype=torch.float32
         )
 
         target_values = torch.tensor(
-            np.array([e.value for e in batch]),
+            batch_data['values'],
             device=self.device,
             dtype=torch.float32
         ).unsqueeze(1)
@@ -1054,8 +1359,10 @@ class MicroMuZeroTrainer:
 
             # Train on batch
             if len(self.buffer) >= self.config.batch_size:
-                batch = self.buffer.sample(self.config.batch_size)
-                losses = self.train_batch(batch)
+                batch_data = self.buffer.sample_batch(self.config.batch_size)
+                if batch_data is None:
+                    continue
+                losses = self.train_batch(batch_data)
 
                 # Update stats
                 self.training_stats['episodes'].append(episode)

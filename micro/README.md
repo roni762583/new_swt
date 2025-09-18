@@ -2,7 +2,36 @@
 
 ## Executive Summary
 
-A streamlined proof-of-concept implementation of Stochastic MuZero for forex trading using only **14 essential features** instead of the full 337-feature WST pipeline. This micro variant serves as both a **rapid development testbed** and **performance baseline** for the larger system.
+A streamlined proof-of-concept implementation of Stochastic MuZero for forex trading using only **15 essential features** instead of the full 337-feature WST pipeline. This micro variant serves as both a **rapid development testbed** and **performance baseline** for the larger system.
+
+### 🔥 CLEAN REWARD REDESIGN (Sept 18, 2025)
+
+#### 🔴 New Clean Reward Structure
+```python
+# Immediate, interpretable rewards for clear learning signals
+BUY:  +1.0   # Reward decisive entry action
+SELL: +1.0   # Reward decisive entry action
+HOLD: 0.0    # Neutral when in position (intra-trade)
+HOLD: -0.05  # Small penalty when idle (extra-trade)
+CLOSE: AMDDP1 # Asymmetric Mean Deviation Drawdown Penalty based on P&L
+```
+
+#### 🔵 Quota-Based Buffer System (Replaced PER)
+- **BalancedReplayBuffer**: Simple FIFO with smart eviction
+- **No TD-error priority**: Removed complex quality scoring
+- **Trade/Hold Balance**: Maintains 30% minimum trading trajectories
+- **Eviction Logic**:
+  ```python
+  if trade_fraction < 0.3 and hold_trajectories exist:
+      evict random hold trajectory
+  else:
+      evict oldest (FIFO)
+  ```
+
+#### 🟢 Enhanced Exploration
+- **Dirichlet Noise**: α=1.0, fraction=0.5 (stronger exploration)
+- **Weight Randomization**: Complete network re-initialization
+- **Temperature Decay**: 2.0 → 0.5 over 20k episodes
 
 ### Key Advantages
 - **10x faster training** - Reduced input dimension (14 vs 337)
@@ -307,10 +336,40 @@ training_config = {
     'num_unroll_steps': 5,
     'td_steps': 10,
     'discount': 0.997,
-    'num_simulations': 15,  # MCTS
-    'latent_z_dim': 16,     # Stochastic
-    'kl_weight': 0.1        # KL regularization
+    'num_simulations': 25,      # Increased for better exploration
+    'latent_z_dim': 16,         # Stochastic dimension
+    'kl_weight': 0.1,           # KL regularization
+    'dirichlet_alpha': 1.0,     # Strong exploration noise
+    'exploration_fraction': 0.5, # 50% noise at root
+    'temperature_max': 2.0,      # Initial exploration
+    'temperature_min': 0.5,      # Final exploitation
+    'temperature_decay_eps': 20000  # Decay period
 }
+```
+
+### Reward System Details
+```python
+class RewardCalculator:
+    """Clean reward system with clear signals"""
+
+    def calculate(self, action, position_state):
+        if action == Action.HOLD:
+            if position_state.in_position:
+                return 0.0      # Neutral intra-trade hold
+            else:
+                return -0.05    # Small idle penalty
+
+        elif action in [Action.BUY, Action.SELL]:
+            if position_state.can_enter:
+                return 1.0      # Reward decisive entry
+            else:
+                return -1.0     # Invalid action penalty
+
+        elif action == Action.CLOSE:
+            if position_state.in_position:
+                return calculate_amddp1(position_state.pnl_pips)
+            else:
+                return -1.0     # Invalid close penalty
 ```
 
 ### Model Dimensions

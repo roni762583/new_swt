@@ -12,6 +12,7 @@ python-dotenv==1.0.0
 # Networking and async
 aiohttp==3.8.5
 asyncio-throttle==1.0.2
+requests==2.31.0
 
 # CLI and display
 click==8.1.7

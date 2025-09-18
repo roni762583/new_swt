@@ -18,7 +18,7 @@ import sys
 # Add parent directories to path
 sys.path.append('/workspace')
 
-from data.incremental_feature_builder import IncrementalFeatureBuilder
+from micro.live.micro_feature_builder import MicroFeatureBuilder
 from micro.models.micro_networks import MicroStochasticMuZero
 from micro.training.mcts_micro import MCTS
 
@@ -34,24 +34,28 @@ class MicroLiveTrader:
 
     def __init__(
         self,
-        checkpoint_path: str = "/workspace/micro/checkpoints/latest.pth",
+        checkpoint_path: str = None,
         instrument: str = "GBP_JPY",
-        max_position_size: int = 1,
-        is_demo: bool = True
+        max_position_size: int = 1
+        # REMOVED is_demo parameter - ALWAYS LIVE TRADING
     ):
         """
         Initialize live trader.
 
         Args:
-            checkpoint_path: Path to model checkpoint
+            checkpoint_path: Path to model checkpoint (None for auto-select best)
             instrument: Trading instrument
             max_position_size: Maximum position size
-            is_demo: Whether to run in demo mode (no real trades)
         """
+        # Auto-select best checkpoint if not specified
+        if checkpoint_path is None:
+            checkpoint_path = self._find_best_checkpoint()
+
         self.checkpoint_path = checkpoint_path
         self.instrument = instrument
         self.max_position_size = max_position_size
-        self.is_demo = is_demo
+        # HARD-CODED: ALWAYS LIVE TRADING - NEVER DEMO
+        self.is_live_trading = True  # Permanently true
 
         # Initialize device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -69,11 +73,17 @@ class MicroLiveTrader:
             num_simulations=10  # Fewer for real-time
         )
 
-        # Initialize feature builder
-        self.feature_builder = IncrementalFeatureBuilder(
+        # Initialize feature builder with proper warmup
+        self.feature_builder = MicroFeatureBuilder(
             instrument=instrument,
-            lag_window=32
+            lag_window=32,
+            warmup_bars=100  # Need sufficient history for indicators
         )
+
+        # Initialize with historical data to avoid NaNs
+        if not self.feature_builder.initialize_from_history():
+            logger.error("Failed to initialize feature builder with historical data")
+            raise RuntimeError("Cannot start without proper historical data")
 
         # Position tracking
         self.position = {
@@ -106,8 +116,27 @@ class MicroLiveTrader:
         logger.info(f"Live trader initialized")
         logger.info(f"  Model: {checkpoint_path}")
         logger.info(f"  Instrument: {instrument}")
-        logger.info(f"  Demo mode: {is_demo}")
+        logger.info(f"  ⚠️ LIVE TRADING MODE: ACTIVE ⚠️")  # Hard-coded live status
         logger.info(f"  Device: {self.device}")
+
+    def _find_best_checkpoint(self) -> str:
+        """Find the best checkpoint based on validation results or use specific checkpoint."""
+        # Check if we want to use specific checkpoint (Episode 3400)
+        specific_checkpoint = "/workspace/micro/checkpoints/micro_checkpoint_ep003400.pth"
+        if os.path.exists(specific_checkpoint):
+            logger.info(f"Using specific checkpoint: Episode 3400")
+            return specific_checkpoint
+
+        # Otherwise use the best.pth
+        best_path = "/workspace/micro/checkpoints/best.pth"
+        if os.path.exists(best_path):
+            logger.info(f"Using best checkpoint")
+            return best_path
+
+        # Fallback to latest
+        latest_path = "/workspace/micro/checkpoints/latest.pth"
+        logger.info(f"Using latest checkpoint as fallback")
+        return latest_path
 
     def load_model(self) -> Optional[MicroStochasticMuZero]:
         """Load model from checkpoint."""
@@ -183,8 +212,9 @@ class MicroLiveTrader:
         action_name = self.action_names[action]
         logger.info(f"Action: {action_name} at {current_price:.3f}")
 
-        if self.is_demo:
-            # Demo mode - simulate trades
+        # NEVER USE DEMO MODE - ALWAYS EXECUTE REAL TRADES
+        if False:  # self.is_demo DISABLED - Always live trading
+            # Demo mode - DISABLED
             if action == 1 and self.position['side'] <= 0:  # BUY
                 if self.position['side'] == -1:  # Close short first
                     self.close_position(current_price)
@@ -213,8 +243,10 @@ class MicroLiveTrader:
                 self.close_position(current_price)
 
         else:
-            # Live trading - would send orders to OANDA here
-            logger.warning("Live trading not yet implemented")
+            # ALWAYS LIVE TRADING - Execute real OANDA orders
+            logger.warning(f"⚠️ LIVE TRADE EXECUTION: {action_name} at {current_price:.3f}")
+            # TODO: Implement OANDA API calls here
+            logger.error("OANDA API integration needed for live execution")
 
     def close_position(self, current_price: float):
         """Close current position."""
@@ -255,15 +287,15 @@ class MicroLiveTrader:
         # Update position state
         self.update_position_state(close_price)
 
-        # Generate features
-        features = self.feature_builder.process_new_bar(close_price, timestamp)
-        if features is None:
-            logger.warning("Insufficient data for features")
+        # Add new bar to feature builder
+        if not self.feature_builder.add_new_bar(close_price, timestamp):
+            logger.warning("Failed to add new bar")
             return 0  # HOLD
 
-        # Get model input format
-        model_input = self.feature_builder.get_feature_vector_for_model()
+        # Get feature vector (32, 15) for model
+        model_input = self.feature_builder.get_feature_vector()
         if model_input is None:
+            logger.warning("Insufficient feature history for model input")
             return 0  # HOLD
 
         # Convert to tensor
@@ -355,8 +387,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Live trading with Micro MuZero")
     parser.add_argument(
         "--checkpoint",
-        default="/workspace/micro/checkpoints/latest.pth",
-        help="Model checkpoint path"
+        default=None,
+        help="Model checkpoint path (default: auto-select best, use 'ep3400' for Episode 3400)"
     )
     parser.add_argument(
         "--instrument",
@@ -371,10 +403,20 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    # Handle special checkpoint names
+    checkpoint_path = args.checkpoint
+    if checkpoint_path == 'ep3400':
+        checkpoint_path = "/workspace/micro/checkpoints/micro_checkpoint_ep003400.pth"
+        logger.info("Using Episode 3400 checkpoint (best validation performance)")
+    elif checkpoint_path == 'best':
+        checkpoint_path = "/workspace/micro/checkpoints/best.pth"
+    elif checkpoint_path == 'latest':
+        checkpoint_path = "/workspace/micro/checkpoints/latest.pth"
+
     trader = MicroLiveTrader(
-        checkpoint_path=args.checkpoint,
-        instrument=args.instrument,
-        is_demo=not args.live
+        checkpoint_path=checkpoint_path,
+        instrument=args.instrument
+        # NO is_demo parameter - PERMANENTLY LIVE TRADING
     )
 
     trader.run()

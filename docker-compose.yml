@@ -3,6 +3,9 @@ version: '3.8'
 services:
   # Micro Training Container
   micro-training:
+    build:
+      context: .
+      dockerfile: Dockerfile.micro
     image: micro-muzero:latest
     container_name: micro_training
     restart: unless-stopped
@@ -20,10 +23,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 6G
+          memory: 8G
           cpus: '4.0'
         reservations:
-          memory: 3G
+          memory: 4G
           cpus: '2.0'
     healthcheck:
       test: ["CMD", "python3", "-c", "import torch; print('OK')"]
@@ -33,6 +36,9 @@ services:
 
   # Micro Validation Container
   micro-validation:
+    build:
+      context: .
+      dockerfile: Dockerfile.micro
     image: micro-muzero:latest
     container_name: micro_validation
     restart: unless-stopped
@@ -60,6 +66,9 @@ services:
 
   # Micro Live Trading Container
   micro-live:
+    build:
+      context: .
+      dockerfile: Dockerfile.micro
     image: micro-muzero:latest
     container_name: micro_live
     restart: unless-stopped
@@ -73,7 +82,7 @@ services:
     volumes:
       - ./micro/checkpoints:/workspace/micro/checkpoints:ro
       - ./micro/logs:/workspace/micro/logs
-    command: python3 /workspace/micro/live/trade_micro.py
+    command: python3 /workspace/micro/live/trade_micro.py --checkpoint best
     networks:
       - micro-network
     ports:

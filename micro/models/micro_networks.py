@@ -527,19 +527,46 @@ class MicroStochasticMuZero(nn.Module):
         """
         return self.afterstate(hidden, action)
 
+    def randomize_weights(self):
+        """Force complete weight re-initialization for fresh start."""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("Randomizing all network weights for fresh start...")
+
+        # Re-initialize all weights
+        self._initialize_weights()
+
+        # Extra randomization for policy network to encourage exploration
+        with torch.no_grad():
+            # Add noise to policy head
+            if hasattr(self.policy, 'action_head'):
+                self.policy.action_head.weight.add_(torch.randn_like(self.policy.action_head.weight) * 0.1)
+                if self.policy.action_head.bias is not None:
+                    self.policy.action_head.bias.add_(torch.randn_like(self.policy.action_head.bias) * 0.05)
+
+        logger.info("Weight randomization complete")
+
     def _initialize_weights(self):
-        """Initialize weights with proper values to prevent NaN."""
+        """Initialize weights with aggressive randomization to break symmetry."""
         for module in self.modules():
             if isinstance(module, nn.Linear):
-                # Xavier initialization for linear layers
-                nn.init.xavier_uniform_(module.weight, gain=1.0)
-                if module.bias is not None:
-                    nn.init.constant_(module.bias, 0.0)
+                # More aggressive random initialization for policy head
+                if module == self.policy.action_head:
+                    # Random uniform for action head to encourage exploration
+                    nn.init.uniform_(module.weight, -0.5, 0.5)
+                    if module.bias is not None:
+                        # Small random bias to break initial symmetry
+                        nn.init.uniform_(module.bias, -0.1, 0.1)
+                else:
+                    # Xavier initialization for other linear layers
+                    nn.init.xavier_uniform_(module.weight, gain=1.5)  # Higher gain
+                    if module.bias is not None:
+                        nn.init.normal_(module.bias, 0.0, 0.01)  # Small random bias
             elif isinstance(module, nn.Conv1d):
                 # Kaiming initialization for convolutional layers
                 nn.init.kaiming_normal_(module.weight, mode='fan_out', nonlinearity='relu')
                 if module.bias is not None:
-                    nn.init.constant_(module.bias, 0.0)
+                    nn.init.normal_(module.bias, 0.0, 0.01)
             elif isinstance(module, nn.BatchNorm1d):
                 # Batch norm initialization
                 nn.init.constant_(module.weight, 1.0)
