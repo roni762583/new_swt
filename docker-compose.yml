@@ -50,7 +50,7 @@ services:
       - ./data:/workspace/data:ro
       - ./micro/checkpoints:/workspace/micro/checkpoints:ro
       - ./micro/validation_results:/workspace/micro/validation_results
-    command: python3 /workspace/micro/validation/validate_micro.py
+    command: python3 /workspace/micro/validation/validate_micro_watcher.py
     networks:
       - micro-network
     deploy:
