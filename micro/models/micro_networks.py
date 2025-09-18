@@ -153,25 +153,86 @@ class RepresentationNetwork(nn.Module):
         return hidden  # (batch, 256)
 
 
-class DynamicsNetwork(nn.Module):
+class OutcomeProbabilityNetwork(nn.Module):
     """
-    Dynamics Network for state transition.
+    Predicts market outcome probabilities given state and action.
 
-    Predicts next state and reward given current state, action, and stochastic z.
+    Outcomes based on rolling stdev:
+    - UP: price change > 0.5 * rolling_stdev
+    - DOWN: price change < -0.5 * rolling_stdev
+    - NEUTRAL: price change within ±0.5 * rolling_stdev
     """
 
     def __init__(
         self,
         hidden_dim: int = 256,
         action_dim: int = 4,
-        z_dim: int = 16,
+        num_outcomes: int = 3,  # UP, NEUTRAL, DOWN
         dropout: float = 0.1
     ):
         super().__init__()
 
-        # Input: hidden(256) + action(4) + stochastic_z(16) = 276D
+        # Project state + action to hidden
+        self.input_projection = nn.Linear(hidden_dim + action_dim, hidden_dim)
+
+        # 2 residual blocks for outcome modeling
+        self.outcome_blocks = nn.ModuleList([
+            MLPResidualBlock(hidden_dim, dropout=dropout) for _ in range(2)
+        ])
+
+        # Output head for outcome probabilities
+        self.outcome_head = nn.Linear(hidden_dim, num_outcomes)
+
+    def forward(
+        self,
+        hidden: torch.Tensor,
+        action: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Predict outcome probabilities.
+
+        Args:
+            hidden: Current hidden state (batch, 256)
+            action: Action one-hot (batch, 4)
+
+        Returns:
+            Outcome probabilities (batch, 3) - softmax over [UP, NEUTRAL, DOWN]
+        """
+        # Concatenate state and action
+        x = torch.cat([hidden, action], dim=-1)
+        x = self.input_projection(x)
+
+        # Process through residual blocks
+        for block in self.outcome_blocks:
+            x = block(x)
+
+        # Get outcome probabilities
+        logits = self.outcome_head(x)
+        probs = F.softmax(logits, dim=-1)
+
+        return probs
+
+
+class DynamicsNetwork(nn.Module):
+    """
+    Stochastic Dynamics Network for state transition.
+
+    Predicts next state and reward given current state, action, and market outcome.
+    Now conditions on discrete market outcomes instead of continuous z.
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int = 256,
+        action_dim: int = 4,
+        outcome_dim: int = 3,  # 3 market outcomes: UP, NEUTRAL, DOWN
+        dropout: float = 0.1
+    ):
+        super().__init__()
+
+        # Input: hidden(256) + action(4) + outcome(3) = 263D
         self.input_projection = nn.Linear(
-            hidden_dim + action_dim + z_dim,
+            hidden_dim + action_dim + outcome_dim,
             hidden_dim
         )
 
@@ -190,22 +251,22 @@ class DynamicsNetwork(nn.Module):
         self,
         hidden: torch.Tensor,
         action: torch.Tensor,
-        z: torch.Tensor
+        outcome: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Forward pass.
+        Forward pass with market outcome conditioning.
 
         Args:
             hidden: Current hidden state (batch, 256)
             action: One-hot action (batch, 4)
-            z: Stochastic latent (batch, 16)
+            outcome: Market outcome one-hot or probs (batch, 3) [UP, NEUTRAL, DOWN]
 
         Returns:
             next_hidden: Next state (batch, 256)
             reward: Predicted reward (batch, 1)
         """
-        # Combine inputs
-        x = torch.cat([hidden, action, z], dim=1)  # (batch, 276)
+        # Combine inputs - now with outcome instead of z
+        x = torch.cat([hidden, action, outcome], dim=1)  # (batch, 263)
         x = self.input_projection(x)
         x = F.relu(x)
 
@@ -394,7 +455,7 @@ class MicroStochasticMuZero(nn.Module):
     """
     Complete Micro Stochastic MuZero model.
 
-    Combines all 5 networks for end-to-end training.
+    Combines all networks with market outcome modeling for stochastic planning.
     """
 
     def __init__(
@@ -403,7 +464,7 @@ class MicroStochasticMuZero(nn.Module):
         lag_window: int = 32,
         hidden_dim: int = 256,
         action_dim: int = 4,
-        z_dim: int = 16,
+        num_outcomes: int = 3,  # Market outcomes: UP, NEUTRAL, DOWN
         support_size: int = 300,
         temperature: float = 1.0,
         dropout: float = 0.1
@@ -421,7 +482,14 @@ class MicroStochasticMuZero(nn.Module):
         self.dynamics = DynamicsNetwork(
             hidden_dim=hidden_dim,
             action_dim=action_dim,
-            z_dim=z_dim,
+            outcome_dim=num_outcomes,
+            dropout=dropout
+        )
+
+        self.outcome_predictor = OutcomeProbabilityNetwork(
+            hidden_dim=hidden_dim,
+            action_dim=action_dim,
+            num_outcomes=num_outcomes,
             dropout=dropout
         )
 
@@ -447,7 +515,7 @@ class MicroStochasticMuZero(nn.Module):
         # Store dimensions
         self.hidden_dim = hidden_dim
         self.action_dim = action_dim
-        self.z_dim = z_dim
+        self.num_outcomes = num_outcomes
 
         # Initialize weights properly to prevent NaN
         self._initialize_weights()
@@ -477,15 +545,15 @@ class MicroStochasticMuZero(nn.Module):
         self,
         hidden: torch.Tensor,
         action: torch.Tensor,
-        z: Optional[torch.Tensor] = None
+        outcome: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Recurrent inference for planning.
+        Recurrent inference for planning with market outcomes.
 
         Args:
             hidden: Current state (batch, 256)
             action: One-hot action (batch, 4)
-            z: Stochastic latent (batch, 16) or None to sample
+            outcome: Market outcome probs (batch, 3) or None to predict
 
         Returns:
             next_hidden: Next state (batch, 256)
@@ -493,22 +561,35 @@ class MicroStochasticMuZero(nn.Module):
             policy_logits: Next action logits (batch, 4)
             value_probs: Next value distribution (batch, 601)
         """
-        # Sample z if not provided
-        if z is None:
-            z = torch.randn(
-                hidden.size(0),
-                self.z_dim,
-                device=hidden.device
-            )
+        # Predict outcome if not provided
+        if outcome is None:
+            outcome = self.outcome_predictor(hidden, action)
 
-        # Dynamics transition
-        next_hidden, reward = self.dynamics(hidden, action, z)
+        # Dynamics transition with market outcome
+        next_hidden, reward = self.dynamics(hidden, action, outcome)
 
         # Policy and value for next state
         policy_logits = self.policy(next_hidden)
         value_probs = self.value(next_hidden)
 
         return next_hidden, reward, policy_logits, value_probs
+
+    def predict_outcome(
+        self,
+        hidden: torch.Tensor,
+        action: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Predict market outcome probabilities.
+
+        Args:
+            hidden: Current state (batch, 256)
+            action: One-hot action (batch, 4)
+
+        Returns:
+            Outcome probabilities (batch, 3) [UP, NEUTRAL, DOWN]
+        """
+        return self.outcome_predictor(hidden, action)
 
     def compute_afterstate(
         self,

@@ -32,7 +32,7 @@ import sys
 sys.path.append('/workspace')
 
 from micro.models.micro_networks import MicroStochasticMuZero
-from micro.training.mcts_micro import MCTS
+from micro.training.stochastic_mcts import StochasticMCTS, MarketOutcome
 from micro.training.session_queue_manager import SessionQueueManager, ValidSession
 
 logging.basicConfig(
@@ -50,7 +50,7 @@ class TrainingConfig:
     lag_window: int = 32
     hidden_dim: int = 256
     action_dim: int = 4
-    z_dim: int = 16
+    num_outcomes: int = 3  # UP, NEUTRAL, DOWN
     support_size: int = 300
 
     # Training
@@ -113,13 +113,15 @@ class Trajectory:
 
 @dataclass
 class Experience:
-    """Single experience for compatibility."""
+    """Single experience with market outcome."""
     observation: np.ndarray
     action: int
     policy: np.ndarray
     value: float
     reward: float
     done: bool
+    market_outcome: int = 1  # Default NEUTRAL
+    outcome_probs: Optional[np.ndarray] = None  # Predicted probabilities
     td_error: float = 0.0
 
 
@@ -631,7 +633,7 @@ class SessionCollector(Process):
             lag_window=self.config.lag_window,
             hidden_dim=self.config.hidden_dim,
             action_dim=self.config.action_dim,
-            z_dim=self.config.z_dim,
+            num_outcomes=self.config.num_outcomes,
             support_size=self.config.support_size
         ).to(device)
 
@@ -820,7 +822,7 @@ class MicroMuZeroTrainer:
             lag_window=config.lag_window,
             hidden_dim=config.hidden_dim,
             action_dim=config.action_dim,
-            z_dim=config.z_dim,
+            num_outcomes=config.num_outcomes,
             support_size=config.support_size
         ).to(self.device)
 
@@ -848,13 +850,15 @@ class MicroMuZeroTrainer:
         self.temperature_decay_rate = (config.final_temperature / config.initial_temperature) ** (1.0 / config.temperature_decay_episodes)
 
         # Initialize MCTS with minimal simulations for ultra-fast collection
-        self.mcts = MCTS(
+        self.mcts = StochasticMCTS(
             model=self.model,
             num_actions=config.action_dim,
+            num_outcomes=config.num_outcomes,
             discount=config.discount,
             num_simulations=config.num_simulations,
             dirichlet_alpha=1.0,  # Strong exploration noise
-            exploration_fraction=0.5  # 50% exploration mix at root
+            exploration_fraction=0.5,  # 50% exploration mix at root
+            depth_limit=3  # Planning depth for stochastic tree
         )
 
         # Initialize data loader
@@ -877,7 +881,10 @@ class MicroMuZeroTrainer:
             'losses': [],
             'policy_losses': [],
             'value_losses': [],
-            'reward_losses': []
+            'reward_losses': [],
+            'expectancies': [],  # Track expectancy over time
+            'win_rates': [],     # Track win rates
+            'trade_counts': []   # Track number of trades
         }
 
         # Initialize position tracking for AMDDP1 rewards
@@ -981,7 +988,7 @@ class MicroMuZeroTrainer:
         self.mcts.num_simulations = num_sims  # Temporarily override
         mcts_result = self.mcts.run(
             observation,
-            add_exploration_noise=True,
+            add_noise=True,  # Changed from add_exploration_noise
             temperature=self.current_temperature
         )
         self.mcts.num_simulations = self.config.num_simulations  # Restore
@@ -1205,11 +1212,8 @@ class MicroMuZeroTrainer:
             }
 
         # Calculate TD errors for quality scoring
-        with torch.no_grad():
-            td_errors = (predicted_values - target_values).abs().cpu().numpy()
-            for i, exp in enumerate(batch):
-                exp.td_error = float(td_errors[i])
-                exp.quality_score = exp.calculate_quality_score()
+        # Note: With BalancedReplayBuffer, we don't update individual experiences
+        # since we're working with pre-sampled arrays, not Experience objects
 
         # Backward pass
         self.optimizer.zero_grad()
@@ -1299,6 +1303,14 @@ class MicroMuZeroTrainer:
             self.total_steps = checkpoint['total_steps']
             self.training_stats = checkpoint['training_stats']
 
+            # Ensure new fields exist in loaded stats (for backward compatibility)
+            if 'expectancies' not in self.training_stats:
+                self.training_stats['expectancies'] = []
+            if 'win_rates' not in self.training_stats:
+                self.training_stats['win_rates'] = []
+            if 'trade_counts' not in self.training_stats:
+                self.training_stats['trade_counts'] = []
+
             # Restore buffer if available
             if checkpoint.get('buffer_state') and hasattr(self.buffer, 'set_state'):
                 self.buffer.set_state(checkpoint['buffer_state'])
@@ -1340,6 +1352,8 @@ class MicroMuZeroTrainer:
 
                 experience = self.collect_experience()
                 self.buffer.add(experience)
+                # Track rewards for expectancy even during initial collection
+                self.training_stats['rewards'].append(experience.reward)
                 collection_count += 1
 
                 if len(self.buffer) % 25 == 0:
@@ -1356,6 +1370,9 @@ class MicroMuZeroTrainer:
             # Collect new experience
             experience = self.collect_experience()
             self.buffer.add(experience)
+
+            # Track rewards for expectancy calculation
+            self.training_stats['rewards'].append(experience.reward)
 
             # Train on batch
             if len(self.buffer) >= self.config.batch_size:
@@ -1385,17 +1402,34 @@ class MicroMuZeroTrainer:
                 elapsed = time.time() - start_time
                 eps = episode / elapsed
 
-                avg_loss = np.mean(self.training_stats['losses'][-100:])
-                avg_policy_loss = np.mean(self.training_stats['policy_losses'][-100:])
-                avg_value_loss = np.mean(self.training_stats['value_losses'][-100:])
+                avg_loss = np.mean(self.training_stats['losses'][-100:]) if self.training_stats['losses'] else 0
+                avg_policy_loss = np.mean(self.training_stats['policy_losses'][-100:]) if self.training_stats['policy_losses'] else 0
+                avg_value_loss = np.mean(self.training_stats['value_losses'][-100:]) if self.training_stats['value_losses'] else 0
+
+                # Calculate expectancy from recent rewards
+                recent_rewards = self.training_stats['rewards'][-100:] if self.training_stats['rewards'] else []
+                if recent_rewards:
+                    wins = [r for r in recent_rewards if r > 0]
+                    losses = [r for r in recent_rewards if r < 0]
+                    win_rate = len(wins) / len(recent_rewards) if recent_rewards else 0
+                    avg_win = np.mean(wins) if wins else 0
+                    avg_loss_val = abs(np.mean(losses)) if losses else 0
+                    expectancy = (win_rate * avg_win) - ((1 - win_rate) * avg_loss_val)
+
+                    # Track stats
+                    self.training_stats['expectancies'].append(expectancy)
+                    self.training_stats['win_rates'].append(win_rate)
+                else:
+                    expectancy = 0
+                    win_rate = 0
 
                 logger.info(
                     f"Episode {episode:,} | "
                     f"Steps {self.total_steps:,} | "
                     f"EPS: {eps:.1f} | "
                     f"Loss: {avg_loss:.4f} | "
-                    f"Policy: {avg_policy_loss:.4f} | "
-                    f"Value: {avg_value_loss:.4f}"
+                    f"Expectancy: {expectancy:+.4f} | "
+                    f"WinRate: {win_rate:.1%}"
                 )
 
             # Save checkpoint
