@@ -20,7 +20,7 @@ sys.path.append('/workspace')
 
 from micro.live.micro_feature_builder import MicroFeatureBuilder
 from micro.models.micro_networks import MicroStochasticMuZero
-from micro.training.mcts_micro import MCTS
+from micro.training.stochastic_mcts import StochasticMCTS
 
 logging.basicConfig(
     level=logging.INFO,
@@ -66,11 +66,13 @@ class MicroLiveTrader:
             raise RuntimeError("Failed to load model")
 
         # Initialize MCTS
-        self.mcts = MCTS(
+        self.mcts = StochasticMCTS(
             model=self.model,
-            num_actions=4,
+            num_simulations=10,  # Fewer for real-time
             discount=0.997,
-            num_simulations=10  # Fewer for real-time
+            depth_limit=3,
+            dirichlet_alpha=1.0,
+            exploration_fraction=0.25
         )
 
         # Initialize feature builder with proper warmup
@@ -153,7 +155,7 @@ class MicroLiveTrader:
                 lag_window=32,
                 hidden_dim=256,
                 action_dim=4,
-                z_dim=16,
+                num_outcomes=3,  # UP, NEUTRAL, DOWN
                 support_size=300
             ).to(self.device)
 
@@ -309,8 +311,8 @@ class MicroLiveTrader:
         with torch.no_grad():
             mcts_result = self.mcts.run(
                 observation,
-                add_exploration_noise=False,
-                temperature=0  # Deterministic for live trading
+                temperature=0,  # Deterministic for live trading
+                add_noise=False
             )
 
         action = mcts_result['action']

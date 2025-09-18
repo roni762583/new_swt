@@ -34,7 +34,7 @@ class BestCheckpointWatcher:
         self,
         checkpoint_dir: str = "/workspace/micro/checkpoints",
         results_dir: str = "/workspace/micro/validation_results",
-        data_path: str = "/workspace/data/micro_features_GBPJPY.db",
+        data_path: str = "/workspace/data/micro_features.duckdb",
         check_interval: int = 60
     ):
         self.checkpoint_dir = checkpoint_dir
@@ -112,8 +112,14 @@ class BestCheckpointWatcher:
                 support_size=300
             ).to(self.device)
 
-            # Load weights
-            model.load_state_dict(checkpoint['model_state_dict'])
+            # Load weights - handle both old and new checkpoint formats
+            if 'model_state_dict' in checkpoint:
+                model.load_state_dict(checkpoint['model_state_dict'])
+            elif 'model_state' in checkpoint:
+                model.set_weights(checkpoint['model_state'])
+            else:
+                logger.error("No model weights found in checkpoint")
+                return
             model.eval()
 
             # Run validation episodes
