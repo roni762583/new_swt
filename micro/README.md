@@ -342,11 +342,13 @@ micro-training:
   volumes:
     - ./micro:/workspace/micro
     - ./data:/workspace/data
+    - ./micro/cache:/workspace/micro/cache
+    - ./micro/buffer:/workspace/micro/buffer
   environment:
     - PYTHONUNBUFFERED=1
     - CUDA_VISIBLE_DEVICES=""  # Force CPU
-  command: python micro/training/train_micro_muzero.py
-  mem_limit: 6g
+  command: python micro/training/train_micro_muzero_fixed.py  # FIXED VERSION
+  mem_limit: 8g
   mem_reservation: 4g
   cpus: "4.0"
   restart: unless-stopped
@@ -445,11 +447,15 @@ micro/
 │   └── tcn_block.py             # TCN implementation
 │
 ├── training/
-│   ├── train_micro_muzero.py    # Main training loop (1469 lines)
-│   ├── stochastic_mcts.py       # Stochastic MCTS with chance nodes
-│   ├── mcts_micro.py            # Legacy deterministic MCTS
-│   ├── session_queue_manager.py # Session-based data loading
-│   └── parallel_mcts.py         # Parallel MCTS (unused)
+│   ├── train_micro_muzero_fixed.py # FIXED training with proper episodes
+│   ├── train_micro_muzero.py       # OLD BROKEN VERSION (do not use)
+│   ├── episode_runner.py           # Runs full 360-bar episodes
+│   ├── parallel_episode_collector.py # Multi-worker episode collection
+│   ├── checkpoint_manager.py       # Checkpoint cleanup utilities
+│   ├── training_monitor.py         # Real-time training monitoring
+│   ├── stochastic_mcts.py         # Stochastic MCTS with chance nodes
+│   ├── mcts_micro.py              # Legacy deterministic MCTS
+│   └── session_queue_manager.py   # Session-based data loading
 │
 ├── validation/
 │   ├── validate_micro_muzero.py # Validation script
@@ -460,6 +466,7 @@ micro/
 │   └── micro_feature_builder.py # Real-time feature construction
 │
 ├── utils/
+│   ├── session_index_calculator.py  # Pre-calculates valid session indices
 │   ├── market_outcome_calculator.py # Outcome classification
 │   └── feature_engineering.py      # Feature computation
 │
@@ -545,6 +552,18 @@ TD-error priority removed in favor of simple quota-based balancing
 
 ## 🔄 Version Control
 
+### v2.2.0 - Episode Collection Fix (September 18, 2025)
+- **CRITICAL FIX**: Training was completely broken - only collecting single fake experiences
+- Implemented proper 360-bar (6-hour) sequential episode collection
+- Added SessionIndexCalculator for pre-calculating valid session indices
+- Created EpisodeRunner for full episode execution with MCTS
+- Added ParallelEpisodeCollector for multi-worker collection
+- Implemented checkpoint management (keeps last 2 + best + latest)
+- Fixed validation watcher database path issues
+- Auto-resume from latest checkpoint on restart
+- Temperature decay: 10.0 → 1.0 over 50k episodes
+- Fixed learning rate: 0.002 (no decay)
+
 ### v2.0.0 - Stochastic Implementation (September 2025)
 - Added OutcomeProbabilityNetwork
 - Modified DynamicsNetwork to condition on outcomes
@@ -565,26 +584,31 @@ TD-error priority removed in favor of simple quota-based balancing
 
 ---
 
-## 📊 Current Training Status (LIVE)
+## 📊 Current Training Status (FIXED v2.2.0)
 
-### Active Training Run
-- **Current Episode**: 1,200+ and climbing
-- **Expectancy**: -0.30 pips (improving from -0.45)
-- **Win Rate**: 31% (improving from 21%)
-- **Loss**: 4.89 (decreasing from 5.16)
-- **Episodes Per Second**: ~0.6
-- **Hold-Only Collapse**: NOT OCCURRING ✅
+### Episode Collection Fix Applied
+- **Previous Issue**: Training was completely broken - only collecting single fake experiences
+- **Solution**: Implemented proper 360-bar sequential episode collection
+- **Status**: System now correctly runs full 6-hour trading episodes
+- **Session Validation**: Pre-calculated indices avoid gaps and weekends
+- **Collection Speed**: ~4 episodes/minute with 4 workers
+- **Hold-Only Collapse**: Successfully prevented ✅
 
-### Performance Trajectory
+### Training Configuration
 ```
-Episode 800:  Expectancy: -0.296, Win Rate: 27%
-Episode 900:  Expectancy: -0.398, Win Rate: 26%
-Episode 1000: Expectancy: -0.451, Win Rate: 21%
-Episode 1100: Expectancy: -0.181, Win Rate: 29%
-Episode 1200: Expectancy: -0.307, Win Rate: 31%
+Episodes: 360 bars (6 hours) per episode
+Temperature: 10.0 → 1.0 over 50k episodes
+Learning Rate: 0.002 (fixed, no decay)
+Checkpoint: Every 50 episodes
+Buffer: 100-10000 episodes with 30% trade quota
+Workers: 4 parallel collectors
 ```
 
-The model is learning and showing improvement cycles, not collapsed behavior.
+### Expected Training Timeline
+- **Phase 1 (0-1k episodes)**: High exploration, negative expectancy
+- **Phase 2 (1k-10k episodes)**: Strategy emergence, improving metrics
+- **Phase 3 (10k-50k episodes)**: Temperature decay, refinement
+- **Phase 4 (50k+ episodes)**: Low exploration, stable performance
 
 ---
 
@@ -698,7 +722,7 @@ This system follows STRICT PRODUCTION REQUIREMENTS:
 
 ---
 
-**Documentation Version**: 2.1.0
-**Last Updated**: September 18, 2025, 19:45 EST
-**Verified Against**: Live training run
+**Documentation Version**: 2.2.0
+**Last Updated**: September 18, 2025, 22:00 EST
+**Verified Against**: Fixed episode collection system
 **Author**: Technical Documentation Team

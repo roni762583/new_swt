@@ -17,7 +17,9 @@ services:
       - ./data:/workspace/data:ro
       - ./micro/checkpoints:/workspace/micro/checkpoints
       - ./micro/logs:/workspace/micro/logs
-    command: python3 /workspace/micro/training/train_micro_muzero.py
+      - ./micro/buffer:/workspace/micro/buffer
+      - ./micro/cache:/workspace/micro/cache
+    command: python3 /workspace/micro/training/train_micro_muzero_fixed.py
     networks:
       - micro-network
     deploy:
