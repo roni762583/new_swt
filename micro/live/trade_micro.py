@@ -36,7 +36,8 @@ class MicroLiveTrader:
         self,
         checkpoint_path: str = None,
         instrument: str = "GBP_JPY",
-        max_position_size: int = 1
+        max_position_size: int = 1,
+        wait_for_checkpoint: bool = True
         # REMOVED is_demo parameter - ALWAYS LIVE TRADING
     ):
         """
@@ -46,10 +47,11 @@ class MicroLiveTrader:
             checkpoint_path: Path to model checkpoint (None for auto-select best)
             instrument: Trading instrument
             max_position_size: Maximum position size
+            wait_for_checkpoint: If True, wait for checkpoint to exist
         """
         # Auto-select best checkpoint if not specified
         if checkpoint_path is None:
-            checkpoint_path = self._find_best_checkpoint()
+            checkpoint_path = self._find_best_checkpoint(wait_for_checkpoint)
 
         self.checkpoint_path = checkpoint_path
         self.instrument = instrument
@@ -63,29 +65,14 @@ class MicroLiveTrader:
         # Load model
         self.model = self.load_model()
         if self.model is None:
-            raise RuntimeError("Failed to load model")
+            if wait_for_checkpoint:
+                logger.info("No checkpoint available yet, waiting...")
+                self._wait_for_checkpoint()
+            else:
+                raise RuntimeError("Failed to load model")
 
-        # Initialize MCTS
-        self.mcts = StochasticMCTS(
-            model=self.model,
-            num_simulations=10,  # Fewer for real-time
-            discount=0.997,
-            depth_limit=3,
-            dirichlet_alpha=1.0,
-            exploration_fraction=0.25
-        )
-
-        # Initialize feature builder with proper warmup
-        self.feature_builder = MicroFeatureBuilder(
-            instrument=instrument,
-            lag_window=32,
-            warmup_bars=100  # Need sufficient history for indicators
-        )
-
-        # Initialize with historical data to avoid NaNs
-        if not self.feature_builder.initialize_from_history():
-            logger.error("Failed to initialize feature builder with historical data")
-            raise RuntimeError("Cannot start without proper historical data")
+        # Initialize components after model is loaded
+        self._initialize_components()
 
         # Position tracking
         self.position = {
@@ -121,7 +108,7 @@ class MicroLiveTrader:
         logger.info(f"  ⚠️ LIVE TRADING MODE: ACTIVE ⚠️")  # Hard-coded live status
         logger.info(f"  Device: {self.device}")
 
-    def _find_best_checkpoint(self) -> str:
+    def _find_best_checkpoint(self, wait: bool = True) -> str:
         """Find the best checkpoint based on validation results or use specific checkpoint."""
         # Check if we want to use specific checkpoint (Episode 3400)
         specific_checkpoint = "/workspace/micro/checkpoints/micro_checkpoint_ep003400.pth"
@@ -135,10 +122,79 @@ class MicroLiveTrader:
             logger.info(f"Using best checkpoint")
             return best_path
 
-        # Fallback to latest
+        # Try latest
         latest_path = "/workspace/micro/checkpoints/latest.pth"
-        logger.info(f"Using latest checkpoint as fallback")
+        if os.path.exists(latest_path):
+            logger.info(f"Using latest checkpoint")
+            return latest_path
+
+        # If nothing exists and wait=True, return best_path to wait for
+        if wait:
+            logger.info(f"Will wait for checkpoint: {best_path}")
+            return best_path
+
+        # Otherwise return latest as fallback
+        logger.info(f"No checkpoints exist, will wait for: {latest_path}")
         return latest_path
+
+    def _initialize_components(self):
+        """Initialize MCTS and feature builder after model is loaded."""
+        # Initialize MCTS
+        self.mcts = StochasticMCTS(
+            model=self.model,
+            num_simulations=10,  # Fewer for real-time
+            discount=0.997,
+            depth_limit=3,
+            dirichlet_alpha=1.0,
+            exploration_fraction=0.25
+        )
+
+        # Initialize feature builder with proper warmup
+        self.feature_builder = MicroFeatureBuilder(
+            instrument=self.instrument,
+            lag_window=32,
+            warmup_bars=100  # Need sufficient history for indicators
+        )
+
+        # Initialize with historical data to avoid NaNs
+        if not self.feature_builder.initialize_from_history():
+            logger.error("Failed to initialize feature builder with historical data")
+            raise RuntimeError("Cannot start without proper historical data")
+
+    def _wait_for_checkpoint(self):
+        """Wait for checkpoint file to exist."""
+        wait_interval = 60  # Check every minute
+        checks = 0
+
+        logger.info(f"Waiting for checkpoint: {self.checkpoint_path}")
+        logger.info("Training container should create checkpoints every 50 episodes")
+
+        while not os.path.exists(self.checkpoint_path):
+            checks += 1
+            logger.info(f"Check {checks}: No checkpoint yet, waiting {wait_interval}s...")
+            time.sleep(wait_interval)
+
+            # Also check for any checkpoint files
+            checkpoint_dir = "/workspace/micro/checkpoints"
+            if os.path.exists(checkpoint_dir):
+                files = [f for f in os.listdir(checkpoint_dir) if f.endswith('.pth')]
+                if files:
+                    logger.info(f"Found checkpoints: {files}")
+                    # Try loading again
+                    self.checkpoint_path = self._find_best_checkpoint(wait=False)
+                    self.model = self.load_model()
+                    if self.model is not None:
+                        logger.info("Successfully loaded checkpoint!")
+                        self._initialize_components()  # Initialize after loading
+                        return
+
+        # Checkpoint now exists, try loading
+        self.model = self.load_model()
+        if self.model is not None:
+            logger.info("Successfully loaded checkpoint!")
+            self._initialize_components()  # Initialize after loading
+        else:
+            raise RuntimeError(f"Checkpoint exists but failed to load: {self.checkpoint_path}")
 
     def load_model(self) -> Optional[MicroStochasticMuZero]:
         """Load model from checkpoint."""
@@ -417,7 +473,8 @@ if __name__ == "__main__":
 
     trader = MicroLiveTrader(
         checkpoint_path=checkpoint_path,
-        instrument=args.instrument
+        instrument=args.instrument,
+        wait_for_checkpoint=True  # Wait patiently for checkpoint
         # NO is_demo parameter - PERMANENTLY LIVE TRADING
     )
 

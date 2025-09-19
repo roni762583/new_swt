@@ -44,37 +44,45 @@ class SessionIndexCalculator:
         Returns:
             Dictionary with 'train', 'val', 'test' keys containing valid indices
         """
-        logger.info("Loading data from database...")
+        logger.info("HYBRID: Quick initialization for immediate training...")
 
-        # Load all timestamps and indices
-        query = """
-        SELECT bar_index, timestamp, close
-        FROM micro_features
-        ORDER BY bar_index
-        """
-        df = self.conn.execute(query).fetchdf()
-
-        logger.info(f"Loaded {len(df)} bars")
-
-        # Convert timestamps
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        # Get total count WITHOUT loading all data
+        total_bars = self.conn.execute("SELECT COUNT(*) FROM micro_features").fetchone()[0]
+        logger.info(f"Total bars: {total_bars}")
 
         # Calculate data splits (70/15/15)
-        total_bars = len(df)
         train_end = int(total_bars * 0.7)
         val_end = int(total_bars * 0.85)
 
         logger.info(f"Data splits - Train: 0-{train_end}, Val: {train_end}-{val_end}, Test: {val_end}-{total_bars}")
 
-        # Find all gaps and weekends
-        gaps_and_breaks = self._find_gaps_and_breaks(df)
+        # SKIP gap detection for now - will validate on demand
 
-        # Calculate valid indices for each split
+        # HYBRID: Start with minimal valid sessions for immediate training
+        # More will be discovered dynamically during training
+        initial_sessions = 20  # Start with just 20 sessions per split
+
+        # Generate random initial indices
+        import random
+        random.seed(42)  # For reproducibility
+
         valid_indices = {
-            'train': self._find_valid_indices_in_range(df, 0, train_end, gaps_and_breaks),
-            'val': self._find_valid_indices_in_range(df, train_end, val_end, gaps_and_breaks),
-            'test': self._find_valid_indices_in_range(df, val_end, total_bars, gaps_and_breaks)
+            'train': sorted(random.sample(range(0, train_end - self.session_length),
+                                        min(initial_sessions, train_end - self.session_length))),
+            'val': sorted(random.sample(range(train_end, val_end - self.session_length),
+                                      min(initial_sessions, val_end - train_end - self.session_length))),
+            'test': sorted(random.sample(range(val_end, total_bars - self.session_length),
+                                       min(initial_sessions, total_bars - val_end - self.session_length))),
+            'good_sessions': set(),  # Validated sessions (will grow during training)
+            'bad_sessions': set(),   # Invalid sessions to avoid
+            'total_bars': total_bars,
+            'train_range': (0, train_end),
+            'val_range': (train_end, val_end),
+            'test_range': (val_end, total_bars)
         }
+
+        logger.info(f"HYBRID initialization complete - Starting with {initial_sessions} sessions per split")
+        logger.info("More sessions will be discovered during training")
 
         # Add metadata
         valid_indices['metadata'] = {
@@ -84,10 +92,47 @@ class SessionIndexCalculator:
             'train_end': train_end,
             'val_end': val_end,
             'calculation_time': datetime.now().isoformat(),
-            'gaps_found': len(gaps_and_breaks)
+            'gaps_found': 0,  # Will be updated during discovery
+            'hybrid_mode': True
         }
 
         return valid_indices
+
+    def validate_session(self, start_idx: int) -> bool:
+        """
+        Quickly validate a single session for gaps/weekends.
+        Used by hybrid approach during training.
+        """
+        try:
+            # Query just the session data
+            query = f"""
+            SELECT timestamp
+            FROM micro_features
+            WHERE bar_index >= {start_idx} AND bar_index < {start_idx + self.session_length}
+            ORDER BY bar_index
+            """
+            session_df = self.conn.execute(query).fetchdf()
+
+            if len(session_df) != self.session_length:
+                return False
+
+            # Check for gaps > max_gap_minutes
+            timestamps = pd.to_datetime(session_df['timestamp'])
+            time_diffs = timestamps.diff().dt.total_seconds() / 60
+
+            if time_diffs[1:].max() > self.max_gap_minutes:
+                return False
+
+            # Check for weekend
+            if any(ts.weekday() >= 5 for ts in timestamps):
+                # Allow if session just touches weekend edge
+                weekend_bars = sum(1 for ts in timestamps if ts.weekday() >= 5)
+                if weekend_bars > 10:  # More than 10 weekend bars = invalid
+                    return False
+
+            return True
+        except:
+            return False
 
     def _find_gaps_and_breaks(self, df: pd.DataFrame) -> List[Tuple[int, int, str]]:
         """

@@ -57,12 +57,14 @@ class EpisodeRunner:
         mcts,
         db_path: str = "/workspace/data/micro_features.duckdb",
         session_indices_path: str = "/workspace/micro/cache/valid_session_indices.pkl",
-        device: str = "cpu"
+        device: str = "cpu",
+        use_amddp10: bool = True  # Use enhanced AMDDP10 reward system
     ):
         self.model = model
         self.mcts = mcts
         self.device = torch.device(device)
         self.conn = duckdb.connect(db_path, read_only=True)
+        self.use_amddp10 = use_amddp10
 
         # Load pre-calculated valid session indices
         self.session_indices = self._load_session_indices(session_indices_path)
@@ -180,7 +182,7 @@ class EpisodeRunner:
             # Execute action and calculate reward
             reward, position, entry_price, entry_bar, trade_result = self._execute_action(
                 action, position, entry_price, entry_bar,
-                current_price, bar, session_data
+                current_price, bar, session_data, max_dd, bar - entry_bar if entry_bar >= 0 else 0
             )
 
             # Track trade results
@@ -223,9 +225,16 @@ class EpisodeRunner:
         if position != 0:
             final_price = session_data.iloc[-1]['close']
             close_pnl = self._calculate_current_pnl(position, entry_price, final_price)
-            amddp1_reward = self._calculate_amddp1(close_pnl)
-            experiences[-1].reward = amddp1_reward
-            total_reward = total_reward - experiences[-1].reward + amddp1_reward
+            bars_held = 360 - entry_bar if entry_bar >= 0 else 0
+
+            if self.use_amddp10:
+                final_reward = self._calculate_amddp10(close_pnl, max_dd, bars_held, position)
+            else:
+                final_reward = self._calculate_amddp1(close_pnl)
+
+            old_reward = experiences[-1].reward if experiences else 0
+            experiences[-1].reward = final_reward
+            total_reward = total_reward - old_reward + final_reward
             num_trades += 1
             total_pnl += close_pnl
             if close_pnl > 0:
@@ -247,13 +256,33 @@ class EpisodeRunner:
 
     def _load_session_data(self, start_idx: int, end_idx: int) -> pd.DataFrame:
         """Load data for a session including lookback period."""
+        # Technical features (first 9) have lag suffixes in database
+        # Position features (last 6) don't have suffixes
+        db_columns = []
+
+        # Technical and time features with _0 suffix for current bar
+        technical_and_time_features = self.feature_columns[:9]  # First 9 features
+        for feat in technical_and_time_features:
+            db_columns.append(f"{feat}_0")
+
+        # Position features without suffix
+        position_features = self.feature_columns[9:]  # Last 6 features
+        db_columns.extend(position_features)
+
         query = f"""
-        SELECT bar_index, timestamp, close, volume, {', '.join(self.feature_columns[:9])}
+        SELECT bar_index, timestamp, close, {', '.join(db_columns)}
         FROM micro_features
         WHERE bar_index >= {start_idx} AND bar_index < {end_idx}
         ORDER BY bar_index
         """
-        return self.conn.execute(query).fetchdf()
+
+        df = self.conn.execute(query).fetchdf()
+
+        # Rename columns to remove _0 suffix from technical/time features
+        rename_mapping = {f"{feat}_0": feat for feat in technical_and_time_features}
+        df = df.rename(columns=rename_mapping)
+
+        return df
 
     def _create_observation(
         self, data: pd.DataFrame, current_bar: int,
@@ -301,7 +330,7 @@ class EpisodeRunner:
     def _execute_action(
         self, action: int, position: int, entry_price: float,
         entry_bar: int, current_price: float, current_bar: int,
-        session_data: pd.DataFrame
+        session_data: pd.DataFrame, max_dd: float = 0.0, bars_held: int = 0
     ) -> Tuple[float, int, float, int, Optional[float]]:
         """
         Execute action and return (reward, new_position, new_entry_price, new_entry_bar, trade_pnl).
@@ -324,7 +353,10 @@ class EpisodeRunner:
             elif position == -1:
                 # Close short, open long
                 trade_pnl = (entry_price - current_price) * 100 - 4
-                reward = self._calculate_amddp1(trade_pnl)
+                if self.use_amddp10:
+                    reward = self._calculate_amddp10(trade_pnl, max_dd, bars_held, position)
+                else:
+                    reward = self._calculate_amddp1(trade_pnl)
                 position = 1
                 entry_price = current_price
                 entry_bar = current_bar
@@ -340,7 +372,10 @@ class EpisodeRunner:
             elif position == 1:
                 # Close long, open short
                 trade_pnl = (current_price - entry_price) * 100 - 4
-                reward = self._calculate_amddp1(trade_pnl)
+                if self.use_amddp10:
+                    reward = self._calculate_amddp10(trade_pnl, max_dd, bars_held, position)
+                else:
+                    reward = self._calculate_amddp1(trade_pnl)
                 position = -1
                 entry_price = current_price
                 entry_bar = current_bar
@@ -350,7 +385,10 @@ class EpisodeRunner:
         elif action == 3:  # CLOSE
             if position != 0:
                 trade_pnl = self._calculate_current_pnl(position, entry_price, current_price)
-                reward = self._calculate_amddp1(trade_pnl)
+                if self.use_amddp10:
+                    reward = self._calculate_amddp10(trade_pnl, max_dd, bars_held, position)
+                else:
+                    reward = self._calculate_amddp1(trade_pnl)
                 position = 0
                 entry_price = 0.0
                 entry_bar = -1
@@ -409,6 +447,64 @@ class EpisodeRunner:
                 return -2.0 - (pnl_abs - 10) * 0.05
             else:
                 return -3.0 - np.tanh((pnl_abs - 30) / 30)
+
+    def _calculate_amddp10(self, pnl_pips: float, max_dd: float = 0.0,
+                           bars_held: int = 0, position: int = 0) -> float:
+        """AMDDP10 enhanced reward with multiple factors.
+
+        Incorporates:
+        - Base P&L reward/penalty (asymmetric)
+        - Drawdown penalty
+        - Time decay penalty for long holds
+        - Bonus for quick profitable exits
+        - Position management incentives
+        """
+        # Base reward from P&L
+        if pnl_pips > 0:
+            # Profitable trade
+            if pnl_pips < 5:
+                base_reward = 0.5 + pnl_pips * 0.1  # Small win
+            elif pnl_pips < 15:
+                base_reward = 1.0 + pnl_pips * 0.08  # Medium win
+            elif pnl_pips < 30:
+                base_reward = 2.2 + pnl_pips * 0.05  # Good win
+            elif pnl_pips < 50:
+                base_reward = 3.5 + pnl_pips * 0.03  # Great win
+            else:
+                base_reward = 5.0 + np.tanh((pnl_pips - 50) / 100) * 2  # Exceptional
+
+            # Quick profit bonus (reward fast profitable exits)
+            if bars_held > 0 and bars_held < 30:
+                speed_bonus = (30 - bars_held) / 30 * 0.5
+                base_reward += speed_bonus
+
+        else:
+            # Losing trade - heavier penalties
+            pnl_abs = abs(pnl_pips)
+            if pnl_abs < 5:
+                base_reward = -1.0 - pnl_abs * 0.2  # Small loss
+            elif pnl_abs < 15:
+                base_reward = -2.0 - pnl_abs * 0.15  # Medium loss
+            elif pnl_abs < 30:
+                base_reward = -4.25 - pnl_abs * 0.1  # Large loss
+            else:
+                base_reward = -7.0 - np.tanh((pnl_abs - 30) / 50) * 3  # Severe loss
+
+        # Drawdown penalty (encourage tight risk management)
+        if max_dd > 0:
+            dd_penalty = np.tanh(max_dd / 20) * 2.0  # Up to -2.0 penalty
+            base_reward -= dd_penalty
+
+        # Time decay penalty for holding too long
+        if bars_held > 60:  # Positions held over 1 hour
+            time_penalty = np.tanh((bars_held - 60) / 120) * 1.0
+            base_reward -= time_penalty
+
+        # Flat position bonus (encourage taking breaks)
+        if position == 0 and pnl_pips == 0:
+            base_reward += 0.1  # Small reward for being patient
+
+        return base_reward
 
 
 def test_episode_runner():

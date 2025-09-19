@@ -471,6 +471,10 @@ class MicroStochasticMuZero(nn.Module):
     ):
         super().__init__()
 
+        # Store dimensions
+        self.action_dim = action_dim
+        self.num_outcomes = num_outcomes
+
         # Initialize all networks
         self.representation = RepresentationNetwork(
             input_features=input_features,
@@ -607,6 +611,25 @@ class MicroStochasticMuZero(nn.Module):
             Afterstate (batch, 256)
         """
         return self.afterstate(hidden, action)
+
+    def outcome_probability(self, hidden: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+        """
+        Predict market outcome probabilities.
+
+        Args:
+            hidden: Current hidden state (batch, 256)
+            action: Action index (batch, 1) - will be converted to one-hot
+
+        Returns:
+            Outcome probabilities (batch, 3) for [UP, NEUTRAL, DOWN]
+        """
+        # Convert action index to one-hot if needed
+        if action.dim() == 2 and action.shape[1] == 1:
+            action = F.one_hot(action.squeeze(1), num_classes=self.action_dim).float()
+        elif action.dim() == 1:
+            action = F.one_hot(action, num_classes=self.action_dim).float()
+
+        return self.outcome_predictor(hidden, action)
 
     def randomize_weights(self):
         """Force complete weight re-initialization for fresh start."""

@@ -162,13 +162,14 @@ class EpisodeWorker(Process):
             **self.mcts_config
         )
 
-        # Create episode runner
+        # Create episode runner with AMDDP10 rewards
         self.runner = EpisodeRunner(
             model=self.model,
             mcts=self.mcts,
             db_path=self.db_path,
             session_indices_path=self.session_indices_path,
-            device=self.device
+            device=self.device,
+            use_amddp10=True  # Use enhanced reward system
         )
 
     def _collect_episode(self, job: CollectionJob) -> CollectionResult:

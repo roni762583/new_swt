@@ -123,6 +123,7 @@ class MicroMuZeroTrainer:
 
     def __init__(self, config: TrainingConfig):
         self.config = config
+        self.best_expectancy = -float('inf')  # Initialize for first checkpoint
 
         # Create directories
         os.makedirs(config.checkpoint_dir, exist_ok=True)
@@ -416,11 +417,20 @@ class MicroMuZeroTrainer:
             cleanup_old_checkpoints(self.config.checkpoint_dir, keep_recent=2)
 
         # Save best based on expectancy
-        if len(self.training_stats['expectancies']) > 100:
-            recent_expectancy = np.mean(self.training_stats['expectancies'][-100:])
-            if not hasattr(self, 'best_expectancy') or recent_expectancy > self.best_expectancy:
+        # Always save first checkpoint as best for testing
+        best_path = os.path.join(self.config.checkpoint_dir, 'best.pth')
+
+        if self.episode == 0 or self.episode == self.config.save_interval:
+            # First checkpoint - always save as best
+            torch.save(checkpoint, best_path)
+            logger.info(f"First checkpoint saved as best: {best_path}")
+            if len(self.training_stats['expectancies']) > 0:
+                self.best_expectancy = np.mean(self.training_stats['expectancies'][-min(100, len(self.training_stats['expectancies'])):])
+        elif len(self.training_stats['expectancies']) > 10:
+            # After first checkpoint, use running average
+            recent_expectancy = np.mean(self.training_stats['expectancies'][-min(100, len(self.training_stats['expectancies'])):])
+            if recent_expectancy > self.best_expectancy:
                 self.best_expectancy = recent_expectancy
-                best_path = os.path.join(self.config.checkpoint_dir, 'best.pth')
                 torch.save(checkpoint, best_path)
                 logger.info(f"Best checkpoint saved: {best_path} (expectancy: {recent_expectancy:.4f})")
 

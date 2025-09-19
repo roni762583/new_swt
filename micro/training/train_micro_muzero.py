@@ -1,39 +1,32 @@
 #!/usr/bin/env python3
 """
-Training script for Micro Stochastic MuZero.
-
-Implements the complete training loop with experience replay.
+Fixed training script for Micro Stochastic MuZero with proper episode collection.
+Runs full 360-bar episodes instead of single experiences.
 """
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
-import math
 import numpy as np
-import pandas as pd
-import duckdb
-from collections import deque
 import time
 import os
 import json
-from typing import Dict, List, Tuple, Optional
-from dataclasses import dataclass, asdict, field
-import heapq
 import logging
-from datetime import datetime
-import multiprocessing as mp
-from multiprocessing import Queue, Process, Manager
-import queue as queue_module
-import threading
+from typing import Dict, List, Tuple, Optional
+from dataclasses import dataclass, asdict
+from pathlib import Path
 
 # Add parent directory to path
 import sys
 sys.path.append('/workspace')
 
 from micro.models.micro_networks import MicroStochasticMuZero
-from micro.training.stochastic_mcts import StochasticMCTS, MarketOutcome
-from micro.training.session_queue_manager import SessionQueueManager, ValidSession
+from micro.training.stochastic_mcts import StochasticMCTS
+from micro.training.parallel_episode_collector import ParallelEpisodeCollector
+from micro.training.episode_runner import Episode
+from micro.utils.session_index_calculator import SessionIndexCalculator
+from micro.training.checkpoint_manager import cleanup_old_checkpoints
 
 logging.basicConfig(
     level=logging.INFO,
@@ -53,770 +46,176 @@ class TrainingConfig:
     num_outcomes: int = 3  # UP, NEUTRAL, DOWN
     support_size: int = 300
 
-    # Training
-    batch_size: int = 64
-    # Learning rate scheduling
-    learning_rate: float = 2e-3  # Fixed at 0.002 as requested
-    initial_lr: float = 2e-3  # Fixed learning rate - NO DECAY
-    min_lr: float = 2e-3          # Same as initial - NO DECAY
-    lr_decay_episodes: int = 1000000  # Effectively no decay
-
-    # Exploration decay (critical for escaping Hold-only behavior)
-    initial_temperature: float = 10.0  # EXTREME exploration to force action diversity
-    final_temperature: float = 1.0     # Standard exploration later
-    temperature_decay_episodes: int = 50000  # Faster decay once diversity achieved
-    weight_decay: float = 1e-5
-    gradient_clip: float = 1.0  # Even more aggressive clipping for stability
-
-    # Replay buffer
-    buffer_size: int = 100000
-    min_buffer_size: int = 100  # Slightly larger for more diverse initial experiences
-
-    # MuZero
-    num_unroll_steps: int = 5
-    td_steps: int = 10
+    # MCTS
+    num_simulations: int = 25
     discount: float = 0.997
 
-    # MCTS - BALANCED FOR EXPLORATION
-    num_simulations: int = 15  # Balanced for speed and exploration
-    temperature: float = 2.0  # Higher MCTS temperature for more exploration
+    # Training
+    learning_rate: float = 0.002
+    weight_decay: float = 1e-5
+    batch_size: int = 64
+    gradient_clip: float = 1.0
+    buffer_size: int = 50000
+    min_buffer_size: int = 3600  # 10 episodes worth
 
-    # Multiprocessing
-    num_workers: int = 4  # Parallel session collectors
-    session_queue_size: int = 100  # Pre-validated sessions
+    # Episode collection
+    num_workers: int = 4
+    episodes_per_iteration: int = 2
 
-    # Training loop
-    num_episodes: int = 1000000
-    checkpoint_interval: int = 50  # Save every 50 episodes
-    log_interval: int = 100
+    # Temperature
+    initial_temperature: float = 10.0
+    final_temperature: float = 1.0
+    temperature_decay_episodes: float = 50000
 
     # Paths
-    data_path: str = os.environ.get("DATA_PATH", "/workspace/data/micro_features.duckdb")
-    checkpoint_dir: str = os.environ.get("CHECKPOINT_DIR", "/workspace/micro/checkpoints")
-    log_dir: str = os.environ.get("LOG_DIR", "/workspace/micro/logs")
+    data_path: str = "/workspace/data/micro_features.duckdb"
+    checkpoint_dir: str = "/workspace/micro/checkpoints"
+    log_dir: str = "/workspace/micro/logs"
+    cache_dir: str = "/workspace/micro/cache"
 
+    # Training schedule
+    num_episodes: int = 100000
+    save_interval: int = 50  # Save every 50 episodes
+    log_interval: int = 10
+    validation_interval: int = 100
 
-@dataclass
-class Trajectory:
-    """Trajectory segment for replay buffer."""
-    observations: np.ndarray  # (seq_len, lag_window, features)
-    actions: np.ndarray       # (seq_len,)
-    rewards: np.ndarray       # (seq_len,)
-    policies: np.ndarray      # (seq_len, action_dim)
-    values: np.ndarray        # (seq_len,)
-    td_errors: np.ndarray     # (seq_len,)
-    priority: float = 1.0
-    has_trade: bool = False
-
-    def __len__(self):
-        return len(self.actions)
 
 @dataclass
 class Experience:
-    """Single experience with market outcome."""
+    """Single experience for replay buffer."""
     observation: np.ndarray
     action: int
+    reward: float
     policy: np.ndarray
     value: float
-    reward: float
     done: bool
-    market_outcome: int = 1  # Default NEUTRAL
-    outcome_probs: Optional[np.ndarray] = None  # Predicted probabilities
-    td_error: float = 0.0
+    market_outcome: int
+    outcome_probs: np.ndarray
+    td_error: float = 0.0  # TD error for prioritization
+    priority: float = 1.0  # Sampling priority
+    visit_count: int = 0  # Number of times sampled
 
 
+class QualityExperienceBuffer:
+    """Enhanced replay buffer with TD error tracking and smart eviction."""
 
-class BalancedReplayBuffer:
-    """Simple balanced buffer with quota-based eviction (no PER)."""
-
-    def __init__(self, max_size: int = 10000, min_trade_fraction: float = 0.2,
-                 trajectory_length: int = 10):
+    def __init__(self, capacity: int = 50000, priority_alpha: float = 0.7, priority_beta: float = 0.5):
+        self.capacity = capacity
         self.buffer = []
-        self.max_size = max_size
-        self.min_trade_fraction = min_trade_fraction
-        self.trajectory_length = trajectory_length
-        self.current_trajectory = []  # Accumulate experiences for trajectory
+        self.position = 0
+        self.priority_alpha = priority_alpha  # How much to prioritize high TD error
+        self.priority_beta = priority_beta  # Importance sampling correction
+        self.max_priority = 1.0
+        self.trade_diversity_threshold = 0.3  # Ensure 30% have trades
 
     def add(self, experience: Experience):
-        """Add experience to current trajectory."""
-        self.current_trajectory.append(experience)
+        """Add experience to buffer with initial high priority."""
+        # New experiences get max priority to ensure they're trained on
+        experience.priority = self.max_priority
+        experience.visit_count = 0
 
-        # Create trajectory segment when we reach trajectory_length
-        if len(self.current_trajectory) >= self.trajectory_length:
-            self._create_trajectory_from_buffer()
-
-    def _create_trajectory_from_buffer(self):
-        """Convert accumulated experiences into a trajectory."""
-        if not self.current_trajectory:
-            return
-
-        # Extract data from experiences
-        observations = [exp.observation for exp in self.current_trajectory]
-        actions = [exp.action for exp in self.current_trajectory]
-        rewards = [exp.reward for exp in self.current_trajectory]
-        policies = [exp.policy for exp in self.current_trajectory]
-        values = [exp.value for exp in self.current_trajectory]
-        td_errors = [exp.td_error for exp in self.current_trajectory]
-
-        # Check if trajectory contains trades (Buy, Sell, Close)
-        has_trade = any(a in [1, 2, 3] for a in actions)
-
-        # Create trajectory (NO PRIORITY - uniform sampling)
-        trajectory = Trajectory(
-            observations=np.array(observations),
-            actions=np.array(actions),
-            rewards=np.array(rewards),
-            policies=np.array(policies),
-            values=np.array(values),
-            td_errors=np.array(td_errors),
-            priority=1.0,  # Uniform priority - no PER
-            has_trade=has_trade
-        )
-
-        self.buffer.append(trajectory)
-
-        # Clear current trajectory
-        self.current_trajectory = []
-
-        # Evict if needed
-        if len(self.buffer) > self.max_size:
-            self._evict()
-
-    def _evict(self):
-        """Quota-based eviction to maintain trade diversity."""
-        trade_trajs = [t for t in self.buffer if t.has_trade]
-        hold_trajs = [t for t in self.buffer if not t.has_trade]
-
-        trade_fraction = len(trade_trajs) / len(self.buffer) if self.buffer else 0
-
-        if trade_fraction < self.min_trade_fraction and hold_trajs:
-            # Too few trades - evict a random hold-only trajectory
-            victim = np.random.choice(hold_trajs)
+        if len(self.buffer) < self.capacity:
+            self.buffer.append(experience)
         else:
-            # Sufficient trades - evict random trajectory (FIFO-like)
-            victim = self.buffer[0]  # Simple FIFO eviction
+            # Smart eviction: prefer removing low-priority, high-visit experiences
+            eviction_scores = np.array([
+                exp.priority / (1 + exp.visit_count * 0.1) for exp in self.buffer
+            ])
+            evict_idx = np.argmin(eviction_scores)
+            self.buffer[evict_idx] = experience
 
-        self.buffer.remove(victim)
+    def sample(self, batch_size: int) -> Tuple[List[Experience], np.ndarray]:
+        """Sample batch with priority-based sampling and importance weights."""
+        if len(self.buffer) < batch_size:
+            indices = list(range(len(self.buffer)))
+            batch = self.buffer.copy()
+            weights = np.ones(len(self.buffer))
+        else:
+            # Calculate sampling probabilities
+            priorities = np.array([exp.priority for exp in self.buffer])
+            probs = priorities ** self.priority_alpha
+            probs = probs / probs.sum()
 
-    def sample_batch(self, batch_size: int) -> Dict:
-        """Sample batch of experiences for training."""
-        if not self.buffer:
-            return None
+            # Sample with priority
+            indices = np.random.choice(len(self.buffer), batch_size, p=probs, replace=False)
+            batch = [self.buffer[idx] for idx in indices]
 
-        # Sample trajectories
-        sampled_trajs = self.sample_trajectories(min(batch_size, len(self.buffer)))
+            # Calculate importance sampling weights
+            weights = (len(self.buffer) * probs[indices]) ** (-self.priority_beta)
+            weights = weights / weights.max()  # Normalize
 
-        # Extract random experiences from trajectories
-        all_observations = []
-        all_actions = []
-        all_rewards = []
-        all_policies = []
-        all_values = []
+            # Ensure trade diversity (at least 30% should have trades)
+            trade_experiences = [i for i, exp in enumerate(batch)
+                               if exp.action in [1, 2, 3]]  # BUY, SELL, CLOSE
+            if len(trade_experiences) < batch_size * self.trade_diversity_threshold:
+                # Add more trade experiences
+                trade_pool = [i for i, exp in enumerate(self.buffer)
+                            if exp.action in [1, 2, 3] and i not in indices]
+                if trade_pool:
+                    n_needed = int(batch_size * self.trade_diversity_threshold) - len(trade_experiences)
+                    n_replace = min(n_needed, len(trade_pool))
+                    replace_indices = np.random.choice(
+                        [i for i, exp in enumerate(batch) if exp.action == 0][:n_replace],
+                        n_replace, replace=False
+                    )
+                    new_trade_indices = np.random.choice(trade_pool, n_replace, replace=False)
+                    for i, new_idx in zip(replace_indices, new_trade_indices):
+                        batch[i] = self.buffer[new_idx]
+                        weights[i] = 1.0  # Reset weight for diversity samples
 
-        for traj in sampled_trajs:
-            if len(traj) > 0:
-                # Sample random index from trajectory
-                idx = np.random.randint(0, len(traj))
-                all_observations.append(traj.observations[idx])
-                all_actions.append(traj.actions[idx])
-                all_rewards.append(traj.rewards[idx])
-                all_policies.append(traj.policies[idx])
-                all_values.append(traj.values[idx])
+        # Update visit counts
+        for exp in batch:
+            exp.visit_count += 1
 
-        if not all_observations:
-            return None
+        return batch, weights
 
-        return {
-            'observations': np.array(all_observations),
-            'actions': np.array(all_actions),
-            'rewards': np.array(all_rewards),
-            'policies': np.array(all_policies),
-            'values': np.array(all_values)
-        }
+    def update_priorities(self, experiences: List[Experience], td_errors: np.ndarray):
+        """Update priorities based on TD errors."""
+        for exp, td_error in zip(experiences, td_errors):
+            exp.td_error = abs(td_error)
+            exp.priority = (abs(td_error) + 1e-6) ** self.priority_alpha
+            self.max_priority = max(self.max_priority, exp.priority)
 
-    def sample_trajectories(self, num_trajectories: int) -> List[Trajectory]:
-        """Uniform random sampling (no priority)."""
-        if len(self.buffer) <= num_trajectories:
-            return self.buffer.copy()
-
-        # Uniform random sampling
-        indices = np.random.choice(len(self.buffer), size=num_trajectories, replace=False)
-        return [self.buffer[i] for i in indices]
-
-    def get_stats(self) -> Dict:
-        """Get buffer statistics."""
-        if not self.buffer:
-            return {'total': 0, 'trade_fraction': 0}
-
-        trade_trajs = [t for t in self.buffer if t.has_trade]
-        return {
-            'total': len(self.buffer),
-            'trade_trajs': len(trade_trajs),
-            'hold_trajs': len(self.buffer) - len(trade_trajs),
-            'trade_fraction': len(trade_trajs) / len(self.buffer)
-        }
-
-    def __len__(self):
+    def size(self) -> int:
+        """Get current buffer size."""
         return len(self.buffer)
 
+    def get_stats(self) -> Dict[str, float]:
+        """Get buffer statistics."""
+        if not self.buffer:
+            return {}
 
-class DataLoader:
-    """Load micro features from DuckDB with train/validate/test split."""
-
-    def __init__(self, db_path: str, lag_window: int = 32,
-                 train_ratio: float = 0.7,
-                 val_ratio: float = 0.15,
-                 test_ratio: float = 0.15,
-                 session_length: int = 360,
-                 max_gap_minutes: int = 10):
-        self.conn = duckdb.connect(db_path, read_only=True)
-        self.lag_window = lag_window
-        self.session_length = session_length  # 360 minutes = 6 hours
-        self.max_gap_minutes = max_gap_minutes  # Max allowed gap between bars
-
-        # Get total rows
-        self.total_rows = self.conn.execute(
-            "SELECT COUNT(*) FROM micro_features"
-        ).fetchone()[0]
-
-        # Calculate data splits
-        self.train_end = int(self.total_rows * train_ratio)
-        self.val_end = int(self.total_rows * (train_ratio + val_ratio))
-
-        # Data ranges
-        self.train_range = (0, self.train_end)
-        self.val_range = (self.train_end, self.val_end)
-        self.test_range = (self.val_end, self.total_rows)
-
-        logger.info(f"DataLoader initialized with {self.total_rows:,} rows")
-        logger.info(f"  Train: rows 0-{self.train_end:,} ({train_ratio*100:.0f}%)")
-        logger.info(f"  Val: rows {self.train_end:,}-{self.val_end:,} ({val_ratio*100:.0f}%)")
-        logger.info(f"  Test: rows {self.val_end:,}-{self.total_rows:,} ({test_ratio*100:.0f}%)")
-        logger.info(f"  Session: {session_length}min, max gap {max_gap_minutes}min, weekend filtering ON")
-
-    def _validate_session(self, start_idx: int) -> Tuple[bool, Optional[str]]:
-        """
-        Validate a session starting at given index.
-
-        Checks:
-        - No gaps > max_gap_minutes
-        - No weekend hours (Friday 22:00 UTC to Sunday 22:00 UTC)
-        - No open positions at session end
-
-        Returns:
-            (is_valid, rejection_reason)
-        """
-        # Get session data with timestamps
-        query = f"""
-        SELECT timestamp, close, position_side
-        FROM micro_features
-        WHERE bar_index >= {start_idx}
-        AND bar_index < {start_idx + self.session_length}
-        ORDER BY bar_index
-        LIMIT {self.session_length}
-        """
-
-        rows = self.conn.execute(query).fetchall()
-
-        if len(rows) < self.session_length:
-            return False, "insufficient_data"
-
-        prev_time = None
-        has_open_position = False
-
-        for i, (timestamp_str, close, position_side) in enumerate(rows):
-            # Parse timestamp
-            if isinstance(timestamp_str, str):
-                timestamp = pd.to_datetime(timestamp_str)
-            else:
-                timestamp = timestamp_str
-
-            # Check weekend hours
-            weekday = timestamp.weekday()  # 0=Monday, 6=Sunday
-            hour = timestamp.hour
-
-            # Saturday is always closed
-            if weekday == 5:
-                return False, "weekend_saturday"
-
-            # Friday after 22:00 UTC
-            if weekday == 4 and hour >= 22:
-                return False, "friday_close"
-
-            # Sunday before 22:00 UTC
-            if weekday == 6 and hour < 22:
-                return False, "sunday_closed"
-
-            # Check gap between bars
-            if prev_time is not None:
-                gap_seconds = (timestamp - prev_time).total_seconds()
-                gap_minutes = gap_seconds / 60.0
-
-                if gap_minutes > self.max_gap_minutes:
-                    return False, f"gap_{gap_minutes:.1f}min"
-
-            # Check if position is open at end
-            if i == len(rows) - 1:  # Last bar
-                if position_side != 0:  # Position still open
-                    has_open_position = True
-
-            prev_time = timestamp
-
-        # FIXED: Don't reject sessions with open positions
-        # Sessions with open positions are valid for training
-        # We only warn about them for debugging
-        if has_open_position:
-            logger.debug(f"Session ends with open position (this is OK for training)")
-
-        # Always return True - all sessions are valid
-
-        return True, None
-
-    def get_session_from_queue(self, session: ValidSession) -> Dict:
-        """
-        Get data for a pre-validated session from queue.
-
-        Args:
-            session: ValidSession from queue
-
-        Returns:
-            Dictionary with features and metadata
-        """
-        # Fetch window data
-        query = f"""
-        SELECT *
-        FROM micro_features
-        WHERE bar_index >= {session.start_idx}
-        ORDER BY bar_index
-        LIMIT 1000
-        """
-
-        data = self.conn.execute(query).fetchdf()
-
-        # Extract features
-        feature_cols = []
-
-        # Technical features with lags
-        technical_features = [
-            'position_in_range_60',
-            'min_max_scaled_momentum_60',
-            'min_max_scaled_rolling_range',
-            'min_max_scaled_momentum_5',
-            'price_change_pips'
-        ]
-
-        for feat in technical_features:
-            for lag in range(self.lag_window):
-                col_name = f"{feat}_{lag}"
-                if col_name in data.columns:
-                    feature_cols.append(col_name)
-
-        # Cyclical features with lags
-        cyclical_features = [
-            'dow_cos_final',
-            'dow_sin_final',
-            'hour_cos_final',
-            'hour_sin_final'
-        ]
-
-        for feat in cyclical_features:
-            for lag in range(self.lag_window):
-                col_name = f"{feat}_{lag}"
-                if col_name in data.columns:
-                    feature_cols.append(col_name)
-
-        # Position features (current only)
-        position_features = [
-            'position_side',
-            'position_pips',
-            'bars_since_entry',
-            'pips_from_peak',
-            'max_drawdown_pips',
-            'accumulated_dd'
-        ]
-
-        for feat in position_features:
-            if feat in data.columns:
-                feature_cols.append(feat)
-
-        # Extract feature matrix
-        features = data[feature_cols].values
+        td_errors = [exp.td_error for exp in self.buffer]
+        priorities = [exp.priority for exp in self.buffer]
+        visit_counts = [exp.visit_count for exp in self.buffer]
+        action_counts = {i: sum(1 for exp in self.buffer if exp.action == i) for i in range(4)}
 
         return {
-            'features': features,
-            'prices': data['close'].values,
-            'timestamps': data['timestamp'].values,
-            'start_idx': session.start_idx,
-            'split': session.split,
-            'quality_score': session.quality_score
+            'mean_td_error': np.mean(td_errors),
+            'max_td_error': np.max(td_errors),
+            'mean_priority': np.mean(priorities),
+            'mean_visits': np.mean(visit_counts),
+            'action_distribution': action_counts,
+            'trade_ratio': (action_counts[1] + action_counts[2] + action_counts[3]) / len(self.buffer)
         }
-
-    def get_random_window(self, split: str = 'train') -> Dict:
-        """Get random window from specified data split.
-
-        Args:
-            split: 'train', 'val', or 'test'
-        """
-        # Select range based on split
-        if split == 'train':
-            range_start, range_end = self.train_range
-        elif split == 'val':
-            range_start, range_end = self.val_range
-        elif split == 'test':
-            range_start, range_end = self.test_range
-        else:
-            raise ValueError(f"Invalid split: {split}")
-
-        # Sample random starting point within range
-        max_start = range_end - self.session_length - 100  # Leave room for session
-        if max_start <= range_start:
-            max_start = range_end - 100  # Smaller buffer for small ranges
-
-        # Try to find valid session (max 20 attempts)
-        valid_found = False
-        rejection_counts = {}
-
-        for attempt in range(20):
-            start_idx = np.random.randint(range_start, max(range_start + 1, max_start))
-            is_valid, reason = self._validate_session(start_idx)
-
-            if is_valid:
-                valid_found = True
-                break
-            else:
-                rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
-
-        if not valid_found:
-            # Log rejection reasons periodically
-            if np.random.random() < 0.01:  # Log 1% of rejections
-                logger.debug(f"Session rejections in {split}: {rejection_counts}")
-            # Use last attempted index anyway for training continuity
-            start_idx = np.random.randint(range_start, max(range_start + 1, max_start))
-
-        # Fetch window data
-        query = f"""
-        SELECT *
-        FROM micro_features
-        WHERE bar_index >= {start_idx}
-        ORDER BY bar_index
-        LIMIT 1000
-        """
-
-        data = self.conn.execute(query).fetchdf()
-
-        # ROBUST DATA LOADING - Handle missing features gracefully
-        logger.debug(f"Available columns: {list(data.columns)[:10]}...")  # Log first 10 columns
-
-        # Check if we have the expected lagged format or need to generate synthetic data
-        has_lagged_features = any(col.endswith('_0') for col in data.columns)
-
-        if not has_lagged_features:
-            logger.warning("Lagged features not found - generating synthetic 15-feature data")
-            # Generate synthetic 15-feature observation for testing
-            observation = []
-            for t in range(self.lag_window):
-                # Create 15 features per timestep
-                row_features = []
-
-                # 5 technical indicators (normalized random values)
-                for i in range(5):
-                    row_features.append(np.random.normal(0, 0.1))  # Small variance
-
-                # 4 cyclical time features (sine/cosine patterns)
-                hour_angle = (t % 24) * 2 * np.pi / 24
-                dow_angle = (t % 168) * 2 * np.pi / 168  # Weekly cycle
-                row_features.extend([
-                    np.sin(hour_angle), np.cos(hour_angle),  # Hour cyclical
-                    np.sin(dow_angle), np.cos(dow_angle)     # Day-of-week cyclical
-                ])
-
-                # 6 position features (realistic trading states)
-                position_side = np.random.choice([-1, 0, 1])  # Short, flat, long
-                position_pips = np.random.normal(0, 10) if position_side != 0 else 0
-                bars_since_entry = np.random.exponential(20) if position_side != 0 else 0
-                pips_from_peak = min(0, np.random.normal(-5, 10)) if position_side != 0 else 0
-                max_drawdown = min(0, np.random.normal(-8, 15)) if position_side != 0 else 0
-                accumulated_dd = abs(max_drawdown) * np.random.uniform(0.5, 2.0)
-
-                row_features.extend([
-                    position_side,
-                    np.tanh(position_pips / 100),      # Normalized position P&L
-                    np.tanh(bars_since_entry / 100),   # Normalized time in position
-                    np.tanh(pips_from_peak / 100),     # Normalized distance from peak
-                    np.tanh(max_drawdown / 100),       # Normalized max drawdown
-                    np.tanh(accumulated_dd / 100)      # Normalized accumulated drawdown
-                ])
-
-                observation.append(row_features)
-        else:
-            # Original code path for when lagged features exist
-            observation = []
-            for t in range(self.lag_window):
-                row_features = []
-
-                # Add technical and cyclical at time t
-                for feat in ['position_in_range_60', 'min_max_scaled_momentum_60',
-                            'min_max_scaled_rolling_range', 'min_max_scaled_momentum_5',
-                            'price_change_pips', 'dow_cos_final', 'dow_sin_final',
-                            'hour_cos_final', 'hour_sin_final']:
-                    col_name = f"{feat}_{self.lag_window - 1 - t}"
-                    if col_name in data.columns:
-                        value = data.iloc[0][col_name]
-                        # Validate and clean the value
-                        if np.isnan(value) or np.isinf(value):
-                            logger.warning(f"Invalid value in {col_name}: {value}, using 0.0")
-                            value = 0.0
-                        row_features.append(float(value))
-                    else:
-                        logger.warning(f"Column {col_name} not found, using 0.0")
-                        row_features.append(0.0)
-
-                # Add position features (always from current/first row)
-                position_cols = ['position_side', 'position_pips', 'bars_since_entry',
-                               'pips_from_peak', 'max_drawdown_pips', 'accumulated_dd']
-                for feat in position_cols:
-                    if feat in data.columns:
-                        value = data.iloc[0][feat]
-                        # Validate and clean the value
-                        if np.isnan(value) or np.isinf(value):
-                            logger.warning(f"Invalid value in {feat}: {value}, using 0.0")
-                            value = 0.0
-                        row_features.append(float(value))
-                    else:
-                        logger.warning(f"Column {feat} not found, using 0.0")
-                        row_features.append(0.0)
-
-                observation.append(row_features)
-
-        # Final validation of observation shape and values
-        observation = np.array(observation, dtype=np.float32)
-        if observation.shape != (self.lag_window, 15):
-            logger.error(f"Invalid observation shape: {observation.shape}, expected ({self.lag_window}, 15)")
-            # Create fallback observation
-            observation = np.random.randn(self.lag_window, 15).astype(np.float32) * 0.1
-
-        # Check for NaN/Inf in final observation
-        if np.isnan(observation).any() or np.isinf(observation).any():
-            logger.error("NaN/Inf detected in observation - replacing with zeros")
-            observation = np.nan_to_num(observation, nan=0.0, posinf=1.0, neginf=-1.0)
-
-        return {
-            'observation': np.array(observation, dtype=np.float32),
-            'data': data,
-            'start_idx': start_idx
-        }
-
-    def close(self):
-        """Close database connection."""
-        self.conn.close()
-
-
-class SessionCollector(Process):
-    """Worker process for parallel experience collection."""
-
-    def __init__(self, worker_id: int, config: TrainingConfig,
-                 session_queue: Queue, experience_queue: Queue,
-                 stop_event: mp.Event):
-        super().__init__()
-        self.worker_id = worker_id
-        self.config = config
-        self.session_queue = session_queue
-        self.experience_queue = experience_queue
-        self.stop_event = stop_event
-
-    def run(self):
-        """Worker main loop."""
-        # Initialize components for this worker
-        device = torch.device("cpu")  # Workers use CPU
-        model = MicroStochasticMuZero(
-            input_features=self.config.input_features,
-            lag_window=self.config.lag_window,
-            hidden_dim=self.config.hidden_dim,
-            action_dim=self.config.action_dim,
-            num_outcomes=self.config.num_outcomes,
-            support_size=self.config.support_size
-        ).to(device)
-
-        mcts = MCTS(
-            model=model,
-            num_actions=self.config.action_dim,
-            discount=self.config.discount,
-            num_simulations=self.config.num_simulations
-        )
-
-        data_loader = DataLoader(self.config.data_path, self.config.lag_window)
-
-        logger.info(f"Worker {self.worker_id} started")
-
-        # Position tracking for AMDDP1
-        position = 0
-        entry_price = 0.0
-        entry_step = -1
-
-        while not self.stop_event.is_set():
-            try:
-                # Get session from queue (with timeout)
-                session_data = self.session_queue.get(timeout=1)
-                if session_data is None:  # Poison pill
-                    break
-
-                # Process session with post-trade rewards
-                experiences = []
-                trade_experiences = []  # Track current trade
-                trade_start_idx = -1
-
-                for step in range(360):  # 360 minute session
-                    # Get observation
-                    observation = session_data['observations'][step]
-
-                    # Run MCTS
-                    obs_tensor = torch.tensor(observation, dtype=torch.float32).unsqueeze(0)
-                    with torch.no_grad():
-                        mcts_result = mcts.run(
-                            obs_tensor,
-                            add_exploration_noise=True,
-                            temperature=self.config.initial_temperature
-                        )
-
-                    action = mcts_result['action']
-                    value = mcts_result['value']
-                    policy = mcts_result['policy']
-
-                    # Calculate reward with post-trade system
-                    current_price = session_data['prices'][step]
-                    next_price = session_data['prices'][step + 1] if step < 359 else current_price
-
-                    (reward, position, entry_price, entry_step,
-                     trade_closed, final_amddp1, pnl_pips) = self._calculate_reward(
-                        action, current_price, next_price,
-                        position, entry_price, entry_step, step
-                    )
-
-                    # Track trade experiences
-                    if action in [1, 2] and position != 0:  # New trade started
-                        trade_experiences = [len(experiences)]
-                        trade_start_idx = len(experiences)
-                    elif position != 0 and trade_start_idx >= 0:  # In trade
-                        trade_experiences.append(len(experiences))
-
-                    # Create experience with all required fields
-                    exp = Experience(
-                        observation=observation,
-                        action=action,
-                        policy=policy,
-                        value=value,
-                        reward=reward,
-                        done=False,
-                        pip_pnl=pnl_pips if trade_closed else 0.0,
-                        trade_complete=trade_closed,
-                        position_change=(action in [1, 2, 3]),
-                        td_error=0.0,
-                        session_expectancy=0.0,
-                        trade_id=None
-                    )
-                    experiences.append(exp)
-
-                    # Retroactively assign rewards if trade closed
-                    if trade_closed and trade_experiences:
-                        # Update all trade experiences with final AMDDP1
-                        for idx in trade_experiences:
-                            experiences[idx].reward = final_amddp1
-                            experiences[idx].pip_pnl = pnl_pips
-                            experiences[idx].trade_complete = True
-                        trade_experiences = []  # Reset for next trade
-                        trade_start_idx = -1
-
-                # Put experiences in queue
-                for exp in experiences:
-                    self.experience_queue.put(exp)
-
-            except queue_module.Empty:
-                continue
-            except Exception as e:
-                logger.error(f"Worker {self.worker_id} error: {e}")
-
-        logger.info(f"Worker {self.worker_id} stopped")
-
-    def _calculate_reward(self, action, current_price, next_price,
-                         position, entry_price, entry_step, current_step):
-        """Calculate POST-TRADE rewards with placeholders."""
-        reward = 0.0
-        trade_closed = False
-        final_amddp1 = 0.0
-        pnl_pips = 0.0
-
-        if action == 0:  # HOLD
-            # Placeholder - will be reassigned if part of trade
-            reward = 0.0
-        elif action == 1:  # BUY
-            if position == 0:
-                reward = 0.0  # Placeholder - NO immediate reward
-                position = 1
-                entry_price = current_price
-                entry_step = current_step
-            else:
-                reward = -1.0  # Invalid
-        elif action == 2:  # SELL
-            if position == 0:
-                reward = 0.0  # Placeholder - NO immediate reward
-                position = -1
-                entry_price = current_price
-                entry_step = current_step
-            else:
-                reward = -1.0  # Invalid
-        elif action == 3:  # CLOSE
-            if position != 0:
-                # Calculate final P&L
-                if position == 1:
-                    pnl_pips = (current_price - entry_price) * 100 - 4
-                else:
-                    pnl_pips = (entry_price - current_price) * 100 - 4
-
-                final_amddp1 = self._calculate_amddp1(pnl_pips)
-                reward = final_amddp1  # Close gets final reward
-                trade_closed = True
-
-                # Reset position
-                position = 0
-                entry_price = 0
-                entry_step = -1
-            else:
-                reward = -1.0  # Invalid
-
-        return (np.clip(reward, -3.0, 3.0), position, entry_price, entry_step,
-                trade_closed, final_amddp1, pnl_pips)
-
-    def _calculate_amddp1(self, pnl_pips):
-        """AMDDP1 calculation."""
-        if pnl_pips > 0:
-            if pnl_pips < 10:
-                return 1.0 + pnl_pips * 0.05
-            elif pnl_pips < 30:
-                return 1.5 + (pnl_pips - 10) * 0.025
-            else:
-                return 2.0 + np.tanh((pnl_pips - 30) / 50)
-        else:
-            pnl_abs = abs(pnl_pips)
-            if pnl_abs < 10:
-                return -1.0 - pnl_abs * 0.1
-            elif pnl_abs < 30:
-                return -2.0 - (pnl_abs - 10) * 0.05
-            else:
-                return -3.0 - np.tanh((pnl_abs - 30) / 30)
 
 
 class MicroMuZeroTrainer:
-    """Main trainer for Micro Stochastic MuZero with multiprocessing."""
+    """Fixed trainer with proper episode collection."""
 
     def __init__(self, config: TrainingConfig):
         self.config = config
+        self.best_expectancy = -float('inf')  # Initialize for first checkpoint
 
         # Create directories
         os.makedirs(config.checkpoint_dir, exist_ok=True)
         os.makedirs(config.log_dir, exist_ok=True)
+        os.makedirs(config.cache_dir, exist_ok=True)
+
+        # Initialize device
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Initialize model
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = MicroStochasticMuZero(
             input_features=config.input_features,
             lag_window=config.lag_window,
@@ -826,648 +225,443 @@ class MicroMuZeroTrainer:
             support_size=config.support_size
         ).to(self.device)
 
-        # Force complete weight randomization for fresh start
-        if hasattr(self.model, 'randomize_weights'):
-            self.model.randomize_weights()
-            logger.info("Model weights randomized for fresh start")
-        else:
-            logger.info("Using default weight initialization")
-
         # Initialize optimizer
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=config.learning_rate,
             weight_decay=config.weight_decay
         )
-        # Learning rate scheduler - DISABLED for fixed learning rate
-        self.scheduler = lr_scheduler.ExponentialLR(
-            self.optimizer,
-            gamma=1.0  # NO DECAY - fixed learning rate
-        )
 
-        # Track current temperature for exploration decay
-        self.current_temperature = config.initial_temperature
-        self.temperature_decay_rate = (config.final_temperature / config.initial_temperature) ** (1.0 / config.temperature_decay_episodes)
-
-        # Initialize MCTS with minimal simulations for ultra-fast collection
+        # Initialize MCTS
         self.mcts = StochasticMCTS(
             model=self.model,
-            num_actions=config.action_dim,
-            num_outcomes=config.num_outcomes,
-            discount=config.discount,
             num_simulations=config.num_simulations,
-            dirichlet_alpha=1.0,  # Strong exploration noise
-            exploration_fraction=0.5,  # 50% exploration mix at root
-            depth_limit=3  # Planning depth for stochastic tree
+            discount=config.discount,
+            depth_limit=3,
+            dirichlet_alpha=1.0,
+            exploration_fraction=0.5
         )
 
-        # Initialize data loader
-        self.data_loader = DataLoader(config.data_path, config.lag_window)
-
-        # Initialize balanced replay buffer (no PER, quota-based)
-        self.buffer = BalancedReplayBuffer(
-            max_size=config.buffer_size,
-            min_trade_fraction=0.2,
-            trajectory_length=10
+        # Initialize quality experience buffer with TD error tracking
+        self.buffer = QualityExperienceBuffer(
+            capacity=config.buffer_size,
+            priority_alpha=0.7,
+            priority_beta=0.5
         )
 
-        # Training stats
+        # Temperature for exploration
+        self.current_temperature = config.initial_temperature
+        self.temperature_decay_rate = (
+            config.final_temperature / config.initial_temperature
+        ) ** (1.0 / config.temperature_decay_episodes)
+
+        # Training state
         self.episode = 0
         self.total_steps = 0
-        self.last_optimizer_step_episode = -1  # Track when optimizer.step() was last called
+
+        # Initialize episode collector
+        self.episode_collector = None
+
+        # Training statistics
         self.training_stats = {
             'episodes': [],
-            'rewards': [],
             'losses': [],
-            'policy_losses': [],
-            'value_losses': [],
-            'reward_losses': [],
-            'expectancies': [],  # Track expectancy over time
-            'win_rates': [],     # Track win rates
-            'trade_counts': []   # Track number of trades
+            'expectancies': [],
+            'win_rates': [],
+            'trade_counts': [],
+            'action_distributions': []
         }
 
-        # Initialize position tracking for AMDDP1 rewards
-        self.position = 0  # -1: short, 0: flat, 1: long
-        self.entry_price = 0.0
-        self.position_pnl = 0.0
-        self.entry_step = -1  # Track entry step for retroactive AMDDP1
-
-
-        # Multiprocessing setup
-        self.session_queue = Queue(maxsize=config.session_queue_size)
-        self.experience_queue = Queue(maxsize=1000)
-        self.stop_event = mp.Event()
-        self.workers = []
-
-        # Session pre-validator thread
-        self.session_validator = None
+        # Pre-calculate valid session indices
+        self.ensure_session_indices()
 
         logger.info(f"Trainer initialized on {self.device}")
         logger.info(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
-        logger.info(f"Multiprocessing: {config.num_workers} workers")
 
-    def start_workers(self):
-        """Start worker processes for parallel collection."""
-        for i in range(self.config.num_workers):
-            worker = SessionCollector(
-                worker_id=i,
-                config=self.config,
-                session_queue=self.session_queue,
-                experience_queue=self.experience_queue,
-                stop_event=self.stop_event
+    def ensure_session_indices(self):
+        """Ensure valid session indices are pre-calculated."""
+        calculator = SessionIndexCalculator(
+            db_path=self.config.data_path,
+            cache_path=os.path.join(self.config.cache_dir, "valid_session_indices.pkl")
+        )
+        indices = calculator.get_or_calculate_indices()
+        logger.info(f"Session indices ready - Train: {len(indices['train'])}, "
+                   f"Val: {len(indices['val'])}, Test: {len(indices['test'])}")
+
+    def initialize_episode_collector(self):
+        """Initialize parallel episode collector."""
+        model_config = {
+            'input_features': self.config.input_features,
+            'lag_window': self.config.lag_window,
+            'hidden_dim': self.config.hidden_dim,
+            'action_dim': self.config.action_dim,
+            'num_outcomes': self.config.num_outcomes,
+            'support_size': self.config.support_size
+        }
+
+        mcts_config = {
+            'num_simulations': self.config.num_simulations,
+            'discount': self.config.discount,
+            'depth_limit': 3,
+            'dirichlet_alpha': 1.0,
+            'exploration_fraction': 0.5
+        }
+
+        # Save current model for workers
+        temp_model_path = os.path.join(self.config.checkpoint_dir, "temp_model.pth")
+        self.save_temp_model(temp_model_path)
+
+        self.episode_collector = ParallelEpisodeCollector(
+            model_path=temp_model_path,
+            model_config=model_config,
+            mcts_config=mcts_config,
+            num_workers=self.config.num_workers,
+            db_path=self.config.data_path,
+            session_indices_path=os.path.join(self.config.cache_dir, "valid_session_indices.pkl")
+        )
+        self.episode_collector.start()
+        logger.info(f"Episode collector started with {self.config.num_workers} workers")
+
+    def save_temp_model(self, path: str):
+        """Save model weights for workers."""
+        torch.save({
+            'model_state': self.model.get_weights(),
+            'episode': self.episode,
+            'temperature': self.current_temperature
+        }, path)
+
+    def collect_episodes(self, num_episodes: int, split: str = 'train') -> int:
+        """Collect episodes and add to buffer."""
+        # Update model for workers
+        temp_model_path = os.path.join(self.config.checkpoint_dir, "temp_model.pth")
+        self.save_temp_model(temp_model_path)
+
+        # Collect episodes
+        episodes = self.episode_collector.collect_episodes(
+            num_episodes=num_episodes,
+            split=split,
+            temperature=self.current_temperature,
+            add_noise=(split == 'train')
+        )
+
+        # Add experiences to buffer and track statistics
+        experiences_added = 0
+        total_trades = 0
+        total_wins = 0
+        action_counts = {0: 0, 1: 0, 2: 0, 3: 0}
+
+        for episode in episodes:
+            for exp in episode.experiences:
+                # Convert to buffer experience
+                buffer_exp = Experience(
+                    observation=exp.observation,
+                    action=exp.action,
+                    reward=exp.reward,
+                    policy=exp.policy,
+                    value=exp.value,
+                    done=exp.done,
+                    market_outcome=exp.market_outcome,
+                    outcome_probs=exp.outcome_probs
+                )
+                self.buffer.add(buffer_exp)
+                experiences_added += 1
+                action_counts[exp.action] += 1
+
+            # Track episode statistics
+            self.training_stats['expectancies'].append(episode.expectancy)
+            self.training_stats['win_rates'].append(
+                (episode.winning_trades / max(episode.num_trades, 1)) * 100
             )
-            worker.start()
-            self.workers.append(worker)
-        logger.info(f"Started {self.config.num_workers} worker processes")
+            self.training_stats['trade_counts'].append(episode.num_trades)
 
-    def stop_workers(self):
-        """Stop all worker processes."""
-        # Signal workers to stop
-        self.stop_event.set()
+            total_trades += episode.num_trades
+            total_wins += episode.winning_trades
 
-        # Send poison pills
-        for _ in self.workers:
-            self.session_queue.put(None)
+        # Log action distribution
+        total_actions = sum(action_counts.values())
+        if total_actions > 0:
+            action_dist = {
+                'HOLD': action_counts[0] / total_actions,
+                'BUY': action_counts[1] / total_actions,
+                'SELL': action_counts[2] / total_actions,
+                'CLOSE': action_counts[3] / total_actions
+            }
+            self.training_stats['action_distributions'].append(action_dist)
 
-        # Wait for workers to finish
-        for worker in self.workers:
-            worker.join(timeout=5)
-            if worker.is_alive():
-                worker.terminate()
+            logger.info(f"Action distribution - HOLD: {action_dist['HOLD']:.1%}, "
+                       f"BUY: {action_dist['BUY']:.1%}, "
+                       f"SELL: {action_dist['SELL']:.1%}, "
+                       f"CLOSE: {action_dist['CLOSE']:.1%}")
 
-        self.workers.clear()
-        logger.info("All workers stopped")
+        # Calculate metrics
+        avg_expectancy = np.mean(self.training_stats['expectancies'][-num_episodes:])
+        avg_win_rate = total_wins / max(total_trades, 1) * 100
 
-    def populate_session_queue(self):
-        """Pre-populate session queue with validated sessions."""
-        sessions_added = 0
-        while sessions_added < self.config.session_queue_size // 2:
-            try:
-                # Get random window
-                window = self.data_loader.get_random_window(split='train')
+        logger.info(f"Collected {len(episodes)} episodes, {experiences_added} experiences")
+        logger.info(f"Expectancy: {avg_expectancy:.4f} pips, Win Rate: {avg_win_rate:.1f}%")
 
-                # Create session data
-                session_data = {
-                    'observations': [window['observation']] * 360,  # Simplified for now
-                    'prices': [window.get('close', 180.0)] * 361
-                }
+        return experiences_added
 
-                self.session_queue.put(session_data, timeout=0.1)
-                sessions_added += 1
-            except queue_module.Full:
-                break
-            except Exception as e:
-                logger.error(f"Error populating session queue: {e}")
-                break
+    def train_step(self) -> Dict[str, float]:
+        """Single training step with TD error calculation."""
+        if self.buffer.size() < self.config.batch_size:
+            return {}
 
-        logger.info(f"Session queue populated with {sessions_added} sessions")
-
-    def collect_experience(self) -> Dict:
-        """Collect experience using MCTS with post-trade reward system."""
-        # Get random window from TRAINING data only
-        window = self.data_loader.get_random_window(split='train')
-        observation = torch.tensor(
-            window['observation'],  # Use observation from the window
-            dtype=torch.float32,
-            device=self.device
-        ).unsqueeze(0)  # Add batch dimension
-
-        # Get current and next prices for reward calculation
-        # Use the data from window to get price
-        current_data = window['data']
-        current_price = current_data['close'].iloc[0] if 'close' in current_data.columns else 1.0
-
-        # For next price, just use a small offset from current
-        # (This is simplified - in real episode we'd track sequential prices)
-        next_price = current_price * 1.0001  # Small synthetic change
-
-        # Run MCTS - use minimal simulations during initial collection
-        self.model.eval()
-        num_sims = 1 if len(self.buffer) < self.config.min_buffer_size else self.config.num_simulations
-        self.mcts.num_simulations = num_sims  # Temporarily override
-        mcts_result = self.mcts.run(
-            observation,
-            add_noise=True,  # Changed from add_exploration_noise
-            temperature=self.current_temperature
-        )
-        self.mcts.num_simulations = self.config.num_simulations  # Restore
-
-        # Calculate POST-TRADE REWARDS (placeholders until trade closes)
-        action = mcts_result['action']
-        reward = self._calculate_action_reward(action, current_price, next_price)
-
-        # Create experience
-        experience = Experience(
-            observation=window['observation'],  # Use observation from window
-            action=action,
-            policy=mcts_result['policy'],
-            value=mcts_result['value'],
-            reward=reward,
-            done=False,
-            td_error=0.0  # Will be calculated during training
-        )
-
-        return experience
-
-    def _calculate_action_reward(self, action: int, current_price: float, next_price: float) -> float:
-        """
-        Calculate CLEAN rewards with clear signals.
-
-        Reward Structure:
-        0: HOLD - 0.0 (intra-trade) or -0.05 (idle/extra-trade)
-        1: BUY - +1.0 immediate reward for decisive entry
-        2: SELL - +1.0 immediate reward for decisive entry
-        3: CLOSE - AMDDP1 based on actual P&L
-        """
-        reward = 0.0
-
-        if action == 0:  # HOLD
-            if self.position != 0:
-                # INTRA-TRADE HOLD: Neutral (don't overweight patience)
-                reward = 0.0
-            else:
-                # IDLE HOLD: Small penalty to discourage inactivity
-                reward = -0.05
-
-        elif action == 1:  # BUY (open long ONLY)
-            if self.position == 0:  # Can only buy when flat
-                # IMMEDIATE REWARD for taking action
-                reward = 1.0
-                self.position = 1
-                self.entry_price = current_price
-                self.entry_step = self.total_steps
-            else:
-                # Invalid - already have position
-                reward = -1.0
-
-        elif action == 2:  # SELL (open short ONLY)
-            if self.position == 0:  # Can only sell when flat
-                # IMMEDIATE REWARD for taking action
-                reward = 1.0
-                self.position = -1
-                self.entry_price = current_price
-                self.entry_step = self.total_steps
-            else:
-                # Invalid - already have position
-                reward = -1.0
-
-        elif action == 3:  # CLOSE
-            if self.position != 0:  # Have position to close
-                # Calculate P&L with 4 pip spread
-                if self.position == 1:  # Close long
-                    pnl_pips = (current_price - self.entry_price) * 100 - 4
-                else:  # Close short
-                    pnl_pips = (self.entry_price - current_price) * 100 - 4
-
-                # AMDDP1 reward for close
-                reward = self._calculate_amddp1(pnl_pips)
-
-                # Reset position
-                self.position = 0
-                self.entry_price = 0
-                self.entry_step = -1
-            else:  # No position to close
-                reward = -0.5  # Penalty for invalid action
-        else:
-            reward = -1.0  # Invalid action
-
-        # Clamp reward to reasonable range
-        return np.clip(reward, -3.0, 3.0)
-
-    def _calculate_amddp1(self, pnl_pips: float) -> float:
-        """
-        AMDDP1 (Asymmetric Mean Deviation Drawdown Penalty) calculation.
-        """
-        if pnl_pips > 0:
-            # Winning trade - progressive reward
-            if pnl_pips < 10:
-                return 1.0 + pnl_pips * 0.05  # 1.0 to 1.5
-            elif pnl_pips < 30:
-                return 1.5 + (pnl_pips - 10) * 0.025  # 1.5 to 2.0
-            else:
-                return 2.0 + np.tanh((pnl_pips - 30) / 50)  # 2.0 to ~3.0
-        else:
-            # Losing trade - asymmetric penalty
-            pnl_abs = abs(pnl_pips)
-            if pnl_abs < 10:
-                return -1.0 - pnl_abs * 0.1  # -1.0 to -2.0
-            elif pnl_abs < 30:
-                return -2.0 - (pnl_abs - 10) * 0.05  # -2.0 to -3.0
-            else:
-                return -3.0 - np.tanh((pnl_abs - 30) / 30)  # -3.0 to ~-4.0
-
-    def train_batch(self, batch_data: Dict) -> Dict[str, float]:
-        """Train on a batch of data."""
-        self.model.train()
+        # Sample batch with importance weights
+        batch, importance_weights = self.buffer.sample(self.config.batch_size)
 
         # Prepare batch tensors
         observations = torch.tensor(
-            batch_data['observations'],
-            device=self.device,
-            dtype=torch.float32
+            np.array([e.observation for e in batch]),
+            dtype=torch.float32, device=self.device
+        )
+        actions = torch.tensor(
+            [e.action for e in batch],
+            dtype=torch.long, device=self.device
+        )
+        rewards = torch.tensor(
+            [e.reward for e in batch],
+            dtype=torch.float32, device=self.device
+        )
+        policies = torch.tensor(
+            np.array([e.policy for e in batch]),
+            dtype=torch.float32, device=self.device
+        )
+        values = torch.tensor(
+            [e.value for e in batch],
+            dtype=torch.float32, device=self.device
+        )
+        outcomes = torch.tensor(
+            [e.market_outcome for e in batch],
+            dtype=torch.long, device=self.device
+        )
+        outcome_probs = torch.tensor(
+            np.array([e.outcome_probs for e in batch]),
+            dtype=torch.float32, device=self.device
         )
 
-        target_policies = torch.tensor(
-            batch_data['policies'],
-            device=self.device,
-            dtype=torch.float32
-        )
+        # Forward pass
+        hidden = self.model.representation(observations)
+        policy_logits, value_pred = self.model.prediction(hidden)
 
-        target_values = torch.tensor(
-            batch_data['values'],
-            device=self.device,
-            dtype=torch.float32
-        ).unsqueeze(1)
+        # Outcome predictions
+        outcome_pred = self.model.outcome_probability(hidden, actions.unsqueeze(1))
 
-        # ROBUST FORWARD PASS with input validation
-        # Validate input observations
-        if torch.isnan(observations).any() or torch.isinf(observations).any():
-            logger.error("NaN/Inf in input observations - skipping batch")
-            self.optimizer.zero_grad()
-            return {
-                'total_loss': float('nan'),
-                'policy_loss': float('nan'),
-                'value_loss': float('nan')
-            }
+        # Convert importance weights to tensor
+        weights = torch.tensor(importance_weights, dtype=torch.float32, device=self.device)
 
-        try:
-            # Anomaly detection disabled for performance
-            hidden, policy_logits, value_probs = self.model.initial_inference(observations)
-        except RuntimeError as e:
-            logger.error(f"Forward pass failed: {e}")
-            self.optimizer.zero_grad()
-            return {
-                'total_loss': float('nan'),
-                'policy_loss': float('nan'),
-                'value_loss': float('nan')
-            }
+        # Calculate TD errors for priority updates
+        with torch.no_grad():
+            td_errors = (rewards + self.config.discount * values - value_pred.squeeze()).cpu().numpy()
 
-        # Validate forward pass outputs
-        if torch.isnan(policy_logits).any() or torch.isinf(policy_logits).any():
-            logger.error("NaN/Inf in policy logits - skipping batch")
-            self.optimizer.zero_grad()
-            return {
-                'total_loss': float('nan'),
-                'policy_loss': float('nan'),
-                'value_loss': float('nan')
-            }
+        # Update priorities in buffer
+        self.buffer.update_priorities(batch, td_errors)
 
-        if torch.isnan(value_probs).any() or torch.isinf(value_probs).any():
-            logger.error("NaN/Inf in value probabilities - skipping batch")
-            self.optimizer.zero_grad()
-            return {
-                'total_loss': float('nan'),
-                'policy_loss': float('nan'),
-                'value_loss': float('nan')
-            }
+        # Calculate weighted losses
+        policy_loss = -(weights * (policies * torch.log_softmax(policy_logits, dim=1)).sum(1)).mean()
+        value_loss = (weights * (value_pred.squeeze() - values) ** 2).mean()
+        outcome_loss = (weights * nn.CrossEntropyLoss(reduction='none')(outcome_pred, outcomes)).mean()
 
-        # ROBUST LOSS COMPUTATION
-        try:
-            # Policy loss with label smoothing for stability
-            policy_loss = nn.functional.cross_entropy(
-                policy_logits,
-                target_policies,
-                label_smoothing=0.01  # Small smoothing for numerical stability
-            )
-
-            # Value loss using Huber loss (more robust than MSE)
-            predicted_values = self.model.value.get_value(value_probs)
-            value_loss = nn.functional.huber_loss(
-                predicted_values,
-                target_values,
-                delta=1.0  # Less sensitive to outliers
-            )
-
-            # Check individual losses
-            if torch.isnan(policy_loss) or torch.isinf(policy_loss):
-                logger.error(f"Invalid policy loss: {policy_loss}")
-                policy_loss = torch.tensor(0.0, requires_grad=True)
-
-            if torch.isnan(value_loss) or torch.isinf(value_loss):
-                logger.error(f"Invalid value loss: {value_loss}")
-                value_loss = torch.tensor(0.0, requires_grad=True)
-
-            # Total loss with clamping
-            total_loss = policy_loss + value_loss
-            total_loss = torch.clamp(total_loss, 0.0, 100.0)  # Clamp to reasonable range
-
-        except Exception as e:
-            logger.error(f"Loss computation failed: {e}")
-            self.optimizer.zero_grad()
-            return {
-                'total_loss': float('nan'),
-                'policy_loss': float('nan'),
-                'value_loss': float('nan')
-            }
-
-        # Final NaN check
-        if torch.isnan(total_loss) or torch.isinf(total_loss):
-            logger.error(f"NaN/Inf in final loss: {total_loss.item():.6f} - skipping batch")
-            self.optimizer.zero_grad()
-            return {
-                'total_loss': float('nan'),
-                'policy_loss': float('nan'),
-                'value_loss': float('nan')
-            }
-
-        # Calculate TD errors for quality scoring
-        # Note: With BalancedReplayBuffer, we don't update individual experiences
-        # since we're working with pre-sampled arrays, not Experience objects
+        total_loss = policy_loss + value_loss + outcome_loss
 
         # Backward pass
         self.optimizer.zero_grad()
         total_loss.backward()
-
-        # Gradient clipping
-        torch.nn.utils.clip_grad_norm_(
-            self.model.parameters(),
-            self.config.gradient_clip
-        )
-
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.gradient_clip)
         self.optimizer.step()
 
-        # Mark that optimizer step was successful (for scheduler)
-        self.last_optimizer_step_episode = self.episode
+        # Get buffer stats
+        buffer_stats = self.buffer.get_stats()
 
         return {
             'total_loss': total_loss.item(),
             'policy_loss': policy_loss.item(),
-            'value_loss': value_loss.item()
+            'value_loss': value_loss.item(),
+            'outcome_loss': outcome_loss.item(),
+            'mean_td_error': buffer_stats.get('mean_td_error', 0.0),
+            'max_td_error': buffer_stats.get('max_td_error', 0.0),
+            'trade_ratio': buffer_stats.get('trade_ratio', 0.0)
         }
 
-    def save_checkpoint(self, is_best=False):
-        """Save training checkpoint with cleanup of old files."""
-        checkpoint_path = os.path.join(
-            self.config.checkpoint_dir,
-            f"micro_checkpoint_ep{self.episode:06d}.pth"
+    def update_temperature(self):
+        """Update exploration temperature."""
+        self.current_temperature *= self.temperature_decay_rate
+        self.current_temperature = max(
+            self.current_temperature,
+            self.config.final_temperature
         )
 
+    def save_checkpoint(self):
+        """Save training checkpoint."""
         checkpoint = {
             'episode': self.episode,
             'total_steps': self.total_steps,
             'model_state': self.model.get_weights(),
             'optimizer_state': self.optimizer.state_dict(),
-            'config': asdict(self.config),
-            'training_stats': self.training_stats,
-            'buffer_state': self.buffer.get_state() if hasattr(self.buffer, 'get_state') else None
+            'temperature': self.current_temperature,
+            'training_stats': self.training_stats
         }
 
-        torch.save(checkpoint, checkpoint_path)
-        logger.info(f"Checkpoint saved: {checkpoint_path}")
-
-        # Save as latest
-        latest_path = os.path.join(self.config.checkpoint_dir, "latest.pth")
+        # Save latest
+        latest_path = os.path.join(self.config.checkpoint_dir, 'latest.pth')
         torch.save(checkpoint, latest_path)
 
-        # Save as best if specified
-        if is_best:
-            best_path = os.path.join(self.config.checkpoint_dir, "best.pth")
+        # Save periodic
+        if self.episode % self.config.save_interval == 0:
+            episode_path = os.path.join(
+                self.config.checkpoint_dir,
+                f'micro_checkpoint_ep{self.episode:06d}.pth'
+            )
+            torch.save(checkpoint, episode_path)
+            logger.info(f"Checkpoint saved: {episode_path}")
+
+            # Clean up old checkpoints (keep only last 2 + best + latest)
+            cleanup_old_checkpoints(self.config.checkpoint_dir, keep_recent=2)
+
+        # Save best based on expectancy
+        # Always save first checkpoint as best for testing
+        best_path = os.path.join(self.config.checkpoint_dir, 'best.pth')
+
+        if self.episode == 0 or self.episode == self.config.save_interval:
+            # First checkpoint - always save as best
             torch.save(checkpoint, best_path)
-            logger.info(f"Best checkpoint saved: {best_path}")
-
-        # Clean up old checkpoints (keep only last 2 + best + latest)
-        self.cleanup_old_checkpoints()
-
-    def cleanup_old_checkpoints(self, keep_last=2):
-        """Remove old checkpoints, keeping only recent ones."""
-        checkpoint_files = []
-        for f in os.listdir(self.config.checkpoint_dir):
-            if f.startswith('micro_checkpoint_ep') and f.endswith('.pth'):
-                checkpoint_files.append(f)
-
-        # Sort by episode number
-        checkpoint_files.sort()
-
-        # Remove old checkpoints
-        if len(checkpoint_files) > keep_last:
-            for f in checkpoint_files[:-keep_last]:
-                path = os.path.join(self.config.checkpoint_dir, f)
-                os.remove(path)
-                logger.debug(f"Removed old checkpoint: {f}")
-
-    def resume_from_checkpoint(self):
-        """Resume training from latest checkpoint if exists."""
-        latest_path = os.path.join(self.config.checkpoint_dir, "latest.pth")
-
-        if os.path.exists(latest_path):
-            logger.info(f"Resuming from checkpoint: {latest_path}")
-            checkpoint = torch.load(latest_path, map_location=self.device)
-
-            # Restore model and optimizer
-            self.model.set_weights(checkpoint['model_state'])
-            self.optimizer.load_state_dict(checkpoint['optimizer_state'])
-
-            # Restore training state
-            self.episode = checkpoint['episode']
-            self.total_steps = checkpoint['total_steps']
-            self.training_stats = checkpoint['training_stats']
-
-            # Ensure new fields exist in loaded stats (for backward compatibility)
-            if 'expectancies' not in self.training_stats:
-                self.training_stats['expectancies'] = []
-            if 'win_rates' not in self.training_stats:
-                self.training_stats['win_rates'] = []
-            if 'trade_counts' not in self.training_stats:
-                self.training_stats['trade_counts'] = []
-
-            # Restore buffer if available
-            if checkpoint.get('buffer_state') and hasattr(self.buffer, 'set_state'):
-                self.buffer.set_state(checkpoint['buffer_state'])
-
-            logger.info(f"Resumed from episode {self.episode}, total steps {self.total_steps}")
-            return True
-
-        return False
+            logger.info(f"First checkpoint saved as best: {best_path}")
+            if len(self.training_stats['expectancies']) > 0:
+                self.best_expectancy = np.mean(self.training_stats['expectancies'][-min(100, len(self.training_stats['expectancies'])):])
+        elif len(self.training_stats['expectancies']) > 10:
+            # After first checkpoint, use running average
+            recent_expectancy = np.mean(self.training_stats['expectancies'][-min(100, len(self.training_stats['expectancies'])):])
+            if recent_expectancy > self.best_expectancy:
+                self.best_expectancy = recent_expectancy
+                torch.save(checkpoint, best_path)
+                logger.info(f"Best checkpoint saved: {best_path} (expectancy: {recent_expectancy:.4f})")
 
     def train(self):
-        """Main training loop with resume support."""
-        # Try to resume from checkpoint
-        resumed = self.resume_from_checkpoint()
-        start_episode = self.episode if resumed else 0
-
-        logger.info(f"Starting training from episode {start_episode}...")
+        """Main training loop."""
+        logger.info("Starting training...")
         start_time = time.time()
-        best_loss = float('inf')
 
-        # Save initial checkpoint for testing BEFORE buffer collection
-        if start_episode == 0 and not resumed:
-            logger.info("Saving initial checkpoint for testing...")
-            self.episode = 0
-            self.save_checkpoint(is_best=True)  # Save as best to trigger validation
-            logger.info("Initial checkpoint saved as both latest.pth and best.pth")
+        # Initialize episode collector
+        self.initialize_episode_collector()
 
-        # Collect initial experiences if not resumed
-        # REDUCED to 100 experiences for faster startup (was 1000)
-        min_buffer = min(100, self.config.min_buffer_size)
-        if not resumed or len(self.buffer) < min_buffer:
-            logger.info(f"Collecting {min_buffer} initial experiences... Current buffer size: {len(self.buffer)}")
-            collection_count = 0
-            start_time = time.time()
+        try:
+            # Initial buffer filling
+            logger.info(f"Filling initial buffer (need {self.config.min_buffer_size} experiences)...")
+            while self.buffer.size() < self.config.min_buffer_size:
+                episodes_needed = max(1, (self.config.min_buffer_size - self.buffer.size()) // 360)
+                episodes_to_collect = min(10, episodes_needed)
+                self.collect_episodes(episodes_to_collect, split='train')
+                logger.info(f"Buffer size: {self.buffer.size()}/{self.config.min_buffer_size}")
 
-            while len(self.buffer) < min_buffer:
-                if collection_count % 10 == 0:
+            logger.info("Initial buffer filled, starting training...")
+
+            # Main training loop
+            while self.episode < self.config.num_episodes:
+                # Collect new episodes
+                self.collect_episodes(self.config.episodes_per_iteration, split='train')
+
+                # Train on batch
+                losses = self.train_step()
+
+                # Update temperature
+                self.update_temperature()
+
+                # Update episode count
+                self.episode += self.config.episodes_per_iteration
+                self.total_steps += self.config.episodes_per_iteration * 360
+
+                # Enhanced logging with TD error and trade metrics
+                if self.episode % self.config.log_interval == 0 and losses:
+                    recent_expectancy = np.mean(self.training_stats['expectancies'][-100:])
+                    recent_win_rate = np.mean(self.training_stats['win_rates'][-100:])
+
                     elapsed = time.time() - start_time
-                    logger.info(f"Experience {collection_count}... Buffer: {len(self.buffer)}/{min_buffer} ({elapsed:.1f}s elapsed)")
+                    eps = self.episode / elapsed
 
-                experience = self.collect_experience()
-                self.buffer.add(experience)
-                # Track rewards for expectancy even during initial collection
-                self.training_stats['rewards'].append(experience.reward)
-                collection_count += 1
+                    logger.info(
+                        f"Episode {self.episode} | Steps {self.total_steps} | "
+                        f"EPS: {eps:.1f} | Loss: {losses['total_loss']:.4f} | "
+                        f"TD: {losses.get('mean_td_error', 0):.3f} | "
+                        f"Exp: {recent_expectancy:.2f} | WR: {recent_win_rate:.1f}% | "
+                        f"TradeRatio: {losses.get('trade_ratio', 0):.1%}"
+                    )
 
-                if len(self.buffer) % 25 == 0:
-                    logger.info(f"Buffer size: {len(self.buffer)}/{min_buffer}")
+                # Save checkpoint with smart system
+                self.save_checkpoint()  # Handles both frequent and periodic saves
 
-            total_time = time.time() - start_time
-            logger.info(f"Collected {min_buffer} experiences in {total_time:.1f} seconds")
+                # Validation
+                if self.episode % self.config.validation_interval == 0:
+                    self.validate()
 
-        logger.info("Starting main training loop...")
+        except KeyboardInterrupt:
+            logger.info("Training interrupted")
+        finally:
+            # Clean up
+            if self.episode_collector:
+                self.episode_collector.stop()
+            self.save_checkpoint()
+            logger.info("Training complete")
 
-        for episode in range(start_episode, self.config.num_episodes):
-            self.episode = episode
+    def validate(self):
+        """Run validation episodes."""
+        logger.info("Running validation...")
 
-            # Collect new experience
-            experience = self.collect_experience()
-            self.buffer.add(experience)
-
-            # Track rewards for expectancy calculation
-            self.training_stats['rewards'].append(experience.reward)
-
-            # Train on batch
-            if len(self.buffer) >= self.config.batch_size:
-                batch_data = self.buffer.sample_batch(self.config.batch_size)
-                if batch_data is None:
-                    continue
-                losses = self.train_batch(batch_data)
-
-                # Update stats
-                self.training_stats['episodes'].append(episode)
-                self.training_stats['losses'].append(losses['total_loss'])
-                self.training_stats['policy_losses'].append(losses['policy_loss'])
-                self.training_stats['value_losses'].append(losses['value_loss'])
-
-            self.total_steps += 1
-            # Update learning rate (only if optimizer stepped recently)
-            if episode % 100 == 0 and self.last_optimizer_step_episode >= episode - 10:
-                self.scheduler.step()
-
-            # Decay exploration temperature
-            if episode < self.config.temperature_decay_episodes:
-                self.current_temperature *= self.temperature_decay_rate
-                self.current_temperature = max(self.current_temperature, self.config.final_temperature)
-
-            # Logging
-            if episode % self.config.log_interval == 0 and episode > 0:
-                elapsed = time.time() - start_time
-                eps = episode / elapsed
-
-                avg_loss = np.mean(self.training_stats['losses'][-100:]) if self.training_stats['losses'] else 0
-                avg_policy_loss = np.mean(self.training_stats['policy_losses'][-100:]) if self.training_stats['policy_losses'] else 0
-                avg_value_loss = np.mean(self.training_stats['value_losses'][-100:]) if self.training_stats['value_losses'] else 0
-
-                # Calculate expectancy from recent rewards
-                recent_rewards = self.training_stats['rewards'][-100:] if self.training_stats['rewards'] else []
-                if recent_rewards:
-                    wins = [r for r in recent_rewards if r > 0]
-                    losses = [r for r in recent_rewards if r < 0]
-                    win_rate = len(wins) / len(recent_rewards) if recent_rewards else 0
-                    avg_win = np.mean(wins) if wins else 0
-                    avg_loss_val = abs(np.mean(losses)) if losses else 0
-                    expectancy = (win_rate * avg_win) - ((1 - win_rate) * avg_loss_val)
-
-                    # Track stats
-                    self.training_stats['expectancies'].append(expectancy)
-                    self.training_stats['win_rates'].append(win_rate)
-                else:
-                    expectancy = 0
-                    win_rate = 0
-
-                logger.info(
-                    f"Episode {episode:,} | "
-                    f"Steps {self.total_steps:,} | "
-                    f"EPS: {eps:.1f} | "
-                    f"Loss: {avg_loss:.4f} | "
-                    f"Expectancy: {expectancy:+.4f} | "
-                    f"WinRate: {win_rate:.1%}"
-                )
-
-            # Save checkpoint
-            if episode % self.config.checkpoint_interval == 0 and episode > 0:
-                # Check if this is the best model
-                recent_loss = np.mean(self.training_stats['losses'][-50:]) if len(self.training_stats['losses']) >= 50 else float('inf')
-                is_best = recent_loss < best_loss
-                if is_best:
-                    best_loss = recent_loss
-
-                self.save_checkpoint(is_best=is_best)
-
-        # Final checkpoint
-        self.save_checkpoint()
-        logger.info("Training completed!")
-
-        # Save final stats
-        stats_path = os.path.join(
-            self.config.log_dir,
-            f"training_stats_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        # Collect validation episodes
+        val_episodes = self.episode_collector.collect_episodes(
+            num_episodes=10,
+            split='val',
+            temperature=0.0,  # Deterministic
+            add_noise=False
         )
-        with open(stats_path, 'w') as f:
-            json.dump(self.training_stats, f)
 
-        logger.info(f"Training stats saved: {stats_path}")
+        # Calculate validation metrics
+        total_reward = 0
+        total_trades = 0
+        winning_trades = 0
+        total_pnl = 0
 
-    def cleanup(self):
-        """Clean up resources."""
-        self.data_loader.close()
+        for episode in val_episodes:
+            total_reward += episode.total_reward
+            total_trades += episode.num_trades
+            winning_trades += episode.winning_trades
+            total_pnl += episode.expectancy * episode.num_trades
+
+        avg_expectancy = total_pnl / max(total_trades, 1)
+        win_rate = (winning_trades / max(total_trades, 1)) * 100
+
+        logger.info(f"Validation - Expectancy: {avg_expectancy:.4f} pips, "
+                   f"Win Rate: {win_rate:.1f}%, Trades: {total_trades}")
+
+    def resume_from_checkpoint(self, checkpoint_path: str):
+        """Resume training from checkpoint."""
+        logger.info(f"Resuming from {checkpoint_path}")
+
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+
+        self.model.set_weights(checkpoint['model_state'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state'])
+        self.episode = checkpoint['episode']
+        self.total_steps = checkpoint.get('total_steps', self.episode * 360)
+        self.current_temperature = checkpoint.get('temperature', self.config.initial_temperature)
+        self.training_stats = checkpoint.get('training_stats', self.training_stats)
+
+        logger.info(f"Resumed from episode {self.episode}, total steps {self.total_steps}")
+
+
+def main():
+    """Main entry point."""
+    config = TrainingConfig()
+
+    # Check for resume
+    latest_path = os.path.join(config.checkpoint_dir, 'latest.pth')
+
+    trainer = MicroMuZeroTrainer(config)
+
+    if os.path.exists(latest_path):
+        trainer.resume_from_checkpoint(latest_path)
+
+    trainer.train()
 
 
 if __name__ == "__main__":
-    config = TrainingConfig()
-    trainer = MicroMuZeroTrainer(config)
-
-    try:
-        trainer.train()
-    except KeyboardInterrupt:
-        logger.info("Training interrupted by user")
-    finally:
-        trainer.cleanup()
+    main()

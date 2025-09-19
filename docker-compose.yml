@@ -19,7 +19,7 @@ services:
       - ./micro/logs:/workspace/micro/logs
       - ./micro/buffer:/workspace/micro/buffer
       - ./micro/cache:/workspace/micro/cache
-    command: python3 /workspace/micro/training/train_micro_muzero_fixed.py
+    command: python3 /workspace/micro/training/train_micro_muzero.py
     networks:
       - micro-network
     deploy:
