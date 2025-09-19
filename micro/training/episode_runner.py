@@ -58,13 +58,13 @@ class EpisodeRunner:
         db_path: str = "/workspace/data/micro_features.duckdb",
         session_indices_path: str = "/workspace/micro/cache/valid_session_indices.pkl",
         device: str = "cpu",
-        use_amddp1: bool = True  # Use AMDDP1 reward system as documented
+        # Removed confusing flag - always use AMDDP1 as documented
     ):
         self.model = model
         self.mcts = mcts
         self.device = torch.device(device)
         self.conn = duckdb.connect(db_path, read_only=True)
-        self.use_amddp1 = use_amddp1
+        # Always use AMDDP1 reward system (no flag needed)
 
         # Load pre-calculated valid session indices
         self.session_indices = self._load_session_indices(session_indices_path)
@@ -131,6 +131,13 @@ class EpisodeRunner:
         position = 0  # -1: short, 0: flat, 1: long
         entry_price = 0.0
         entry_bar = -1
+
+        # V7-style AMDDP tracking
+        high_water_mark = 0.0  # Track highest PnL achieved
+        prev_max_dd = 0.0  # Previous maximum drawdown
+        dd_sum = 0.0  # Cumulative sum of drawdown increases
+
+        # Legacy tracking (for observation features)
         peak_pnl = 0.0
         max_dd = 0.0
         accumulated_dd = 0.0
@@ -179,10 +186,11 @@ class EpisodeRunner:
                 outcome_probs = self.model.outcome_probability(hidden, action_tensor)
                 outcome_probs = outcome_probs.cpu().numpy()[0]
 
-            # Execute action and calculate reward
-            reward, position, entry_price, entry_bar, trade_result = self._execute_action(
+            # Execute action and calculate reward (V7-style AMDDP)
+            reward, position, entry_price, entry_bar, trade_result, high_water_mark, prev_max_dd, dd_sum = self._execute_action(
                 action, position, entry_price, entry_bar,
-                current_price, bar, session_data, max_dd, bar - entry_bar if entry_bar >= 0 else 0
+                current_price, bar, session_data,
+                high_water_mark, prev_max_dd, dd_sum
             )
 
             # Track trade results
@@ -227,10 +235,8 @@ class EpisodeRunner:
             close_pnl = self._calculate_current_pnl(position, entry_price, final_price)
             bars_held = 360 - entry_bar if entry_bar >= 0 else 0
 
-            if self.use_amddp10:
-                final_reward = self._calculate_amddp10(close_pnl, max_dd, bars_held, position)
-            else:
-                final_reward = self._calculate_amddp1(close_pnl)
+            # Calculate final reward
+            final_reward = self._calculate_reward(close_pnl)
 
             old_reward = experiences[-1].reward if experiences else 0
             experiences[-1].reward = final_reward
@@ -330,13 +336,36 @@ class EpisodeRunner:
     def _execute_action(
         self, action: int, position: int, entry_price: float,
         entry_bar: int, current_price: float, current_bar: int,
-        session_data: pd.DataFrame, max_dd: float = 0.0, bars_held: int = 0
-    ) -> Tuple[float, int, float, int, Optional[float]]:
+        session_data: pd.DataFrame,
+        high_water_mark: float, prev_max_dd: float, dd_sum: float
+    ) -> Tuple[float, int, float, int, Optional[float], float, float, float]:
         """
-        Execute action and return (reward, new_position, new_entry_price, new_entry_bar, trade_pnl).
+        Execute action with V7-style AMDDP reward calculation.
+
+        Returns: (reward, new_position, new_entry_price, new_entry_bar, trade_pnl,
+                 high_water_mark, prev_max_dd, dd_sum)
         """
         reward = 0.0
         trade_pnl = None
+
+        # Update drawdown tracking if in position
+        if position != 0 and entry_price > 0:
+            current_pnl = self._calculate_current_pnl(position, entry_price, current_price)
+
+            # Update high water mark
+            if current_pnl > high_water_mark:
+                high_water_mark = current_pnl
+
+            # Calculate current drawdowns
+            dd_from_open = max(0, -current_pnl)  # DD from entry
+            dd_from_hwm = max(0, high_water_mark - current_pnl)  # DD from HWM
+            current_max_dd = max(dd_from_open, dd_from_hwm)
+
+            # Track drawdown increases
+            if current_max_dd > prev_max_dd:
+                dd_increase = current_max_dd - prev_max_dd
+                dd_sum += dd_increase
+            prev_max_dd = current_max_dd
 
         if action == 0:  # HOLD
             if position == 0:
@@ -350,16 +379,22 @@ class EpisodeRunner:
                 position = 1
                 entry_price = current_price
                 entry_bar = current_bar
+                # Reset drawdown tracking for new position
+                high_water_mark = 0.0
+                prev_max_dd = 0.0
+                dd_sum = 0.0
             elif position == -1:
-                # Close short, open long
+                # Close short with V7-style AMDDP
                 trade_pnl = (entry_price - current_price) * 100 - 4
-                if self.use_amddp10:
-                    reward = self._calculate_amddp10(trade_pnl, max_dd, bars_held, position)
-                else:
-                    reward = self._calculate_amddp1(trade_pnl)
+                reward = self._calculate_amddp1_v7(trade_pnl, dd_sum)
+                # Open long
                 position = 1
                 entry_price = current_price
                 entry_bar = current_bar
+                # Reset drawdown tracking for new position
+                high_water_mark = 0.0
+                prev_max_dd = 0.0
+                dd_sum = 0.0
             else:
                 reward = -1.0  # Invalid action
 
@@ -369,33 +404,41 @@ class EpisodeRunner:
                 position = -1
                 entry_price = current_price
                 entry_bar = current_bar
+                # Reset drawdown tracking for new position
+                high_water_mark = 0.0
+                prev_max_dd = 0.0
+                dd_sum = 0.0
             elif position == 1:
-                # Close long, open short
+                # Close long with V7-style AMDDP
                 trade_pnl = (current_price - entry_price) * 100 - 4
-                if self.use_amddp10:
-                    reward = self._calculate_amddp10(trade_pnl, max_dd, bars_held, position)
-                else:
-                    reward = self._calculate_amddp1(trade_pnl)
+                reward = self._calculate_amddp1_v7(trade_pnl, dd_sum)
+                # Open short
                 position = -1
                 entry_price = current_price
                 entry_bar = current_bar
+                # Reset drawdown tracking for new position
+                high_water_mark = 0.0
+                prev_max_dd = 0.0
+                dd_sum = 0.0
             else:
                 reward = -1.0  # Invalid action
 
         elif action == 3:  # CLOSE
             if position != 0:
                 trade_pnl = self._calculate_current_pnl(position, entry_price, current_price)
-                if self.use_amddp10:
-                    reward = self._calculate_amddp10(trade_pnl, max_dd, bars_held, position)
-                else:
-                    reward = self._calculate_amddp1(trade_pnl)
+                # V7-style AMDDP reward
+                reward = self._calculate_amddp1_v7(trade_pnl, dd_sum)
                 position = 0
                 entry_price = 0.0
                 entry_bar = -1
+                # Reset drawdown tracking
+                high_water_mark = 0.0
+                prev_max_dd = 0.0
+                dd_sum = 0.0
             else:
                 reward = -1.0  # Invalid action
 
-        return reward, position, entry_price, entry_bar, trade_pnl
+        return reward, position, entry_price, entry_bar, trade_pnl, high_water_mark, prev_max_dd, dd_sum
 
     def _calculate_current_pnl(self, position: int, entry_price: float, current_price: float) -> float:
         """Calculate current P&L in pips."""
@@ -430,81 +473,31 @@ class EpisodeRunner:
         else:
             return 1  # NEUTRAL
 
-    def _calculate_amddp1(self, pnl_pips: float) -> float:
-        """AMDDP1 reward calculation with asymmetric penalties."""
-        if pnl_pips > 0:
-            if pnl_pips < 10:
-                return 1.0 + pnl_pips * 0.05
-            elif pnl_pips < 30:
-                return 1.5 + (pnl_pips - 10) * 0.025
-            else:
-                return 2.0 + np.tanh((pnl_pips - 30) / 50)
-        else:
-            pnl_abs = abs(pnl_pips)
-            if pnl_abs < 10:
-                return -1.0 - pnl_abs * 0.1
-            elif pnl_abs < 30:
-                return -2.0 - (pnl_abs - 10) * 0.05
-            else:
-                return -3.0 - np.tanh((pnl_abs - 30) / 30)
-
-    def _calculate_amddp10(self, pnl_pips: float, max_dd: float = 0.0,
-                           bars_held: int = 0, position: int = 0) -> float:
-        """AMDDP10 enhanced reward with multiple factors.
-
-        Incorporates:
-        - Base P&L reward/penalty (asymmetric)
-        - Drawdown penalty
-        - Time decay penalty for long holds
-        - Bonus for quick profitable exits
-        - Position management incentives
+    def _calculate_amddp1_v7(self, pnl_pips: float, dd_sum: float) -> float:
         """
-        # Base reward from P&L
-        if pnl_pips > 0:
-            # Profitable trade
-            if pnl_pips < 5:
-                base_reward = 0.5 + pnl_pips * 0.1  # Small win
-            elif pnl_pips < 15:
-                base_reward = 1.0 + pnl_pips * 0.08  # Medium win
-            elif pnl_pips < 30:
-                base_reward = 2.2 + pnl_pips * 0.05  # Good win
-            elif pnl_pips < 50:
-                base_reward = 3.5 + pnl_pips * 0.03  # Great win
-            else:
-                base_reward = 5.0 + np.tanh((pnl_pips - 50) / 100) * 2  # Exceptional
+        Calculate V7-style AMDDP reward with 1% penalty (AMDDP1).
 
-            # Quick profit bonus (reward fast profitable exits)
-            if bars_held > 0 and bars_held < 30:
-                speed_bonus = (30 - bars_held) / 30 * 0.5
-                base_reward += speed_bonus
+        Formula: reward = pnl_pips - 0.01 * cumulative_drawdown_sum
 
+        With profit protection: If profitable trade has negative reward due to DD,
+        return small positive reward (0.001) instead.
+
+        Args:
+            pnl_pips: Final P&L in pips (including costs)
+            dd_sum: Cumulative sum of drawdown increases during position
+
+        Returns:
+            AMDDP1 reward value
+        """
+        # Base V7 formula with 1% penalty (instead of 10%)
+        base_reward = pnl_pips - 0.01 * dd_sum
+
+        # Apply profit protection
+        if pnl_pips > 0 and base_reward < 0:
+            return 0.001  # Small positive reward for profitable trades
         else:
-            # Losing trade - heavier penalties
-            pnl_abs = abs(pnl_pips)
-            if pnl_abs < 5:
-                base_reward = -1.0 - pnl_abs * 0.2  # Small loss
-            elif pnl_abs < 15:
-                base_reward = -2.0 - pnl_abs * 0.15  # Medium loss
-            elif pnl_abs < 30:
-                base_reward = -4.25 - pnl_abs * 0.1  # Large loss
-            else:
-                base_reward = -7.0 - np.tanh((pnl_abs - 30) / 50) * 3  # Severe loss
+            return base_reward
 
-        # Drawdown penalty (encourage tight risk management)
-        if max_dd > 0:
-            dd_penalty = np.tanh(max_dd / 20) * 2.0  # Up to -2.0 penalty
-            base_reward -= dd_penalty
-
-        # Time decay penalty for holding too long
-        if bars_held > 60:  # Positions held over 1 hour
-            time_penalty = np.tanh((bars_held - 60) / 120) * 1.0
-            base_reward -= time_penalty
-
-        # Flat position bonus (encourage taking breaks)
-        if position == 0 and pnl_pips == 0:
-            base_reward += 0.1  # Small reward for being patient
-
-        return base_reward
 
 
 def test_episode_runner():

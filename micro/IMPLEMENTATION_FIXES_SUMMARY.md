@@ -33,10 +33,15 @@
   - Discount: 0.997 (unchanged)
   - Dirichlet α: 1.0 (strong exploration)
 
-### 4. **Standardized Reward System to AMDDP1**
+### 4. **Implemented V7-Style AMDDP1 Reward System**
 - **File**: `micro/training/episode_runner.py`
-- **Change**: Fixed flag from `use_amddp10` to `use_amddp1`
-- **Ensures**: Reward system matches README documentation
+- **Previous**: Incorrect piecewise function without drawdown tracking
+- **Fixed**: V7-style formula: `pnl_pips - 0.01 * cumulative_dd_sum`
+- **Key Features**:
+  - Tracks cumulative drawdown increases during positions
+  - Uses 1% penalty factor (0.01) instead of 10%
+  - Includes profit protection (profitable trades never negative)
+  - Based on proven V7 MuZero implementation
 
 ### 5. **Fixed Training Configuration**
 - **Learning rate**: 0.002 (FIXED - no decay)

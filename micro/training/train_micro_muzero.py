@@ -93,9 +93,7 @@ class Experience:
     done: bool
     market_outcome: int
     outcome_probs: np.ndarray
-    td_error: float = 0.0  # TD error for prioritization
-    priority: float = 1.0  # Sampling priority
-    visit_count: int = 0  # Number of times sampled
+    # Note: td_error, priority, visit_count removed - no longer using priority replay
 
 
 class BalancedReplayBuffer:

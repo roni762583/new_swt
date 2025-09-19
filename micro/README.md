@@ -206,26 +206,37 @@ def _calculate_action_reward(action, position, entry_price, current_price):
     return np.clip(reward, -3.0, 3.0)
 ```
 
-### AMDDP1 Calculation (Asymmetric Mean Deviation Drawdown Penalty)
+### AMDDP1 Calculation (V7-Style with 1% Drawdown Penalty)
+
+Based on proven V7 MuZero implementation, AMDDP1 uses drawdown-penalized rewards:
 
 ```python
-def _calculate_amddp1(pnl_pips):
-    if pnl_pips > 0:  # Profitable
-        if pnl_pips < 10:
-            return 1.0 + pnl_pips * 0.05
-        elif pnl_pips < 30:
-            return 1.5 + (pnl_pips - 10) * 0.025
-        else:
-            return 2.0 + np.tanh((pnl_pips - 30) / 50)
-    else:  # Loss
-        pnl_abs = abs(pnl_pips)
-        if pnl_abs < 10:
-            return -1.0 - pnl_abs * 0.1
-        elif pnl_abs < 30:
-            return -2.0 - (pnl_abs - 10) * 0.05
-        else:
-            return -3.0 - np.tanh((pnl_abs - 30) / 30)
+def _calculate_amddp1_v7(pnl_pips, cumulative_dd_sum):
+    """
+    V7-style AMDDP with 1% penalty factor.
+
+    Args:
+        pnl_pips: Final P&L in pips (including costs)
+        cumulative_dd_sum: Sum of all drawdown increases during position
+
+    Returns:
+        AMDDP1 reward
+    """
+    # Base formula: PnL minus 1% of accumulated drawdown
+    base_reward = pnl_pips - 0.01 * cumulative_dd_sum
+
+    # Profit protection: profitable trades never get negative reward
+    if pnl_pips > 0 and base_reward < 0:
+        return 0.001  # Small positive reward
+    else:
+        return base_reward
 ```
+
+**Key Components:**
+- **Drawdown Tracking**: Monitors both drawdown from entry AND from high water mark
+- **Cumulative Sum**: Only accumulates INCREASES in drawdown (not absolute values)
+- **1% Penalty**: Uses 0.01 coefficient (not 10% like AMDDP10)
+- **Profit Protection**: Ensures profitable trades always receive positive reward
 
 ---
 
