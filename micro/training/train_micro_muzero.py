@@ -76,7 +76,7 @@ class TrainingConfig:
     cache_dir: str = "/workspace/micro/cache"
 
     # Training schedule
-    num_episodes: int = 100000
+    num_episodes: int = 1000000  # Run for 1 million episodes
     save_interval: int = 50  # Save every 50 episodes
     log_interval: int = 10
     validation_interval: int = 100
