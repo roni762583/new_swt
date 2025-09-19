@@ -697,8 +697,20 @@ class MicroStochasticMuZero(nn.Module):
 
     def set_weights(self, weights: dict):
         """Load model weights from checkpoint."""
-        self.representation.load_state_dict(weights['representation'])
-        self.dynamics.load_state_dict(weights['dynamics'])
-        self.policy.load_state_dict(weights['policy'])
-        self.value.load_state_dict(weights['value'])
-        self.afterstate.load_state_dict(weights['afterstate'])
+        import logging
+        logger = logging.getLogger(__name__)
+        try:
+            logger.info(f"set_weights: Loading representation weights...")
+            self.representation.load_state_dict(weights['representation'])
+            logger.info(f"set_weights: Loading dynamics weights...")
+            self.dynamics.load_state_dict(weights['dynamics'])
+            logger.info(f"set_weights: Loading policy weights...")
+            self.policy.load_state_dict(weights['policy'])
+            logger.info(f"set_weights: Loading value weights...")
+            self.value.load_state_dict(weights['value'])
+            logger.info(f"set_weights: Loading afterstate weights...")
+            self.afterstate.load_state_dict(weights['afterstate'])
+            logger.info(f"set_weights: All weights loaded successfully")
+        except Exception as e:
+            logger.error(f"set_weights: Error loading weights: {e}")
+            raise

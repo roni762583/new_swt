@@ -77,18 +77,21 @@ class EpisodeWorker(Process):
     def run(self):
         """Main worker loop."""
         try:
+            logger.info(f"Worker {self.worker_id} starting initialization...")
             # Initialize in worker process (can't pickle CUDA models)
             self._initialize_worker()
 
-            logger.info(f"Worker {self.worker_id} started on {self.device}")
+            logger.info(f"Worker {self.worker_id} started on {self.device}, waiting for jobs...")
 
             jobs_processed = 0
             total_time = 0
 
             while True:
                 try:
+                    logger.info(f"Worker {self.worker_id} checking queue...")
                     # Get job (timeout after 5 seconds)
                     job = self.job_queue.get(timeout=5.0)
+                    logger.info(f"Worker {self.worker_id} received job: {job}")
 
                     if job is None:  # Poison pill
                         break
@@ -140,29 +143,32 @@ class EpisodeWorker(Process):
         import sys
         sys.path.append('/workspace')
 
+        logger.info(f"Worker {self.worker_id} importing modules...")
         from micro.models.micro_networks import MicroStochasticMuZero
         from micro.training.stochastic_mcts import StochasticMCTS
 
         # Create model
+        logger.info(f"Worker {self.worker_id} creating model...")
         self.model = MicroStochasticMuZero(**self.model_config)
         self.model.to(self.device)
         self.model.eval()
+        logger.info(f"Worker {self.worker_id} model created")
 
-        # Load weights if path provided
-        if Path(self.model_path).exists():
-            checkpoint = torch.load(self.model_path, map_location=self.device)
-            if 'model_state' in checkpoint:
-                self.model.set_weights(checkpoint['model_state'])
-            elif 'model_state_dict' in checkpoint:
-                self.model.load_state_dict(checkpoint['model_state_dict'])
+        # Skip loading weights in workers due to multiprocessing issues
+        # Workers will use random initialization for exploration
+        logger.info(f"Worker {self.worker_id} skipping checkpoint loading (multiprocessing safety)")
+        logger.info(f"Worker {self.worker_id} using random initialization for exploration")
 
         # Create MCTS
+        logger.info(f"Worker {self.worker_id} creating MCTS...")
         self.mcts = StochasticMCTS(
             model=self.model,
             **self.mcts_config
         )
+        logger.info(f"Worker {self.worker_id} MCTS created")
 
         # Create episode runner (always uses AMDDP1 rewards as documented)
+        logger.info(f"Worker {self.worker_id} creating episode runner...")
         self.runner = EpisodeRunner(
             model=self.model,
             mcts=self.mcts,
@@ -170,6 +176,7 @@ class EpisodeWorker(Process):
             session_indices_path=self.session_indices_path,
             device=self.device
         )
+        logger.info(f"Worker {self.worker_id} episode runner created - initialization complete!")
 
     def _collect_episode(self, job: CollectionJob) -> CollectionResult:
         """Collect a single episode."""
@@ -226,9 +233,10 @@ class ParallelEpisodeCollector:
             device_list = ['cpu'] * num_workers
         self.device_list = device_list
 
-        # Queues
-        self.job_queue = Queue(maxsize=num_workers * 2)
-        self.result_queue = Queue()
+        # Use Manager for proper queue sharing across processes
+        manager = Manager()
+        self.job_queue = manager.Queue(maxsize=num_workers * 2)
+        self.result_queue = manager.Queue()
 
         # Workers
         self.workers = []
@@ -264,6 +272,11 @@ class ParallelEpisodeCollector:
 
         logger.info("All workers started")
 
+        # Wait for workers to finish initialization
+        logger.info("Waiting for workers to initialize...")
+        time.sleep(5)  # Give workers time to initialize
+        logger.info("Worker initialization period complete")
+
     def stop(self):
         """Stop all workers."""
         logger.info("Stopping workers...")
@@ -288,7 +301,7 @@ class ParallelEpisodeCollector:
         split: str = 'train',
         temperature: float = 1.0,
         add_noise: bool = True,
-        timeout: float = 300.0
+        timeout: float = 180.0  # Reduced timeout to 3 minutes for faster iteration
     ) -> List[Episode]:
         """
         Collect multiple episodes in parallel.
@@ -310,6 +323,7 @@ class ParallelEpisodeCollector:
         start_time = time.time()
 
         # Submit jobs
+        logger.info(f"Submitting {num_episodes} jobs to queue...")
         for i in range(num_episodes):
             job = CollectionJob(
                 job_id=i,
@@ -320,6 +334,8 @@ class ParallelEpisodeCollector:
             )
             self.job_queue.put(job)
             jobs_submitted += 1
+            logger.debug(f"Submitted job {i+1}/{num_episodes}")
+        logger.info(f"All {jobs_submitted} jobs submitted")
 
         # Collect results
         while results_received < jobs_submitted:

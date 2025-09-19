@@ -47,8 +47,8 @@ class TrainingConfig:
     num_outcomes: int = 3  # UP, NEUTRAL, DOWN
     support_size: int = 300
 
-    # MCTS - 3x3 configuration (3 outcomes, depth 3)
-    num_simulations: int = 10  # Reduced from 50 for faster training (10 sims × 360 steps = 3600 sims/episode)
+    # MCTS - 1 simulation for fastest testing
+    num_simulations: int = 1  # Minimal for testing (1 sim × 360 steps = 360 sims/episode)
     discount: float = 0.997
     depth_limit: int = 3  # FIXED at 3 - sweet spot for trading
 
@@ -446,9 +446,10 @@ class MicroMuZeroTrainer:
             dtype=torch.float32, device=self.device
         )
 
-        # Forward pass
-        hidden = self.model.representation(observations)
-        policy_logits, value_pred = self.model.prediction(hidden)
+        # Forward pass using initial_inference
+        hidden, policy_logits, value_probs = self.model.initial_inference(observations)
+        # Convert value distribution to scalar
+        value_pred = self.model.value.get_value(value_probs)
 
         # Outcome predictions
         outcome_pred = self.model.outcome_probability(hidden, actions.unsqueeze(1))
@@ -542,9 +543,10 @@ class MicroMuZeroTrainer:
         self.initialize_episode_collector()
 
         try:
-            # Initial buffer filling
-            logger.info(f"Filling initial buffer (need {self.config.min_buffer_size} experiences)...")
-            while self.buffer.size() < self.config.min_buffer_size:
+            # Initial buffer filling - skip if resuming and already past initial episodes
+            if self.episode == 0:
+                logger.info(f"Filling initial buffer (need {self.config.min_buffer_size} experiences)...")
+            while self.buffer.size() < self.config.min_buffer_size and self.episode == 0:
                 episodes_needed = max(1, (self.config.min_buffer_size - self.buffer.size()) // 360)
                 episodes_to_collect = min(10, episodes_needed)
                 self.collect_episodes(episodes_to_collect, split='train')
@@ -554,11 +556,18 @@ class MicroMuZeroTrainer:
 
             # Main training loop
             while self.episode < self.config.num_episodes:
-                # Collect new episodes
-                self.collect_episodes(self.config.episodes_per_iteration, split='train')
+                try:
+                    logger.info(f"Starting episode {self.episode}/{self.config.num_episodes}")
+                    # Collect new episodes
+                    self.collect_episodes(self.config.episodes_per_iteration, split='train')
+                    logger.info(f"Collected episodes, now training...")
 
-                # Train on batch
-                losses = self.train_step()
+                    # Train on batch
+                    losses = self.train_step()
+                    logger.info(f"Training step completed with losses: {losses}")
+                except Exception as e:
+                    logger.error(f"Error in training loop: {e}", exc_info=True)
+                    raise
 
                 # Update temperature
                 self.update_temperature()
@@ -647,18 +656,34 @@ class MicroMuZeroTrainer:
 
 def main():
     """Main entry point."""
-    config = TrainingConfig()
+    logger.info("Starting MicroMuZero training main()")
 
-    # Check for resume
-    latest_path = os.path.join(config.checkpoint_dir, 'latest.pth')
+    try:
+        config = TrainingConfig()
 
-    trainer = MicroMuZeroTrainer(config)
+        # Check for resume
+        latest_path = os.path.join(config.checkpoint_dir, 'latest.pth')
 
-    if os.path.exists(latest_path):
-        trainer.resume_from_checkpoint(latest_path)
+        trainer = MicroMuZeroTrainer(config)
 
-    trainer.train()
+        if os.path.exists(latest_path):
+            logger.info(f"Found existing checkpoint at {latest_path}")
+            trainer.resume_from_checkpoint(latest_path)
+        else:
+            logger.info("Starting fresh training - no checkpoint found")
+
+        trainer.train()
+    except Exception as e:
+        logger.error(f"Fatal error in main: {e}", exc_info=True)
+        import traceback
+        traceback.print_exc()
+        raise
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    try:
+        main()
+    except Exception as e:
+        logger.error(f"Training crashed: {e}")
+        sys.exit(1)

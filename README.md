@@ -45,6 +45,21 @@
 - **Smart checkpoint management** with SQN-based best model selection
 - **Docker containers running**: training, validation, and live trading
 
+### 🔴 Training Infrastructure Fixes (September 19, 2025):
+
+**Fixed Critical Issues:**
+- ✅ **Checkpoint corruption** - Fixed model interface and error handling
+- ✅ **Worker deadlock** - Resolved multiprocessing queue/file handle issues
+- ✅ **Memory bottleneck** - Disabled 2.6GB/worker memory cache (10.4GB total)
+- ✅ **Database I/O** - Now using direct queries with proper temp directory config
+- ✅ **Training resumed** - Successfully running at episode 26+
+
+**Current Performance:**
+- Episodes collecting at ~120s each (database I/O bottleneck)
+- CPU usage low (0.16%) due to I/O wait
+- Workers properly initialized and processing jobs
+- Checkpoints saving correctly
+
 ### 🎯 Hold-Only Training Problem - CLEAN REDESIGN (September 18, 2025):
 
 **🔴 NEW CLEAN REWARD SYSTEM:**

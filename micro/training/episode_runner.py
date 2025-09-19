@@ -14,6 +14,8 @@ import logging
 from pathlib import Path
 import pickle
 import time
+# DISABLED: Memory cache disabled due to high memory usage (2.6GB per worker)
+USE_MEMORY_CACHE = False
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -63,7 +65,17 @@ class EpisodeRunner:
         self.model = model
         self.mcts = mcts
         self.device = torch.device(device)
-        self.conn = duckdb.connect(db_path, read_only=True)
+
+        # Use memory cache if available
+        if USE_MEMORY_CACHE:
+            self.memory_cache = get_simple_cache()
+            self.conn = None
+            logger.info("Using simple memory cache for session data")
+        else:
+            self.conn = duckdb.connect(db_path, read_only=True)
+            self.memory_cache = None
+            logger.info("Using database for session data")
+
         # Always use AMDDP1 reward system (no flag needed)
 
         # Load pre-calculated valid session indices
@@ -262,6 +274,12 @@ class EpisodeRunner:
 
     def _load_session_data(self, start_idx: int, end_idx: int) -> pd.DataFrame:
         """Load data for a session including lookback period."""
+        # Use memory cache if available
+        if USE_MEMORY_CACHE and self.memory_cache is not None:
+            # Get from memory cache
+            return self.memory_cache.get_session_data(start_idx, end_idx)
+
+        # Fallback to database query
         # Technical features (first 9) have lag suffixes in database
         # Position features (last 6) don't have suffixes
         db_columns = []
