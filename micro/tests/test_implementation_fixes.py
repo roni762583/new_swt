@@ -134,7 +134,7 @@ def test_mcts_configuration():
         num_actions=4,
         num_outcomes=3,
         discount=0.997,
-        num_simulations=50,  # Increased from 25
+        num_simulations=10,  # Reduced for faster training
         depth_limit=3,  # Fixed at 3
         dirichlet_alpha=1.0,
         exploration_fraction=0.5
@@ -154,7 +154,7 @@ def test_mcts_configuration():
     logger.info(f"Root value: {result['value']:.3f}")
 
     assert mcts.depth_limit == 3, "Depth should be fixed at 3"
-    assert mcts.num_simulations == 50, "Simulations should be 50"
+    assert mcts.num_simulations == 10, "Simulations should be 10"
     assert mcts.num_outcomes == 3, "Should have 3 outcomes"
     assert result['policy'].shape == (4,), "Policy should have 4 actions"
 
@@ -180,7 +180,7 @@ def test_training_configuration():
     assert config.buffer_size == 10000, "Buffer size should be 10000"
     assert config.min_buffer_size == 100, "Min buffer should be 100"
     assert config.learning_rate == 0.002, "Learning rate should be fixed at 0.002"
-    assert config.num_simulations == 50, "Simulations should be 50"
+    assert config.num_simulations == 10, "Simulations should be 10"
     assert config.depth_limit == 3, "Depth should be 3"
 
     logger.info("✅ Training configuration test passed!\n")

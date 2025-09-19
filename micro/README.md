@@ -53,6 +53,123 @@ The system models market uncertainty through:
 14: accumulated_dd      # Total drawdown area: tanh(accumulated_dd/100)
 ```
 
+### Complete Feature Formulas (15 Features)
+
+#### Technical Features (0-8) - Pre-computed in Database
+
+**Feature 0: `position_in_range_60`**
+```python
+# Position in 60-bar range [0, 1]
+high_60 = max(close[t-59:t+1])
+low_60 = min(close[t-59:t+1])
+range_60 = high_60 - low_60
+position_in_range_60 = (close[t] - low_60) / max(range_60, 0.0001)
+```
+
+**Feature 1: `min_max_scaled_momentum_60`**
+```python
+# 60-bar momentum, min-max scaled to [0, 1]
+momentum_60 = close[t] - close[t-60]
+# Then scaled across entire dataset:
+scaled = (momentum_60 - min_momentum) / (max_momentum - min_momentum)
+```
+
+**Feature 2: `min_max_scaled_rolling_range`**
+```python
+# 60-bar rolling range, min-max scaled to [0, 1]
+rolling_range = max(close[t-59:t+1]) - min(close[t-59:t+1])
+# Then scaled across entire dataset:
+scaled = (rolling_range - min_range) / (max_range - min_range)
+```
+
+**Feature 3: `min_max_scaled_momentum_5`**
+```python
+# 5-bar momentum, min-max scaled to [0, 1]
+momentum_5 = close[t] - close[t-5]
+# Then scaled across entire dataset:
+scaled = (momentum_5 - min_mom5) / (max_mom5 - min_mom5)
+```
+
+**Feature 4: `price_change_pips`**
+```python
+# 1-bar price change in pips, tanh scaled
+change_pips = (close[t] - close[t-1]) * 100
+price_change_pips = tanh(change_pips / 10)
+```
+
+**Features 5-8: Time Encodings**
+```python
+# Day of week cyclical encoding
+dow = day_of_week  # 0-6
+dow_cos_final = cos(2 * pi * dow / 7)  # Feature 5
+dow_sin_final = sin(2 * pi * dow / 7)  # Feature 6
+
+# Hour of day cyclical encoding
+hour = hour_of_day  # 0-23
+hour_cos_final = cos(2 * pi * hour / 24)  # Feature 7
+hour_sin_final = sin(2 * pi * hour / 24)  # Feature 8
+```
+
+#### Position Features (9-14) - Calculated Real-time
+
+**Feature 9: `position_side`**
+```python
+# Direct position direction
+position_side = position  # -1 (short), 0 (flat), 1 (long)
+```
+
+**Feature 10: `position_pips`**
+```python
+# Current P&L in pips, tanh scaled
+if position == 1:  # Long
+    pnl_pips = (current_price - entry_price) * 100 - 4  # 4 pip cost
+elif position == -1:  # Short
+    pnl_pips = (entry_price - current_price) * 100 - 4
+else:
+    pnl_pips = 0
+position_pips = tanh(pnl_pips / 100)
+```
+
+**Feature 11: `bars_since_entry`**
+```python
+# Time in position, tanh scaled
+bars_held = current_bar - entry_bar  # if in position
+bars_since_entry = tanh(bars_held / 100)
+```
+
+**Feature 12: `pips_from_peak`**
+```python
+# Distance from best P&L, tanh scaled
+peak_pnl = max(all_pnl_values_in_this_position)
+pips_from_peak = tanh((current_pnl - peak_pnl) / 100)
+# Usually negative (drawdown from peak)
+```
+
+**Feature 13: `max_drawdown_pips`**
+```python
+# Maximum drawdown experienced, tanh scaled
+# Tracks worst point during position
+max_dd = max(all_drawdowns_in_position)
+max_drawdown_pips = tanh(-abs(max_dd) / 100)
+# Always negative or zero
+```
+
+**Feature 14: `accumulated_dd` (V7-style)**
+```python
+# Cumulative sum of drawdown increases
+# Step 1: Calculate current drawdowns
+dd_from_open = max(0, -current_pnl)  # DD from entry
+dd_from_hwm = max(0, high_water_mark - current_pnl)  # DD from peak
+current_max_dd = max(dd_from_open, dd_from_hwm)
+
+# Step 2: Only accumulate INCREASES
+if current_max_dd > prev_max_dd:
+    dd_sum += (current_max_dd - prev_max_dd)
+
+accumulated_dd = tanh(dd_sum / 100)
+# Resets to 0 on new position
+```
+
 ### Data Pipeline Details
 - **Source**: DuckDB database (`data/micro_features_*.db`)
 - **Total Records**: ~1.3M minute bars

@@ -235,8 +235,8 @@ class EpisodeRunner:
             close_pnl = self._calculate_current_pnl(position, entry_price, final_price)
             bars_held = 360 - entry_bar if entry_bar >= 0 else 0
 
-            # Calculate final reward
-            final_reward = self._calculate_reward(close_pnl)
+            # Calculate final reward with V7-style AMDDP
+            final_reward = self._calculate_amddp1_v7(close_pnl, dd_sum)
 
             old_reward = experiences[-1].reward if experiences else 0
             experiences[-1].reward = final_reward

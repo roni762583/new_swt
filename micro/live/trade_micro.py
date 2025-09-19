@@ -478,4 +478,19 @@ if __name__ == "__main__":
         # NO is_demo parameter - PERMANENTLY LIVE TRADING
     )
 
-    trader.run()
+    # Require explicit user confirmation before starting live trading
+    logger.info("="*60)
+    logger.info("⚠️  LIVE TRADING MODE - REAL MONEY AT RISK ⚠️")
+    logger.info("="*60)
+    logger.info(f"Instrument: {args.instrument}")
+    logger.info(f"Checkpoint: {checkpoint_path}")
+    logger.info(f"Device: {trader.device}")
+    logger.info("="*60)
+
+    confirmation = input("\nType 'START LIVE TRADING' to begin (or anything else to exit): ")
+    if confirmation.strip() == "START LIVE TRADING":
+        logger.info("User confirmed. Starting live trading...")
+        trader.run()
+    else:
+        logger.info("Live trading cancelled by user")
+        sys.exit(0)

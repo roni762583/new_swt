@@ -48,7 +48,7 @@ class TrainingConfig:
     support_size: int = 300
 
     # MCTS - 3x3 configuration (3 outcomes, depth 3)
-    num_simulations: int = 50  # Increased from 25 per discussion
+    num_simulations: int = 10  # Reduced from 50 for faster training (10 sims × 360 steps = 3600 sims/episode)
     discount: float = 0.997
     depth_limit: int = 3  # FIXED at 3 - sweet spot for trading
 
