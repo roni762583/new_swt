@@ -6,6 +6,7 @@ Runs full 360-bar episodes instead of single experiences.
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
 import numpy as np
@@ -46,17 +47,18 @@ class TrainingConfig:
     num_outcomes: int = 3  # UP, NEUTRAL, DOWN
     support_size: int = 300
 
-    # MCTS
-    num_simulations: int = 25
+    # MCTS - 3x3 configuration (3 outcomes, depth 3)
+    num_simulations: int = 50  # Increased from 25 per discussion
     discount: float = 0.997
+    depth_limit: int = 3  # FIXED at 3 - sweet spot for trading
 
     # Training
-    learning_rate: float = 0.002
+    learning_rate: float = 0.002  # FIXED - no decay
     weight_decay: float = 1e-5
     batch_size: int = 64
     gradient_clip: float = 1.0
-    buffer_size: int = 50000
-    min_buffer_size: int = 3600  # 10 episodes worth
+    buffer_size: int = 10000  # As per README
+    min_buffer_size: int = 100  # As per README
 
     # Episode collection
     num_workers: int = 4
@@ -96,85 +98,94 @@ class Experience:
     visit_count: int = 0  # Number of times sampled
 
 
-class QualityExperienceBuffer:
-    """Enhanced replay buffer with TD error tracking and smart eviction."""
+class BalancedReplayBuffer:
+    """Simple FIFO replay buffer with quota-based eviction to maintain trade diversity.
 
-    def __init__(self, capacity: int = 50000, priority_alpha: float = 0.7, priority_beta: float = 0.5):
+    NO priority experience replay - just simple random sampling with trade quota.
+    As described in README: maintains minimum 30% trading trajectories.
+    """
+
+    def __init__(self, capacity: int = 10000, trade_quota: float = 0.3):
+        """
+        Initialize balanced replay buffer.
+
+        Args:
+            capacity: Maximum buffer size (10000 as per README)
+            trade_quota: Minimum fraction of trading experiences (30%)
+        """
         self.capacity = capacity
         self.buffer = []
-        self.position = 0
-        self.priority_alpha = priority_alpha  # How much to prioritize high TD error
-        self.priority_beta = priority_beta  # Importance sampling correction
-        self.max_priority = 1.0
-        self.trade_diversity_threshold = 0.3  # Ensure 30% have trades
+        self.trade_quota = trade_quota
 
     def add(self, experience: Experience):
-        """Add experience to buffer with initial high priority."""
-        # New experiences get max priority to ensure they're trained on
-        experience.priority = self.max_priority
-        experience.visit_count = 0
+        """Add experience to buffer using quota-based eviction."""
+        if len(self.buffer) >= self.capacity:
+            self._evict_with_quota()
+        self.buffer.append(experience)
 
-        if len(self.buffer) < self.capacity:
-            self.buffer.append(experience)
+    def _evict_with_quota(self):
+        """Evict experience while maintaining trade quota.
+
+        If below quota: evict random hold trajectory
+        If above quota: standard FIFO eviction
+        """
+        trade_fraction = self._get_trade_fraction()
+
+        if trade_fraction < self.trade_quota:
+            # Below quota - try to evict a hold experience
+            hold_indices = [i for i, exp in enumerate(self.buffer)
+                          if exp.action == 0]  # HOLD action
+            if hold_indices:
+                evict_idx = np.random.choice(hold_indices)
+            else:
+                evict_idx = 0  # FIFO fallback if no holds
         else:
-            # Smart eviction: prefer removing low-priority, high-visit experiences
-            eviction_scores = np.array([
-                exp.priority / (1 + exp.visit_count * 0.1) for exp in self.buffer
-            ])
-            evict_idx = np.argmin(eviction_scores)
-            self.buffer[evict_idx] = experience
+            # Above quota or balanced - standard FIFO
+            evict_idx = 0
 
-    def sample(self, batch_size: int) -> Tuple[List[Experience], np.ndarray]:
-        """Sample batch with priority-based sampling and importance weights."""
+        self.buffer.pop(evict_idx)
+
+    def _get_trade_fraction(self) -> float:
+        """Calculate fraction of trading experiences in buffer."""
+        if not self.buffer:
+            return 0.0
+        trade_count = sum(1 for exp in self.buffer if exp.action in [1, 2, 3])
+        return trade_count / len(self.buffer)
+
+    def sample(self, batch_size: int) -> List[Experience]:
+        """Simple random sampling without priorities or weights.
+
+        Returns:
+            List of experiences (no importance weights)
+        """
         if len(self.buffer) < batch_size:
-            indices = list(range(len(self.buffer)))
-            batch = self.buffer.copy()
-            weights = np.ones(len(self.buffer))
-        else:
-            # Calculate sampling probabilities
-            priorities = np.array([exp.priority for exp in self.buffer])
-            probs = priorities ** self.priority_alpha
-            probs = probs / probs.sum()
+            # Return all experiences if buffer is smaller than batch
+            return self.buffer.copy()
 
-            # Sample with priority
-            indices = np.random.choice(len(self.buffer), batch_size, p=probs, replace=False)
-            batch = [self.buffer[idx] for idx in indices]
+        # Simple random sampling
+        indices = np.random.choice(len(self.buffer), batch_size, replace=False)
+        batch = [self.buffer[idx] for idx in indices]
 
-            # Calculate importance sampling weights
-            weights = (len(self.buffer) * probs[indices]) ** (-self.priority_beta)
-            weights = weights / weights.max()  # Normalize
+        # Ensure minimum trade diversity in sampled batch
+        trade_count = sum(1 for exp in batch if exp.action in [1, 2, 3])
+        if trade_count < batch_size * self.trade_quota:
+            # Need more trade experiences in batch
+            trade_pool = [i for i, exp in enumerate(self.buffer)
+                         if exp.action in [1, 2, 3] and i not in indices]
+            hold_in_batch = [i for i, exp in enumerate(batch) if exp.action == 0]
 
-            # Ensure trade diversity (at least 30% should have trades)
-            trade_experiences = [i for i, exp in enumerate(batch)
-                               if exp.action in [1, 2, 3]]  # BUY, SELL, CLOSE
-            if len(trade_experiences) < batch_size * self.trade_diversity_threshold:
-                # Add more trade experiences
-                trade_pool = [i for i, exp in enumerate(self.buffer)
-                            if exp.action in [1, 2, 3] and i not in indices]
-                if trade_pool:
-                    n_needed = int(batch_size * self.trade_diversity_threshold) - len(trade_experiences)
-                    n_replace = min(n_needed, len(trade_pool))
-                    replace_indices = np.random.choice(
-                        [i for i, exp in enumerate(batch) if exp.action == 0][:n_replace],
-                        n_replace, replace=False
-                    )
-                    new_trade_indices = np.random.choice(trade_pool, n_replace, replace=False)
-                    for i, new_idx in zip(replace_indices, new_trade_indices):
-                        batch[i] = self.buffer[new_idx]
-                        weights[i] = 1.0  # Reset weight for diversity samples
+            if trade_pool and hold_in_batch:
+                n_needed = int(batch_size * self.trade_quota) - trade_count
+                n_replace = min(n_needed, len(trade_pool), len(hold_in_batch))
 
-        # Update visit counts
-        for exp in batch:
-            exp.visit_count += 1
+                # Replace some holds with trades
+                replace_indices = np.random.choice(hold_in_batch, n_replace, replace=False)
+                new_trade_indices = np.random.choice(trade_pool, n_replace, replace=False)
 
-        return batch, weights
+                for batch_idx, buffer_idx in zip(replace_indices, new_trade_indices):
+                    batch[batch_idx] = self.buffer[buffer_idx]
 
-    def update_priorities(self, experiences: List[Experience], td_errors: np.ndarray):
-        """Update priorities based on TD errors."""
-        for exp, td_error in zip(experiences, td_errors):
-            exp.td_error = abs(td_error)
-            exp.priority = (abs(td_error) + 1e-6) ** self.priority_alpha
-            self.max_priority = max(self.max_priority, exp.priority)
+        return batch
 
     def size(self) -> int:
         """Get current buffer size."""
@@ -185,18 +196,16 @@ class QualityExperienceBuffer:
         if not self.buffer:
             return {}
 
-        td_errors = [exp.td_error for exp in self.buffer]
-        priorities = [exp.priority for exp in self.buffer]
-        visit_counts = [exp.visit_count for exp in self.buffer]
-        action_counts = {i: sum(1 for exp in self.buffer if exp.action == i) for i in range(4)}
+        action_counts = {i: sum(1 for exp in self.buffer if exp.action == i)
+                        for i in range(4)}
+        trade_fraction = self._get_trade_fraction()
 
         return {
-            'mean_td_error': np.mean(td_errors),
-            'max_td_error': np.max(td_errors),
-            'mean_priority': np.mean(priorities),
-            'mean_visits': np.mean(visit_counts),
+            'buffer_size': len(self.buffer),
             'action_distribution': action_counts,
-            'trade_ratio': (action_counts[1] + action_counts[2] + action_counts[3]) / len(self.buffer)
+            'trade_ratio': trade_fraction,
+            'hold_ratio': 1.0 - trade_fraction,
+            'quota_satisfied': trade_fraction >= self.trade_quota
         }
 
 
@@ -232,21 +241,20 @@ class MicroMuZeroTrainer:
             weight_decay=config.weight_decay
         )
 
-        # Initialize MCTS
+        # Initialize MCTS with 3x3 configuration
         self.mcts = StochasticMCTS(
             model=self.model,
             num_simulations=config.num_simulations,
             discount=config.discount,
-            depth_limit=3,
+            depth_limit=config.depth_limit,  # Use config value (3)
             dirichlet_alpha=1.0,
             exploration_fraction=0.5
         )
 
-        # Initialize quality experience buffer with TD error tracking
-        self.buffer = QualityExperienceBuffer(
-            capacity=config.buffer_size,
-            priority_alpha=0.7,
-            priority_beta=0.5
+        # Initialize balanced replay buffer (NO priority replay)
+        self.buffer = BalancedReplayBuffer(
+            capacity=config.buffer_size,  # 10000
+            trade_quota=0.3  # Maintain 30% trade experiences
         )
 
         # Temperature for exploration
@@ -403,12 +411,12 @@ class MicroMuZeroTrainer:
         return experiences_added
 
     def train_step(self) -> Dict[str, float]:
-        """Single training step with TD error calculation."""
+        """Single training step without priority replay."""
         if self.buffer.size() < self.config.batch_size:
             return {}
 
-        # Sample batch with importance weights
-        batch, importance_weights = self.buffer.sample(self.config.batch_size)
+        # Simple random sampling (no importance weights)
+        batch = self.buffer.sample(self.config.batch_size)
 
         # Prepare batch tensors
         observations = torch.tensor(
@@ -447,21 +455,12 @@ class MicroMuZeroTrainer:
         # Outcome predictions
         outcome_pred = self.model.outcome_probability(hidden, actions.unsqueeze(1))
 
-        # Convert importance weights to tensor
-        weights = torch.tensor(importance_weights, dtype=torch.float32, device=self.device)
+        # Calculate losses (no weighting)
+        policy_loss = -(policies * torch.log_softmax(policy_logits, dim=1)).sum(1).mean()
+        value_loss = F.mse_loss(value_pred.squeeze(), values)
+        outcome_loss = F.cross_entropy(outcome_pred, outcomes)
 
-        # Calculate TD errors for priority updates
-        with torch.no_grad():
-            td_errors = (rewards + self.config.discount * values - value_pred.squeeze()).cpu().numpy()
-
-        # Update priorities in buffer
-        self.buffer.update_priorities(batch, td_errors)
-
-        # Calculate weighted losses
-        policy_loss = -(weights * (policies * torch.log_softmax(policy_logits, dim=1)).sum(1)).mean()
-        value_loss = (weights * (value_pred.squeeze() - values) ** 2).mean()
-        outcome_loss = (weights * nn.CrossEntropyLoss(reduction='none')(outcome_pred, outcomes)).mean()
-
+        # Combined loss with equal weighting
         total_loss = policy_loss + value_loss + outcome_loss
 
         # Backward pass
@@ -478,9 +477,9 @@ class MicroMuZeroTrainer:
             'policy_loss': policy_loss.item(),
             'value_loss': value_loss.item(),
             'outcome_loss': outcome_loss.item(),
-            'mean_td_error': buffer_stats.get('mean_td_error', 0.0),
-            'max_td_error': buffer_stats.get('max_td_error', 0.0),
-            'trade_ratio': buffer_stats.get('trade_ratio', 0.0)
+            'buffer_size': buffer_stats.get('buffer_size', 0),
+            'trade_ratio': buffer_stats.get('trade_ratio', 0.0),
+            'quota_satisfied': buffer_stats.get('quota_satisfied', False)
         }
 
     def update_temperature(self):

@@ -16,7 +16,7 @@ from dataclasses import dataclass, asdict
 import pickle
 from pathlib import Path
 
-from episode_runner import EpisodeRunner, Episode
+from micro.training.episode_runner import EpisodeRunner, Episode
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

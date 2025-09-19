@@ -48,17 +48,28 @@ class MarketOutcomeCalculator:
 
     def get_rolling_stdev(self) -> Optional[float]:
         """
-        Calculate current rolling standard deviation.
+        Calculate current rolling standard deviation of returns.
 
         Returns:
-            Rolling stdev or None if insufficient data
+            Rolling stdev of returns or None if insufficient data
         """
-        if len(self.price_history) < self.window_size:
+        if len(self.price_history) < self.window_size + 1:
             return None
 
-        recent_prices = self.price_history[-self.window_size:]
-        stdev = np.std(recent_prices)
-        return max(stdev, self.min_threshold)
+        # Get recent prices including one extra for returns calculation
+        recent_prices = self.price_history[-(self.window_size + 1):]
+
+        # Calculate returns
+        returns = np.diff(recent_prices) / recent_prices[:-1]
+
+        # Calculate stdev of returns
+        stdev = np.std(returns)
+
+        # Convert back to price units using current price level
+        current_price = self.price_history[-1]
+        price_stdev = stdev * abs(current_price)
+
+        return max(price_stdev, self.min_threshold)
 
     def calculate_outcome(
         self,

@@ -58,13 +58,13 @@ class EpisodeRunner:
         db_path: str = "/workspace/data/micro_features.duckdb",
         session_indices_path: str = "/workspace/micro/cache/valid_session_indices.pkl",
         device: str = "cpu",
-        use_amddp10: bool = True  # Use enhanced AMDDP10 reward system
+        use_amddp1: bool = True  # Use AMDDP1 reward system as documented
     ):
         self.model = model
         self.mcts = mcts
         self.device = torch.device(device)
         self.conn = duckdb.connect(db_path, read_only=True)
-        self.use_amddp10 = use_amddp10
+        self.use_amddp1 = use_amddp1
 
         # Load pre-calculated valid session indices
         self.session_indices = self._load_session_indices(session_indices_path)
