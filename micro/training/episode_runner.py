@@ -14,11 +14,17 @@ import logging
 from pathlib import Path
 import pickle
 import time
-# DISABLED: Memory cache disabled due to high memory usage (2.6GB per worker)
-USE_MEMORY_CACHE = False
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Try to use optimized memory cache if available
+try:
+    from micro.training.optimized_cache import get_optimized_cache
+    USE_MEMORY_CACHE = True
+    logger.info("Optimized memory cache available (217MB vs 2.6GB)")
+except ImportError:
+    USE_MEMORY_CACHE = False
+    logger.info("Optimized cache not available, using direct database queries")
 
 
 @dataclass
@@ -68,9 +74,9 @@ class EpisodeRunner:
 
         # Use memory cache if available
         if USE_MEMORY_CACHE:
-            self.memory_cache = get_simple_cache()
+            self.memory_cache = get_optimized_cache()
             self.conn = None
-            logger.info("Using simple memory cache for session data")
+            logger.info("Using optimized memory cache for session data")
         else:
             self.conn = duckdb.connect(db_path, read_only=True)
             self.memory_cache = None
