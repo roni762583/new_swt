@@ -121,7 +121,8 @@ class MCTS:
         pb_c_init: float = 1.25,
         num_simulations: int = 25,  # Increased for better search
         dirichlet_alpha: float = 0.5,   # More exploration noise
-        exploration_fraction: float = 0.4
+        exploration_fraction: float = 0.4,
+        depth_limit: int = 3  # Maximum depth to prevent infinite loops
     ):
         """
         Initialize MCTS.
@@ -144,6 +145,7 @@ class MCTS:
         self.num_simulations = num_simulations
         self.dirichlet_alpha = dirichlet_alpha
         self.exploration_fraction = exploration_fraction
+        self.depth_limit = depth_limit
 
     def run(
         self,
@@ -205,7 +207,8 @@ class MCTS:
             node = root
             depth = 0
 
-            while node.expanded():
+            # Add depth limit to prevent infinite loops
+            while node.expanded() and depth < self.depth_limit:
                 action, node = self.select_action(node, min_max_stats)
                 path.append(node)
                 depth += 1

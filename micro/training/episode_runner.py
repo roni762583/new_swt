@@ -169,16 +169,20 @@ class EpisodeRunner:
         winning_trades = 0
         total_pnl = 0.0
 
+        import time
         logger.info(f"About to start episode loop for session {start_bar_index}")
         # Run through 360 bars
         for bar in range(360):
             # Create observation from last 32 bars
             if bar == 0:
                 logger.debug(f"Starting episode loop for session {start_bar_index}")
+
+            obs_start = time.time()
             observation = self._create_observation(
                 session_data, bar + 32, position, entry_price,
                 entry_bar, peak_pnl, max_dd, accumulated_dd
             )
+            obs_time = time.time() - obs_start
 
             # Get action from MCTS
             obs_tensor = torch.tensor(
@@ -186,13 +190,20 @@ class EpisodeRunner:
             ).unsqueeze(0)
 
             if bar == 0:
-                logger.debug(f"Running MCTS for first bar of session {start_bar_index}")
+                logger.info(f"Running MCTS for first bar (obs took {obs_time:.3f}s)")
 
+            mcts_start = time.time()
             mcts_result = self.mcts.run(
                 obs_tensor,
                 temperature=temperature,
                 add_noise=add_noise and split == 'train'  # Only add noise during training
             )
+            mcts_time = time.time() - mcts_start
+
+            if bar == 0:
+                logger.info(f"MCTS took {mcts_time:.3f}s for first bar")
+            elif bar % 50 == 0:
+                logger.info(f"Bar {bar}: MCTS took {mcts_time:.3f}s")
 
             action = mcts_result['action']
             policy = mcts_result['policy']
