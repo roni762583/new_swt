@@ -13,7 +13,7 @@ Micro Stochastic MuZero Neural Networks with TCN Integration.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Union
 import numpy as np
 
 from .tcn_block import TCNBlock
@@ -73,14 +73,18 @@ class MLPResidualBlock(nn.Module):
 
 class RepresentationNetwork(nn.Module):
     """
-    Representation Network with embedded TCN encoder.
+    Representation Network with separated temporal and static processing.
 
-    Converts observation (32, 15) -> hidden state (256).
+    Converts:
+    - temporal features (32, 9) -> TCN processing
+    - static features (6,) -> Direct processing
+    Combined -> hidden state (256)
     """
 
     def __init__(
         self,
-        input_features: int = 15,
+        temporal_features: int = 9,  # Market (5) + Time (4)
+        static_features: int = 6,    # Position features
         lag_window: int = 32,
         hidden_dim: int = 256,
         tcn_channels: int = 48,
@@ -88,23 +92,34 @@ class RepresentationNetwork(nn.Module):
     ):
         super().__init__()
 
-        # TCN Front-End (integrated for end-to-end learning)
+        self.temporal_features = temporal_features
+        self.static_features = static_features
+
+        # TCN for temporal features only
         self.tcn_encoder = TCNBlock(
-            in_channels=input_features,
-            out_channels=tcn_channels,  # Optimal compression to 48D
+            in_channels=temporal_features,  # Only 9 temporal features
+            out_channels=tcn_channels,
             kernel_size=3,
-            dilations=[1, 2, 4],  # Receptive field = 15 (perfect for 32 lag)
+            dilations=[1, 2, 4],
             dropout=dropout,
             causal=True
         )
 
-        # Temporal attention pooling (learns which timesteps matter)
+        # Temporal attention pooling
         self.time_attention = nn.Linear(tcn_channels, 1)
 
-        # Skip connection projection (48D TCN + 15D raw = 63D)
-        self.projection = nn.Linear(tcn_channels + input_features, hidden_dim)
+        # Static feature processing (position features)
+        self.static_processor = nn.Sequential(
+            nn.Linear(static_features, 32),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(32, 16)
+        )
 
-        # Standard residual blocks with dropout
+        # Combine: TCN output (48) + current temporal (9) + static (16) = 73
+        self.projection = nn.Linear(tcn_channels + temporal_features + 16, hidden_dim)
+
+        # Common residual blocks
         self.residual_blocks = nn.ModuleList([
             MLPResidualBlock(hidden_dim, dropout=dropout) for _ in range(3)
         ])
@@ -112,34 +127,34 @@ class RepresentationNetwork(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.layer_norm = nn.LayerNorm(hidden_dim)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, temporal: torch.Tensor, static: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass.
+        Forward pass with separated inputs.
 
         Args:
-            x: Input tensor (batch, 32, 15)
+            temporal: Temporal features (batch, 32, 9)
+            static: Static features (batch, 6)
 
         Returns:
             Hidden state (batch, 256)
         """
-        batch_size = x.size(0)
-
-        # TCN encoding with multi-scale temporal patterns
-        tcn_out = self.tcn_encoder(x)  # (batch, 48, 32)
-        tcn_out = self.dropout(tcn_out)  # Dropout after TCN
+        # Process temporal features through TCN
+        tcn_out = self.tcn_encoder(temporal)  # (batch, 48, 32)
+        tcn_out = self.dropout(tcn_out)
 
         # Attention-weighted temporal pooling
-        attention_logits = self.time_attention(
-            tcn_out.transpose(1, 2)
-        )  # (batch, 32, 1)
+        attention_logits = self.time_attention(tcn_out.transpose(1, 2))  # (batch, 32, 1)
         attention_weights = F.softmax(attention_logits, dim=1)
-        pooled = (
-            tcn_out * attention_weights.transpose(1, 2)
-        ).sum(dim=2)  # (batch, 48)
+        pooled = (tcn_out * attention_weights.transpose(1, 2)).sum(dim=2)  # (batch, 48)
 
-        # Skip connection: combine temporal features with current state
-        current_features = x[:, -1, :]  # Last timestep raw features (batch, 15)
-        combined = torch.cat([pooled, current_features], dim=1)  # (batch, 63)
+        # Get current temporal features (last timestep)
+        current_temporal = temporal[:, -1, :]  # (batch, 9)
+
+        # Process static features
+        static_encoded = self.static_processor(static)  # (batch, 16)
+
+        # Combine all features
+        combined = torch.cat([pooled, current_temporal, static_encoded], dim=1)  # (batch, 73)
 
         # Project to hidden dimension
         hidden = self.projection(combined)  # (batch, 256)
@@ -460,7 +475,8 @@ class MicroStochasticMuZero(nn.Module):
 
     def __init__(
         self,
-        input_features: int = 15,
+        temporal_features: int = 9,  # Market (5) + Time (4)
+        static_features: int = 6,  # Position features
         lag_window: int = 32,
         hidden_dim: int = 256,
         action_dim: int = 4,
@@ -475,9 +491,10 @@ class MicroStochasticMuZero(nn.Module):
         self.action_dim = action_dim
         self.num_outcomes = num_outcomes
 
-        # Initialize all networks
+        # Initialize representation network with separated inputs
         self.representation = RepresentationNetwork(
-            input_features=input_features,
+            temporal_features=temporal_features,
+            static_features=static_features,
             lag_window=lag_window,
             hidden_dim=hidden_dim,
             dropout=dropout
@@ -526,20 +543,24 @@ class MicroStochasticMuZero(nn.Module):
 
     def initial_inference(
         self,
-        observation: torch.Tensor
+        observation: Tuple[torch.Tensor, torch.Tensor]
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Initial inference from observation.
 
         Args:
-            observation: Input (batch, 32, 15)
+            observation: Tuple of (temporal, static) tensors
+                temporal: (batch, 32, 9)
+                static: (batch, 6)
 
         Returns:
             hidden: Hidden state (batch, 256)
             policy_logits: Action logits (batch, 4)
             value_probs: Value distribution (batch, 601)
         """
-        hidden = self.representation(observation)
+        temporal, static = observation
+        hidden = self.representation(temporal, static)
+
         policy_logits = self.policy(hidden)
         value_probs = self.value(hidden)
 

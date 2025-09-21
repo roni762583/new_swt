@@ -212,7 +212,7 @@ class StochasticMCTS:
 
     def run(
         self,
-        observation: torch.Tensor,
+        observation: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
         temperature: float = 1.0,
         add_noise: bool = True
     ) -> Dict:
@@ -220,7 +220,11 @@ class StochasticMCTS:
         Run MCTS simulations from given observation.
 
         Args:
-            observation: Initial observation (batch, 32, 15)
+            observation: Either:
+                - Legacy: Single tensor (batch, 32, 15)
+                - Separated: Tuple of (temporal, static) tensors
+                    temporal: (batch, 32, 9) - market + time features
+                    static: (batch, 6) - position features
             temperature: Temperature for action selection
             add_noise: Whether to add exploration noise
 
@@ -231,7 +235,10 @@ class StochasticMCTS:
                 - value: Root value estimate
                 - tree_stats: Search statistics
         """
-        logger.debug(f"MCTS.run starting with obs shape {observation.shape}")
+        if isinstance(observation, tuple):
+            logger.debug(f"MCTS.run starting with separated obs: temporal {observation[0].shape}, static {observation[1].shape}")
+        else:
+            logger.debug(f"MCTS.run starting with obs shape {observation.shape}")
 
         # Ensure we're in eval mode
         self.model.eval()
@@ -242,8 +249,20 @@ class StochasticMCTS:
             logger.debug("MCTS: Running initial inference...")
             try:
                 # Ensure observation is on the correct device
-                if observation.device != next(self.model.parameters()).device:
-                    observation = observation.to(next(self.model.parameters()).device)
+                device = next(self.model.parameters()).device
+
+                if isinstance(observation, tuple):
+                    # Separated inputs
+                    temporal, static = observation
+                    if temporal.device != device:
+                        temporal = temporal.to(device)
+                    if static.device != device:
+                        static = static.to(device)
+                    observation = (temporal, static)
+                else:
+                    # Legacy single tensor
+                    if observation.device != device:
+                        observation = observation.to(device)
 
                 hidden, policy_logits, value_probs = self.model.initial_inference(
                     observation

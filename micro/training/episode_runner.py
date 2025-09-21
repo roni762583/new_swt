@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import torch
 import duckdb
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Tuple, Optional, Any, Union
 from dataclasses import dataclass
 import logging
 from pathlib import Path
@@ -31,7 +31,7 @@ except ImportError:
 @dataclass
 class Experience:
     """Single experience in a trajectory."""
-    observation: np.ndarray  # (32, 15) - last 32 bars
+    observation: Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]  # Either (32, 15) or ((32, 9), (6,))
     action: int
     reward: float
     done: bool
@@ -183,6 +183,7 @@ class EpisodeRunner:
                 logger.debug(f"Starting episode loop for session {start_bar_index}")
 
             obs_start = time.time()
+            # Always use separated inputs
             observation = self._create_observation(
                 session_data, bar + 32, position, entry_price,
                 entry_bar, peak_pnl, max_dd, accumulated_dd
@@ -190,9 +191,15 @@ class EpisodeRunner:
             obs_time = time.time() - obs_start
 
             # Get action from MCTS
-            obs_tensor = torch.tensor(
-                observation, dtype=torch.float32, device=self.device
+            # Separated inputs: (temporal, static)
+            temporal, static = observation
+            temporal_tensor = torch.tensor(
+                temporal, dtype=torch.float32, device=self.device
             ).unsqueeze(0)
+            static_tensor = torch.tensor(
+                static, dtype=torch.float32, device=self.device
+            ).unsqueeze(0)
+            obs_tensor = (temporal_tensor, static_tensor)
 
             if bar == 0:
                 logger.info(f"Running MCTS for first bar (obs took {obs_time:.3f}s)")
@@ -227,7 +234,7 @@ class EpisodeRunner:
 
             # Get outcome predictions from model
             with torch.no_grad():
-                hidden = self.model.representation(obs_tensor)
+                hidden = self.model.representation(*obs_tensor)  # Unpack tuple
                 action_tensor = torch.tensor([[action]], device=self.device)
                 outcome_probs = self.model.outcome_probability(hidden, action_tensor)
                 outcome_probs = outcome_probs.cpu().numpy()[0]
@@ -342,64 +349,53 @@ class EpisodeRunner:
         self, data: pd.DataFrame, current_bar: int,
         position: int, entry_price: float, entry_bar: int,
         peak_pnl: float, max_dd: float, accumulated_dd: float
-    ) -> np.ndarray:
-        """Create (32, 15) observation for current timestep.
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Create observation for current timestep.
 
-        Structure:
-        - Columns 0-4: Market features with proper lags (row 0=current, row 31=oldest)
-        - Columns 5-8: Time features with proper lags (row 0=current, row 31=oldest)
-        - Columns 9-14: Position features (current only, not lagged)
+        Returns:
+            ((32, 9) temporal, (6,) static) tuple
         """
-        obs = np.zeros((32, 15), dtype=np.float32)
         current_data = data.iloc[current_bar]
+        current_price = current_data['close']
 
-        # Fill market features with proper temporal lags
-        # Row index matches lag: row 0 = lag 0 (current), row 31 = lag 31 (oldest)
+        # Create separated temporal and static features
+        temporal = np.zeros((32, 9), dtype=np.float32)  # Market (5) + Time (4)
+        static = np.zeros(6, dtype=np.float32)  # Position features
+
+        # Fill temporal features with proper lags
+        # Market features (columns 0-4)
         for col_idx, base_feature in enumerate(self.market_feature_bases):
             for lag in range(32):
                 col_name = f"{base_feature}_{lag}"
                 if col_name not in current_data:
-                    logger.error(f"Column '{col_name}' not found in data")
+                    logger.error(f"Column '{col_name}' not found")
                     raise KeyError(f"Column '{col_name}' not found")
-                obs[lag, col_idx] = current_data[col_name]
+                temporal[lag, col_idx] = current_data[col_name]
 
-        # Fill time features (columns 5-8) - also with proper temporal lags
+        # Time features (columns 5-8)
         for col_idx, base_feature in enumerate(self.time_feature_bases, start=5):
             for lag in range(32):
                 col_name = f"{base_feature}_{lag}"
                 if col_name not in current_data:
                     logger.error(f"Time feature '{col_name}' not found")
                     raise KeyError(f"Time feature '{col_name}' not found")
-                # Proper temporal lag for time encoding
-                obs[lag, col_idx] = current_data[col_name]
+                temporal[lag, col_idx] = current_data[col_name]
 
-        # Fill position features (columns 9-14) - current values only, not lagged
-        current_price = current_data['close']
+        # Static position features (current only, no repetition)
+        static[0] = position  # Position side
 
-        # All rows get the same current position features (not lagged)
-        for t in range(32):
-            # Position side (column 9)
-            obs[t, 9] = position
+        if position != 0 and entry_bar >= 0:
+            pnl = self._calculate_current_pnl(position, entry_price, current_price)
+            static[1] = np.tanh(pnl / 100)  # Position pips
 
-            if position != 0 and entry_bar >= 0:
-                # Position pips (column 10)
-                pnl = self._calculate_current_pnl(position, entry_price, current_price)
-                obs[t, 10] = np.tanh(pnl / 100)
+            bars_held = current_bar - entry_bar
+            static[2] = np.tanh(bars_held / 100)  # Bars since entry
 
-                # Bars since entry (column 11)
-                bars_held = current_bar - entry_bar
-                obs[t, 11] = np.tanh(bars_held / 100)
+            static[3] = np.tanh((pnl - peak_pnl) / 100)  # Pips from peak
+            static[4] = np.tanh(-abs(max_dd) / 100)  # Max drawdown
+            static[5] = np.tanh(accumulated_dd / 100)  # Accumulated DD
 
-                # Pips from peak (column 12)
-                obs[t, 12] = np.tanh((pnl - peak_pnl) / 100)
-
-                # Max drawdown (column 13)
-                obs[t, 13] = np.tanh(-abs(max_dd) / 100)
-
-                # Accumulated drawdown (column 14)
-                obs[t, 14] = np.tanh(accumulated_dd / 100)
-
-        return obs
+        return temporal, static
 
     def _execute_action(
         self, action: int, position: int, entry_price: float,

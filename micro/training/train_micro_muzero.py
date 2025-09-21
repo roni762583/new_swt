@@ -40,7 +40,8 @@ logger = logging.getLogger(__name__)
 class TrainingConfig:
     """Training configuration."""
     # Model
-    input_features: int = 15
+    temporal_features: int = 9  # Market (5) + Time (4)
+    static_features: int = 6  # Position features
     lag_window: int = 32
     hidden_dim: int = 256
     action_dim: int = 4
@@ -85,7 +86,7 @@ class TrainingConfig:
 @dataclass
 class Experience:
     """Single experience for replay buffer."""
-    observation: np.ndarray
+    observation: np.ndarray  # Can be either (32,15) or tuple of ((32,9), (6,))
     action: int
     reward: float
     policy: np.ndarray
@@ -222,9 +223,10 @@ class MicroMuZeroTrainer:
         # Initialize device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Initialize model
+        # Initialize model with separated architecture
         self.model = MicroStochasticMuZero(
-            input_features=config.input_features,
+            temporal_features=config.temporal_features,
+            static_features=config.static_features,
             lag_window=config.lag_window,
             hidden_dim=config.hidden_dim,
             action_dim=config.action_dim,
@@ -297,7 +299,8 @@ class MicroMuZeroTrainer:
     def initialize_episode_collector(self):
         """Initialize parallel episode collector."""
         model_config = {
-            'input_features': self.config.input_features,
+            'temporal_features': self.config.temporal_features,
+            'static_features': self.config.static_features,
             'lag_window': self.config.lag_window,
             'hidden_dim': self.config.hidden_dim,
             'action_dim': self.config.action_dim,
@@ -416,11 +419,24 @@ class MicroMuZeroTrainer:
         # Simple random sampling (no importance weights)
         batch = self.buffer.sample(self.config.batch_size)
 
-        # Prepare batch tensors
-        observations = torch.tensor(
-            np.array([e.observation for e in batch]),
+        # Prepare batch tensors - handle separated inputs (temporal, static)
+        # Extract temporal and static components from observations
+        temporal_batch = []
+        static_batch = []
+        for e in batch:
+            temporal, static = e.observation
+            temporal_batch.append(temporal)
+            static_batch.append(static)
+
+        temporal_obs = torch.tensor(
+            np.array(temporal_batch),
             dtype=torch.float32, device=self.device
         )
+        static_obs = torch.tensor(
+            np.array(static_batch),
+            dtype=torch.float32, device=self.device
+        )
+        observations = (temporal_obs, static_obs)
         actions = torch.tensor(
             [e.action for e in batch],
             dtype=torch.long, device=self.device
