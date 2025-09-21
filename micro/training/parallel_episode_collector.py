@@ -143,7 +143,15 @@ class EpisodeWorker(Process):
         """Initialize model, MCTS, and episode runner."""
         # Import here to avoid pickling issues
         import sys
+        import os
         sys.path.append('/workspace')
+
+        # Set torch to single thread to avoid multiprocessing issues
+        os.environ['OMP_NUM_THREADS'] = '1'
+        os.environ['MKL_NUM_THREADS'] = '1'
+
+        import torch
+        torch.set_num_threads(1)
 
         logger.info(f"Worker {self.worker_id} importing modules...")
         from micro.models.micro_networks import MicroStochasticMuZero
