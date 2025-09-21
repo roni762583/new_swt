@@ -3,9 +3,9 @@
 Stochastic MCTS with Market Outcome Modeling.
 
 Implements chance nodes for market uncertainty using 3 discrete outcomes:
-- UP: price change > 0.5 * rolling_stdev
-- NEUTRAL: price change within ±0.5 * rolling_stdev
-- DOWN: price change < -0.5 * rolling_stdev
+- UP: price change > 0.33 * rolling_stdev
+- NEUTRAL: price change within ±0.33 * rolling_stdev
+- DOWN: price change < -0.33 * rolling_stdev
 """
 
 import torch

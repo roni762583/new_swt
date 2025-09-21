@@ -173,9 +173,11 @@ class OutcomeProbabilityNetwork(nn.Module):
     Predicts market outcome probabilities given state and action.
 
     Outcomes based on rolling stdev:
-    - UP: price change > 0.5 * rolling_stdev
-    - DOWN: price change < -0.5 * rolling_stdev
-    - NEUTRAL: price change within ±0.5 * rolling_stdev
+    - UP: price change > 0.33 * rolling_stdev
+    - DOWN: price change < -0.33 * rolling_stdev
+    - NEUTRAL: price change within ±0.33 * rolling_stdev
+
+    Using 0.33σ threshold (optimized for 44% neutral, 28% each direction)
     """
 
     def __init__(

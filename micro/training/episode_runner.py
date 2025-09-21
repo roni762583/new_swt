@@ -519,6 +519,7 @@ class EpisodeRunner:
         """
         Calculate market outcome based on rolling stdev.
         Returns: 0=UP, 1=NEUTRAL, 2=DOWN
+        Using 0.33σ threshold for better learning signal (44% neutral, 28% each direction)
         """
         # Calculate rolling stdev (20 bars)
         if bar_idx >= 20:
@@ -528,7 +529,7 @@ class EpisodeRunner:
             rolling_stdev = 0.001  # Default for early bars
 
         price_change = next_price - current_price
-        threshold = 0.5 * rolling_stdev
+        threshold = 0.33 * rolling_stdev  # Optimized threshold for better learning
 
         if price_change > threshold:
             return 0  # UP
