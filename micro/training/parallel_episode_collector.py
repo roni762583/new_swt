@@ -144,6 +144,7 @@ class EpisodeWorker(Process):
         # Import here to avoid pickling issues
         import sys
         import os
+        from pathlib import Path
         sys.path.append('/workspace')
 
         # Set torch to single thread to avoid multiprocessing issues
@@ -164,16 +165,28 @@ class EpisodeWorker(Process):
         self.model.eval()
         logger.info(f"Worker {self.worker_id} model created")
 
-        # Skip loading weights in workers due to multiprocessing issues
-        # Workers will use random initialization for exploration
-        logger.info(f"Worker {self.worker_id} skipping checkpoint loading (multiprocessing safety)")
-        logger.info(f"Worker {self.worker_id} using random initialization for exploration")
+        # Try to load latest checkpoint if available (like LightZero does)
+        checkpoint_path = Path(self.model_path)
+        if checkpoint_path.exists():
+            try:
+                logger.info(f"Worker {self.worker_id} loading checkpoint from {checkpoint_path}")
+                checkpoint = torch.load(checkpoint_path, map_location=self.device)
+                self.model.load_state_dict(checkpoint['model_state_dict'])
+                logger.info(f"Worker {self.worker_id} loaded checkpoint successfully")
+            except Exception as e:
+                logger.warning(f"Worker {self.worker_id} failed to load checkpoint: {e}")
+                logger.info(f"Worker {self.worker_id} using random initialization")
+        else:
+            logger.info(f"Worker {self.worker_id} no checkpoint found, using random initialization")
 
         # Create MCTS with reduced settings for debugging
         logger.info(f"Worker {self.worker_id} creating MCTS...")
+
+        # Back to StochasticMCTS but with fixes
         mcts_config = self.mcts_config.copy()
         mcts_config['num_simulations'] = 5  # Override to reduce
         mcts_config['depth_limit'] = 2  # Override to reduce
+
         self.mcts = StochasticMCTS(
             model=self.model,
             **mcts_config

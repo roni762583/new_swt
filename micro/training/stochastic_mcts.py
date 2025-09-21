@@ -236,15 +236,22 @@ class StochasticMCTS:
         # Ensure we're in eval mode
         self.model.eval()
 
-        with torch.no_grad():
+        # Use inference_mode instead of no_grad for better multiprocessing compatibility
+        with torch.inference_mode():
             # Initial inference
             logger.debug("MCTS: Running initial inference...")
             try:
+                # Ensure observation is on the correct device
+                if observation.device != next(self.model.parameters()).device:
+                    observation = observation.to(next(self.model.parameters()).device)
+
                 hidden, policy_logits, value_probs = self.model.initial_inference(
                     observation
                 )
             except Exception as e:
                 logger.error(f"MCTS initial inference failed: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
                 # Return a random action as fallback
                 return {
                     'action': np.random.randint(0, self.num_actions),
@@ -343,7 +350,7 @@ class StochasticMCTS:
         # Terminal depth - use value network
         if depth >= self.depth_limit:
             if isinstance(node, DecisionNode):
-                with torch.no_grad():
+                with torch.inference_mode():
                     value_probs = self.model.value(
                         node.hidden_state.unsqueeze(0)
                     )
@@ -396,7 +403,7 @@ class StochasticMCTS:
         """
         Expand a decision node and return its value.
         """
-        with torch.no_grad():
+        with torch.inference_mode():
             hidden = node.hidden_state.unsqueeze(0)
 
             # Get policy and value
@@ -426,7 +433,7 @@ class StochasticMCTS:
         """
         Expand a chance node and return its expected value.
         """
-        with torch.no_grad():
+        with torch.inference_mode():
             if node.parent_hidden is None:
                 # Shouldn't happen but fallback to 0
                 return 0.0
