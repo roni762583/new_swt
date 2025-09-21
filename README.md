@@ -45,20 +45,53 @@
 - **Smart checkpoint management** with SQN-based best model selection
 - **Docker containers running**: training, validation, and live trading
 
-### 🔴 Training Infrastructure Fixes (September 19, 2025):
+### 🔴 Training Infrastructure Fixes (September 19-21, 2025):
 
 **Fixed Critical Issues:**
 - ✅ **Checkpoint corruption** - Fixed model interface and error handling
 - ✅ **Worker deadlock** - Resolved multiprocessing queue/file handle issues
-- ✅ **Memory bottleneck** - Disabled 2.6GB/worker memory cache (10.4GB total)
+- ✅ **Memory bottleneck** - Implemented optimized cache with 12x reduction (393KB/session)
 - ✅ **Database I/O** - Now using direct queries with proper temp directory config
+- ✅ **MCTS multiprocessing hang** - Fixed using LightZero approach (checkpoint loading from disk)
+- ✅ **Observation features** - Fixed to use proper 32 temporal lags for market/time features
 - ✅ **Training resumed** - Successfully running at episode 26+
 
-**Current Performance:**
-- Episodes collecting at ~120s each (database I/O bottleneck)
-- CPU usage low (0.16%) due to I/O wait
-- Workers properly initialized and processing jobs
-- Checkpoints saving correctly
+**Current Training Status (WORKING):**
+- Episodes completing at ~6-7 seconds each with MCTS
+- Win rate: ~10%, Expectancy: ~-3.7 pips
+- Ready for 1M episode training run
+- All features properly using temporal lags (except position features)
+
+### 🔵 Planned Architecture Redesign:
+
+**Current Limitation:**
+- Position features (cols 9-14) are repeated across all 32 timesteps
+- This is inefficient but required by current TCN architecture
+- Model expects consistent (32, 15) input shape
+
+**Proposed Solution - Separate Temporal/Static Pathways:**
+```
+Input Split:
+├── Temporal Features (32, 9) → TCN Processing
+│   ├── Market features (5 cols) with 32 lags
+│   └── Time features (4 cols) with 32 lags
+│
+└── Static Features (1, 6) → Direct Processing
+    └── Position features (6 cols) current only
+
+Merge after TCN → Continue to existing networks
+```
+
+**Benefits:**
+- Eliminates redundant position feature repetition
+- More efficient memory and computation
+- Cleaner separation of temporal vs static data
+- Better architectural alignment with data nature
+
+**Implementation Status:**
+- Current system is WORKING with repetition (this commit)
+- Architecture redesign planned but requires full retraining
+- Will maintain backward compatibility during transition
 
 ### 🎯 Hold-Only Training Problem - CLEAN REDESIGN (September 18, 2025):
 
