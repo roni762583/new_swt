@@ -194,11 +194,23 @@ class EpisodeRunner:
                 logger.info(f"Running MCTS for first bar (obs took {obs_time:.3f}s)")
 
             mcts_start = time.time()
-            mcts_result = self.mcts.run(
-                obs_tensor,
-                temperature=temperature,
-                add_noise=add_noise and split == 'train'  # Only add noise during training
-            )
+
+            # DEBUG: Bypass MCTS temporarily to test if episodes complete
+            bypass_mcts = True  # Set to False to use real MCTS
+            if bypass_mcts:
+                logger.warning("BYPASSING MCTS - Using random actions for debugging")
+                mcts_result = {
+                    'action': np.random.randint(0, 4),
+                    'policy': np.ones(4) / 4,
+                    'value': 0.0,
+                    'tree_stats': {'bypassed': True}
+                }
+            else:
+                mcts_result = self.mcts.run(
+                    obs_tensor,
+                    temperature=temperature,
+                    add_noise=add_noise and split == 'train'  # Only add noise during training
+                )
             mcts_time = time.time() - mcts_start
 
             if bar == 0:
