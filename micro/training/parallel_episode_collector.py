@@ -97,8 +97,10 @@ class EpisodeWorker(Process):
                         break
 
                     # Collect episode
+                    logger.info(f"Worker {self.worker_id} starting episode collection")
                     start_time = time.time()
                     result = self._collect_episode(job)
+                    logger.info(f"Worker {self.worker_id} completed episode collection")
                     elapsed = time.time() - start_time
 
                     result.collection_time = elapsed

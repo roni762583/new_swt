@@ -87,12 +87,12 @@ class EpisodeRunner:
         # Load pre-calculated valid session indices
         self.session_indices = self._load_session_indices(session_indices_path)
 
-        # Feature columns we need
+        # Feature columns we need - using lag 0 for lagged features
         self.feature_columns = [
-            'position_in_range_60', 'min_max_scaled_momentum_60',
-            'min_max_scaled_rolling_range', 'min_max_scaled_momentum_5',
-            'price_change_pips', 'dow_cos_final', 'dow_sin_final',
-            'hour_cos_final', 'hour_sin_final', 'position_side',
+            'position_in_range_60_0', 'min_max_scaled_momentum_60_0',
+            'min_max_scaled_rolling_range_0', 'min_max_scaled_momentum_5_0',
+            'price_change_pips_0', 'dow_cos_final_0', 'dow_sin_final_0',
+            'hour_cos_final_0', 'hour_sin_final_0', 'position_side',
             'position_pips', 'bars_since_entry', 'pips_from_peak',
             'max_drawdown_pips', 'accumulated_dd'
         ]
@@ -131,6 +131,7 @@ class EpisodeRunner:
         Returns:
             Complete episode with trajectory
         """
+        logger.info(f"run_episode called with split={split}, session_idx={session_idx}")
         # Get valid indices for this split
         valid_indices = self.session_indices[split]
         if len(valid_indices) == 0:
@@ -140,9 +141,12 @@ class EpisodeRunner:
         if session_idx is None:
             session_idx = np.random.choice(len(valid_indices))
         start_bar_index = valid_indices[session_idx]
+        logger.info(f"Selected session with start_bar_index={start_bar_index}")
 
         # Load session data (360 bars + 32 lookback = 392 total)
+        logger.info(f"Loading session data from {start_bar_index - 32} to {start_bar_index + 360}")
         session_data = self._load_session_data(start_bar_index - 32, start_bar_index + 360)
+        logger.info(f"Loaded session data with shape {session_data.shape}")
 
         # Initialize episode tracking
         experiences = []
@@ -165,9 +169,12 @@ class EpisodeRunner:
         winning_trades = 0
         total_pnl = 0.0
 
+        logger.info(f"About to start episode loop for session {start_bar_index}")
         # Run through 360 bars
         for bar in range(360):
             # Create observation from last 32 bars
+            if bar == 0:
+                logger.debug(f"Starting episode loop for session {start_bar_index}")
             observation = self._create_observation(
                 session_data, bar + 32, position, entry_price,
                 entry_bar, peak_pnl, max_dd, accumulated_dd
@@ -177,6 +184,9 @@ class EpisodeRunner:
             obs_tensor = torch.tensor(
                 observation, dtype=torch.float32, device=self.device
             ).unsqueeze(0)
+
+            if bar == 0:
+                logger.debug(f"Running MCTS for first bar of session {start_bar_index}")
 
             mcts_result = self.mcts.run(
                 obs_tensor,
@@ -282,7 +292,7 @@ class EpisodeRunner:
         """Load data for a session including lookback period."""
         # Use memory cache if available
         if USE_MEMORY_CACHE and self.memory_cache is not None:
-            # Get from memory cache
+            # Get from memory cache - it returns ALL columns with original names
             return self.memory_cache.get_session_data(start_idx, end_idx)
 
         # Fallback to database query
@@ -328,7 +338,11 @@ class EpisodeRunner:
 
         # Fill technical features (columns 0-8)
         for i in range(9):
-            obs[:, i] = window[self.feature_columns[i]].values
+            col_name = self.feature_columns[i]
+            if col_name not in window.columns:
+                logger.error(f"Column '{col_name}' not found in window columns: {window.columns.tolist()[:20]}")
+                raise KeyError(f"Column '{col_name}' not found in data")
+            obs[:, i] = window[col_name].values
 
         # Position features need to be calculated
         current_price = data.iloc[current_bar]['close']

@@ -62,9 +62,10 @@ class OptimizedMemoryCache:
         """
         Get session data with ALL columns for the specific row range.
         Uses LRU caching to keep recent sessions in memory.
+        Note: Caller is responsible for including lookback in start_idx.
         """
-        # Calculate the full range needed (including lookback)
-        lookback_start = max(0, start_idx - self.lookback)
+        # Don't add lookback - caller already handles it
+        lookback_start = start_idx
 
         # Create cache key
         cache_key = f"{lookback_start}_{end_idx}"
