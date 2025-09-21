@@ -88,15 +88,19 @@ class EpisodeRunner:
         # Load pre-calculated valid session indices
         self.session_indices = self._load_session_indices(session_indices_path)
 
-        # Feature columns we need - using lag 0 for lagged features
-        self.feature_columns = [
-            'position_in_range_60_0', 'min_max_scaled_momentum_60_0',
-            'min_max_scaled_rolling_range_0', 'min_max_scaled_momentum_5_0',
-            'price_change_pips_0', 'dow_cos_final_0', 'dow_sin_final_0',
-            'hour_cos_final_0', 'hour_sin_final_0', 'position_side',
-            'position_pips', 'bars_since_entry', 'pips_from_peak',
-            'max_drawdown_pips', 'accumulated_dd'
+        # Market features - we need all 32 lags for temporal structure
+        self.market_feature_bases = [
+            'position_in_range_60', 'min_max_scaled_momentum_60',
+            'min_max_scaled_rolling_range', 'min_max_scaled_momentum_5',
+            'price_change_pips'
         ]
+
+        # Time features - also need lags for temporal time encoding
+        self.time_feature_bases = [
+            'dow_cos_final', 'dow_sin_final',
+            'hour_cos_final', 'hour_sin_final'
+        ]
+
 
     def _load_session_indices(self, path: str) -> Dict:
         """Load pre-calculated valid session indices."""
@@ -309,33 +313,29 @@ class EpisodeRunner:
             # Get from memory cache - it returns ALL columns with original names
             return self.memory_cache.get_session_data(start_idx, end_idx)
 
-        # Fallback to database query
-        # Technical features (first 9) have lag suffixes in database
-        # Position features (last 6) don't have suffixes
-        db_columns = []
+        # Fallback to database query - now loading all lags
+        db_columns = ['bar_index', 'timestamp', 'close']
 
-        # Technical and time features with _0 suffix for current bar
-        technical_and_time_features = self.feature_columns[:9]  # First 9 features
-        for feat in technical_and_time_features:
-            db_columns.append(f"{feat}_0")
+        # Add all lagged market features (0-31 for each)
+        for base_feature in self.market_feature_bases:
+            for lag in range(32):
+                db_columns.append(f"{base_feature}_{lag}")
 
-        # Position features without suffix
-        position_features = self.feature_columns[9:]  # Last 6 features
-        db_columns.extend(position_features)
+        # Add all lagged time features (0-31 for each)
+        for base_feature in self.time_feature_bases:
+            for lag in range(32):
+                db_columns.append(f"{base_feature}_{lag}")
+
+        # Note: Position features are calculated dynamically, not from DB
 
         query = f"""
-        SELECT bar_index, timestamp, close, {', '.join(db_columns)}
+        SELECT {', '.join(db_columns)}
         FROM micro_features
         WHERE bar_index >= {start_idx} AND bar_index < {end_idx}
         ORDER BY bar_index
         """
 
         df = self.conn.execute(query).fetchdf()
-
-        # Rename columns to remove _0 suffix from technical/time features
-        rename_mapping = {f"{feat}_0": feat for feat in technical_and_time_features}
-        df = df.rename(columns=rename_mapping)
-
         return df
 
     def _create_observation(
@@ -343,24 +343,40 @@ class EpisodeRunner:
         position: int, entry_price: float, entry_bar: int,
         peak_pnl: float, max_dd: float, accumulated_dd: float
     ) -> np.ndarray:
-        """Create (32, 15) observation for current timestep."""
-        # Get last 32 bars
-        window = data.iloc[current_bar-32:current_bar]
+        """Create (32, 15) observation for current timestep.
 
-        # Create observation array
+        Structure:
+        - Columns 0-4: Market features with proper lags (row 0=current, row 31=oldest)
+        - Columns 5-8: Time features with proper lags (row 0=current, row 31=oldest)
+        - Columns 9-14: Position features (current only, not lagged)
+        """
         obs = np.zeros((32, 15), dtype=np.float32)
+        current_data = data.iloc[current_bar]
 
-        # Fill technical features (columns 0-8)
-        for i in range(9):
-            col_name = self.feature_columns[i]
-            if col_name not in window.columns:
-                logger.error(f"Column '{col_name}' not found in window columns: {window.columns.tolist()[:20]}")
-                raise KeyError(f"Column '{col_name}' not found in data")
-            obs[:, i] = window[col_name].values
+        # Fill market features with proper temporal lags
+        # Row index matches lag: row 0 = lag 0 (current), row 31 = lag 31 (oldest)
+        for col_idx, base_feature in enumerate(self.market_feature_bases):
+            for lag in range(32):
+                col_name = f"{base_feature}_{lag}"
+                if col_name not in current_data:
+                    logger.error(f"Column '{col_name}' not found in data")
+                    raise KeyError(f"Column '{col_name}' not found")
+                obs[lag, col_idx] = current_data[col_name]
 
-        # Position features need to be calculated
-        current_price = data.iloc[current_bar]['close']
+        # Fill time features (columns 5-8) - also with proper temporal lags
+        for col_idx, base_feature in enumerate(self.time_feature_bases, start=5):
+            for lag in range(32):
+                col_name = f"{base_feature}_{lag}"
+                if col_name not in current_data:
+                    logger.error(f"Time feature '{col_name}' not found")
+                    raise KeyError(f"Time feature '{col_name}' not found")
+                # Proper temporal lag for time encoding
+                obs[lag, col_idx] = current_data[col_name]
 
+        # Fill position features (columns 9-14) - current values only, not lagged
+        current_price = current_data['close']
+
+        # All rows get the same current position features (not lagged)
         for t in range(32):
             # Position side (column 9)
             obs[t, 9] = position
