@@ -161,13 +161,16 @@ class EpisodeWorker(Process):
         logger.info(f"Worker {self.worker_id} skipping checkpoint loading (multiprocessing safety)")
         logger.info(f"Worker {self.worker_id} using random initialization for exploration")
 
-        # Create MCTS
+        # Create MCTS with reduced settings for debugging
         logger.info(f"Worker {self.worker_id} creating MCTS...")
+        mcts_config = self.mcts_config.copy()
+        mcts_config['num_simulations'] = 5  # Override to reduce
+        mcts_config['depth_limit'] = 2  # Override to reduce
         self.mcts = StochasticMCTS(
             model=self.model,
-            **self.mcts_config
+            **mcts_config
         )
-        logger.info(f"Worker {self.worker_id} MCTS created")
+        logger.info(f"Worker {self.worker_id} MCTS created with reduced settings")
 
         # Create episode runner (always uses AMDDP1 rewards as documented)
         logger.info(f"Worker {self.worker_id} creating episode runner...")

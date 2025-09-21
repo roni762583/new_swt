@@ -14,8 +14,9 @@ import logging
 from pathlib import Path
 import pickle
 import time
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)  # Enable debug logging
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 # Try to use optimized memory cache if available
 try:

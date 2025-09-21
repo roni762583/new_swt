@@ -231,17 +231,35 @@ class StochasticMCTS:
                 - value: Root value estimate
                 - tree_stats: Search statistics
         """
+        logger.debug(f"MCTS.run starting with obs shape {observation.shape}")
+
+        # Ensure we're in eval mode
+        self.model.eval()
+
         with torch.no_grad():
             # Initial inference
-            hidden, policy_logits, value_probs = self.model.initial_inference(
-                observation
-            )
+            logger.debug("MCTS: Running initial inference...")
+            try:
+                hidden, policy_logits, value_probs = self.model.initial_inference(
+                    observation
+                )
+            except Exception as e:
+                logger.error(f"MCTS initial inference failed: {e}")
+                # Return a random action as fallback
+                return {
+                    'action': np.random.randint(0, self.num_actions),
+                    'policy': np.ones(self.num_actions) / self.num_actions,
+                    'value': 0.0,
+                    'tree_stats': {'error': str(e)}
+                }
+            logger.debug(f"MCTS: Initial inference done - hidden shape: {hidden.shape}")
 
             # Convert to numpy
             priors = torch.softmax(policy_logits, dim=-1).cpu().numpy()[0]
             root_value = self.model.value.get_value(value_probs).item()
 
             # Create root node
+            logger.debug("MCTS: Creating root node...")
             root = DecisionNode(
                 prior=1.0,
                 hidden_state=hidden[0],
@@ -250,14 +268,17 @@ class StochasticMCTS:
             )
 
             # Expand root with outcome predictions
+            logger.debug("MCTS: Predicting outcomes for root expansion...")
             outcome_probs = {}
             for action in range(self.num_actions):
                 action_onehot = torch.zeros(1, self.num_actions, device=hidden.device)
                 action_onehot[0, action] = 1
                 outcome_prob = self.model.predict_outcome(hidden, action_onehot)
                 outcome_probs[action] = outcome_prob.cpu().numpy()[0]
+            logger.debug(f"MCTS: Got outcome probs for {self.num_actions} actions")
 
             root.expand(self.num_actions, priors, outcome_probs)
+            logger.debug("MCTS: Root expansion complete")
 
             # Add exploration noise at root
             if add_noise:
@@ -267,8 +288,11 @@ class StochasticMCTS:
                 )
 
             # Run simulations
-            for _ in range(self.num_simulations):
+            logger.debug(f"MCTS: Starting {self.num_simulations} simulations...")
+            for sim in range(self.num_simulations):
+                logger.debug(f"MCTS: Simulation {sim+1}/{self.num_simulations}")
                 self._simulate(root, 0)
+            logger.debug("MCTS: All simulations complete")
 
             # Extract policy from visit counts
             visits = [

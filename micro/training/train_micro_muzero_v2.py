@@ -150,12 +150,12 @@ class MicroMuZeroTrainer:
             weight_decay=config.weight_decay
         )
 
-        # Initialize MCTS
+        # Initialize MCTS (reduced simulations for debugging)
         self.mcts = StochasticMCTS(
             model=self.model,
-            num_simulations=config.num_simulations,
+            num_simulations=5,  # Reduced from config value for faster debugging
             discount=config.discount,
-            depth_limit=3,
+            depth_limit=2,  # Reduced depth for faster debugging
             dirichlet_alpha=1.0,
             exploration_fraction=0.5
         )
