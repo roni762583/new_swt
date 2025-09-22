@@ -266,7 +266,6 @@ class EpisodeRunner:
                 total_pnl += trade_result
                 if trade_result > 0:
                     winning_trades += 1
-                self.trades_pnl.append(trade_result)  # Store for R calculation
 
             # Update position tracking
             if position != 0:
@@ -315,24 +314,7 @@ class EpisodeRunner:
                 winning_trades += 1
 
         # Calculate expectancy
-        # Calculate expectancy using Peoples Fintech formula
-        if hasattr(self, 'trades_pnl') and self.trades_pnl:
-            trades_array = np.array(self.trades_pnl[-100:])  # Last 100 trades
-            wins = trades_array[trades_array > 0]
-            losses = trades_array[trades_array < 0]
-
-            avg_loss = abs(np.mean(losses)) if len(losses) > 0 else 10.0  # R value (default 10 pips)
-            expectancy_pips = total_pnl / max(num_trades, 1)  # Current method
-            expectancy_R = expectancy_pips / avg_loss  # Peoples Fintech method
-
-            # Use R-based expectancy
-            expectancy = expectancy_R
-
-            # Log for debugging
-            if num_trades % 10 == 0:  # Log every 10 trades
-                print(f"Expectancy: {expectancy_pips:.2f} pips = {expectancy_R:.3f}R (R={avg_loss:.1f})")
-        else:
-            expectancy = total_pnl / max(num_trades, 1)  # Fallback to old method
+        expectancy = total_pnl / max(num_trades, 1)
 
         return Episode(
             experiences=experiences,
