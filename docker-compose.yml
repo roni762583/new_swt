@@ -22,6 +22,8 @@ services:
     command: python3 /workspace/micro/training/train_micro_muzero.py
     networks:
       - micro-network
+    ports:
+      - "6006:6006"  # TensorBoard
     deploy:
       resources:
         limits:

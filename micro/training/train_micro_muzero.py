@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
+from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 import time
 import os
@@ -382,6 +383,13 @@ class MicroMuZeroTrainer:
         # Pre-calculate valid session indices
         self.ensure_session_indices()
 
+        # Initialize TensorBoard writer
+        tensorboard_dir = os.path.join(config.log_dir, 'tensorboard')
+        os.makedirs(tensorboard_dir, exist_ok=True)
+        self.writer = SummaryWriter(tensorboard_dir)
+        logger.info(f"TensorBoard logging to: {tensorboard_dir}")
+        logger.info(f"Run: tensorboard --logdir {tensorboard_dir} --port 6006")
+
         logger.info(f"Trainer initialized on {self.device}")
         logger.info(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
 
@@ -501,6 +509,12 @@ class MicroMuZeroTrainer:
                        f"BUY: {action_dist['BUY']:.1%}, "
                        f"SELL: {action_dist['SELL']:.1%}, "
                        f"CLOSE: {action_dist['CLOSE']:.1%}")
+
+            # Log action distribution to TensorBoard
+            self.writer.add_scalar('Actions/HOLD', action_dist['HOLD'], self.episode)
+            self.writer.add_scalar('Actions/BUY', action_dist['BUY'], self.episode)
+            self.writer.add_scalar('Actions/SELL', action_dist['SELL'], self.episode)
+            self.writer.add_scalar('Actions/CLOSE', action_dist['CLOSE'], self.episode)
 
         # Calculate metrics
         avg_expectancy = np.mean(self.training_stats['expectancies'][-num_episodes:])
@@ -708,6 +722,17 @@ class MicroMuZeroTrainer:
                         f"TradeRatio: {losses.get('trade_ratio', 0):.1%}"
                     )
 
+                    # Log to TensorBoard
+                    self.writer.add_scalar('Performance/Expectancy', recent_expectancy, self.episode)
+                    self.writer.add_scalar('Performance/WinRate', recent_win_rate, self.episode)
+                    self.writer.add_scalar('Performance/TradeRatio', losses.get('trade_ratio', 0), self.episode)
+                    self.writer.add_scalar('Loss/Total', losses['total_loss'], self.episode)
+                    self.writer.add_scalar('Loss/Policy', losses.get('policy_loss', 0), self.episode)
+                    self.writer.add_scalar('Loss/Value', losses.get('value_loss', 0), self.episode)
+                    self.writer.add_scalar('Loss/Outcome', losses.get('outcome_loss', 0), self.episode)
+                    self.writer.add_scalar('Training/EpisodesPerSecond', eps, self.episode)
+                    self.writer.add_scalar('Training/BufferSize', losses.get('buffer_size', 0), self.episode)
+
                 # Save checkpoint with smart system
                 self.save_checkpoint()  # Handles both frequent and periodic saves
 
@@ -722,6 +747,7 @@ class MicroMuZeroTrainer:
             if self.episode_collector:
                 self.episode_collector.stop()
             self.save_checkpoint()
+            self.writer.close()  # Close TensorBoard writer
             logger.info("Training complete")
 
     def validate(self):

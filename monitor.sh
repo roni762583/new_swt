@@ -6,8 +6,8 @@ FIRST_RUN=true
 
 while true; do
     # Get latest episode info (fetch once per loop)
-    LOGS=$(docker logs micro_training 2>&1 | tail -500)
-    EPISODE_LINE=$(echo "$LOGS" | grep "Episode [0-9]" | tail -1)
+    # Note: Search all logs for Episode lines (training logs may be sparse)
+    EPISODE_LINE=$(docker logs micro_training 2>&1 | grep -E "Episode [0-9]+ \|" | tail -1)
 
     if [ ! -z "$EPISODE_LINE" ]; then
         # Parse episode number
@@ -29,7 +29,7 @@ while true; do
             PROGRESS=$(echo "scale=4; $EPISODE / 1000000 * 100" | bc)
 
             # Get action distribution
-            ACTION_LINE=$(echo "$LOGS" | grep "Action distribution" | tail -1)
+            ACTION_LINE=$(docker logs micro_training 2>&1 | grep "Action distribution" | tail -1)
             if [ ! -z "$ACTION_LINE" ]; then
                 ACTIONS=$(echo "$ACTION_LINE" | cut -d'-' -f2)
             fi
