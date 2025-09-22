@@ -73,12 +73,12 @@ class MLPResidualBlock(nn.Module):
 
 class RepresentationNetwork(nn.Module):
     """
-    Representation Network with separated temporal and static processing.
+    Clean 240+16→256 Representation Network.
 
-    Converts:
-    - temporal features (32, 9) -> TCN processing
-    - static features (6,) -> Direct processing
-    Combined -> hidden state (256)
+    Architecture:
+    - Temporal (32, 9) → TCN → 240d
+    - Static (6,) → minimal MLP → 16d
+    - Concatenate → 256d (no projection needed!)
     """
 
     def __init__(
@@ -87,7 +87,7 @@ class RepresentationNetwork(nn.Module):
         static_features: int = 6,    # Position features
         lag_window: int = 32,
         hidden_dim: int = 256,
-        tcn_channels: int = 48,
+        tcn_channels: int = 240,     # Changed from 48 to 240
         dropout: float = 0.1
     ):
         super().__init__()
@@ -95,77 +95,65 @@ class RepresentationNetwork(nn.Module):
         self.temporal_features = temporal_features
         self.static_features = static_features
 
-        # TCN for temporal features only
+        # TCN for temporal features: 9 → 240
         self.tcn_encoder = TCNBlock(
-            in_channels=temporal_features,  # Only 9 temporal features
+            in_channels=temporal_features,
             out_channels=tcn_channels,
             kernel_size=3,
-            dilations=[1, 2, 4],
+            dilations=[1, 2, 4, 8],  # Added one more dilation for better receptive field
             dropout=dropout,
             causal=True
         )
 
-        # Temporal attention pooling
-        self.time_attention = nn.Linear(tcn_channels, 1)
+        # Global average pooling for temporal
+        self.temporal_pool = nn.AdaptiveAvgPool1d(1)
 
-        # Static feature processing (position features)
+        # Minimal static processing: 6 → 16
         self.static_processor = nn.Sequential(
-            nn.Linear(static_features, 32),
+            nn.Linear(static_features, 16),
             nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(32, 16)
+            nn.LayerNorm(16)
         )
 
-        # Combine: TCN output (48) + current temporal (9) + static (16) = 73
-        self.projection = nn.Linear(tcn_channels + temporal_features + 16, hidden_dim)
+        # Natural dimensions: 240 + 16 = 256 (no projection needed!)
+        assert tcn_channels + 16 == hidden_dim, f"Dims don't match: {tcn_channels}+16 != {hidden_dim}"
 
-        # Common residual blocks
-        self.residual_blocks = nn.ModuleList([
-            MLPResidualBlock(hidden_dim, dropout=dropout) for _ in range(3)
-        ])
-
-        self.dropout = nn.Dropout(dropout)
-        self.layer_norm = nn.LayerNorm(hidden_dim)
+        # Single mixing layer instead of multiple residual blocks
+        self.final_mixing = nn.Sequential(
+            nn.LayerNorm(hidden_dim),
+            MLPResidualBlock(hidden_dim, dropout=dropout)
+        )
 
     def forward(self, temporal: torch.Tensor, static: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass with separated inputs.
+        Clean forward pass: TCN(240) + MLP(16) = 256.
 
         Args:
-            temporal: Temporal features (batch, 32, 9)
-            static: Static features (batch, 6)
+            temporal: (batch, 32, 9) - 9 features over 32 timesteps
+            static: (batch, 6) - 6 position features
 
         Returns:
-            Hidden state (batch, 256)
+            (batch, 256) - Natural concatenation, no wasteful projection
         """
-        # Process temporal features through TCN
-        tcn_out = self.tcn_encoder(temporal)  # (batch, 48, 32)
-        tcn_out = self.dropout(tcn_out)
+        # Process temporal through TCN
+        # TCN expects (batch, timesteps, channels) and handles transpose internally
+        tcn_out = self.tcn_encoder(temporal)  # Returns (batch, 240, 32)
 
-        # Attention-weighted temporal pooling
-        attention_logits = self.time_attention(tcn_out.transpose(1, 2))  # (batch, 32, 1)
-        attention_weights = F.softmax(attention_logits, dim=1)
-        pooled = (tcn_out * attention_weights.transpose(1, 2)).sum(dim=2)  # (batch, 48)
-
-        # Get current temporal features (last timestep)
-        current_temporal = temporal[:, -1, :]  # (batch, 9)
+        # Global average pooling along time dimension
+        # tcn_out is (batch, channels, timesteps) from TCN
+        pooled = self.temporal_pool(tcn_out)  # (batch, 240, 1)
+        temporal_features = pooled.squeeze(-1)  # (batch, 240)
 
         # Process static features
-        static_encoded = self.static_processor(static)  # (batch, 16)
+        static_features = self.static_processor(static)  # (batch, 16)
 
-        # Combine all features
-        combined = torch.cat([pooled, current_temporal, static_encoded], dim=1)  # (batch, 73)
+        # Natural concatenation: 240 + 16 = 256
+        combined = torch.cat([temporal_features, static_features], dim=1)  # (batch, 256)
 
-        # Project to hidden dimension
-        hidden = self.projection(combined)  # (batch, 256)
-        hidden = self.layer_norm(hidden)
-        hidden = F.relu(hidden)
+        # Light final mixing
+        output = self.final_mixing(combined)  # (batch, 256)
 
-        # Apply residual blocks
-        for block in self.residual_blocks:
-            hidden = block(hidden)
-
-        return hidden  # (batch, 256)
+        return output
 
 
 class OutcomeProbabilityNetwork(nn.Module):

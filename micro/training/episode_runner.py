@@ -521,22 +521,40 @@ class EpisodeRunner:
         Returns: 0=UP, 1=NEUTRAL, 2=DOWN
         Using 0.33σ threshold for better learning signal (44% neutral, 28% each direction)
         """
-        # Calculate rolling stdev (20 bars)
-        if bar_idx >= 20:
-            recent_prices = session_data.iloc[bar_idx-20:bar_idx]['close'].values
-            rolling_stdev = np.std(recent_prices)
-        else:
-            rolling_stdev = 0.001  # Default for early bars
+        # Try to use Numba-optimized version for speed
+        try:
+            from micro.utils.numba_optimized import (
+                calculate_rolling_std_numba,
+                calculate_market_outcome_numba
+            )
 
-        price_change = next_price - current_price
-        threshold = 0.33 * rolling_stdev  # Optimized threshold for better learning
+            if bar_idx >= 20:
+                prices = session_data['close'].values[:bar_idx]
+                rolling_stdev = calculate_rolling_std_numba(prices, 20)
+            else:
+                rolling_stdev = 0.001
 
-        if price_change > threshold:
-            return 0  # UP
-        elif price_change < -threshold:
-            return 2  # DOWN
-        else:
-            return 1  # NEUTRAL
+            return calculate_market_outcome_numba(
+                current_price, next_price, rolling_stdev, 0.33
+            )
+
+        except ImportError:
+            # Fallback to NumPy version
+            if bar_idx >= 20:
+                recent_prices = session_data.iloc[bar_idx-20:bar_idx]['close'].values
+                rolling_stdev = np.std(recent_prices)
+            else:
+                rolling_stdev = 0.001
+
+            price_change = next_price - current_price
+            threshold = 0.33 * rolling_stdev
+
+            if price_change > threshold:
+                return 0  # UP
+            elif price_change < -threshold:
+                return 2  # DOWN
+            else:
+                return 1  # NEUTRAL
 
     def _calculate_amddp1_v7(self, pnl_pips: float, dd_sum: float) -> float:
         """

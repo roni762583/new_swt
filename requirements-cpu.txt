@@ -30,8 +30,8 @@ psutil==5.9.5
 # kymatio==0.3.0
 # PyWavelets==1.4.1
 
-# Numba for JIT compilation (optional for micro)
-# numba==0.57.1
+# Numba for JIT compilation (ENABLED for performance)
+numba==0.57.1
 
 # Database
 duckdb==1.4.0

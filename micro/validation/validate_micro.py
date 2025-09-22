@@ -12,7 +12,7 @@ import os
 import time
 import json
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import logging
 import sys
 
@@ -20,7 +20,7 @@ import sys
 sys.path.append('/workspace')
 
 from micro.models.micro_networks import MicroStochasticMuZero
-from micro.training.mcts_micro import MCTS
+from micro.training.stochastic_mcts import StochasticMCTS
 
 logging.basicConfig(
     level=logging.INFO,
@@ -89,13 +89,13 @@ class MicroValidator:
         try:
             checkpoint = torch.load(checkpoint_path, map_location=self.device)
 
-            # Create model
+            # Create model with separated architecture
             model = MicroStochasticMuZero(
-                input_features=15,
+                temporal_features=9,  # Market (5) + Time (4)
+                static_features=6,  # Position features
                 lag_window=32,
                 hidden_dim=256,
                 action_dim=4,
-                z_dim=16,
                 support_size=300
             ).to(self.device)
 
@@ -109,17 +109,20 @@ class MicroValidator:
             logger.error(f"Failed to load checkpoint {checkpoint_path}: {e}")
             return None
 
-    def get_validation_batch(self, batch_size: int = 32) -> torch.Tensor:
+    def get_validation_batch(self, batch_size: int = 32) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Get batch of validation data.
+        Get batch of validation data with separated temporal and static features.
 
         Args:
             batch_size: Batch size
 
         Returns:
-            Batch of observations (batch, 32, 15)
+            Tuple of (temporal_batch, static_batch):
+                - temporal_batch: (batch, 32, 9) - market + time features
+                - static_batch: (batch, 6) - position features
         """
-        observations = []
+        temporal_observations = []
+        static_observations = []
 
         for _ in range(batch_size):
             # Random index in validation range
@@ -153,26 +156,31 @@ class MicroValidator:
                     col_idx += 1
 
                 # Position features (6)
+                position_features = []
                 for _ in range(6):
-                    features.append(row[col_idx] if row[col_idx] is not None else 0.0)
+                    position_features.append(row[col_idx] if row[col_idx] is not None else 0.0)
                     col_idx += 1
 
-                # Reshape to (32, 15)
-                observation = np.zeros((32, 15))
+                # Reshape temporal to (32, 9)
+                temporal = np.zeros((32, 9))
                 for t in range(32):
                     # Technical (5)
                     for f in range(5):
-                        observation[t, f] = features[f * 32 + t]
+                        temporal[t, f] = features[f * 32 + t]
                     # Cyclical (4)
                     for f in range(4):
-                        observation[t, 5 + f] = features[160 + f * 32 + t]
-                    # Position (6)
-                    for f in range(6):
-                        observation[t, 9 + f] = features[288 + f]
+                        temporal[t, 5 + f] = features[160 + f * 32 + t]
 
-                observations.append(observation)
+                # Static features (6,)
+                static = np.array(position_features)
 
-        return torch.tensor(np.array(observations), dtype=torch.float32, device=self.device)
+                temporal_observations.append(temporal)
+                static_observations.append(static)
+
+        temporal_batch = torch.tensor(np.array(temporal_observations), dtype=torch.float32, device=self.device)
+        static_batch = torch.tensor(np.array(static_observations), dtype=torch.float32, device=self.device)
+
+        return temporal_batch, static_batch
 
     def validate_checkpoint(self, checkpoint_path: str) -> Dict:
         """
@@ -191,11 +199,12 @@ class MicroValidator:
         if model is None:
             return None
 
-        # Initialize MCTS
-        mcts = MCTS(
+        # Initialize Stochastic MCTS
+        mcts = StochasticMCTS(
             model=model,
             num_actions=4,
-            num_simulations=10  # Fewer for validation
+            num_simulations=10,  # Fewer for validation
+            exploration_fraction=0.0  # No exploration for validation (deterministic)
         )
 
         # Validation metrics
@@ -205,15 +214,15 @@ class MicroValidator:
 
         # Run validation episodes
         for episode in range(self.num_episodes):
-            # Get validation data
-            batch = self.get_validation_batch(batch_size=1)
+            # Get validation data with separated features
+            temporal_batch, static_batch = self.get_validation_batch(batch_size=1)
 
-            # Run MCTS
+            # Run MCTS with separated inputs
             with torch.no_grad():
                 mcts_result = mcts.run(
-                    batch,
-                    add_exploration_noise=False,
-                    temperature=0  # Deterministic for validation
+                    temporal_batch,
+                    static_batch,
+                    add_exploration_noise=False
                 )
 
             # Track metrics

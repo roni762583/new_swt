@@ -1,6 +1,6 @@
 """Training components for Micro MuZero."""
 
-from .mcts_micro import MCTS
+from .stochastic_mcts import StochasticMCTS
 from .train_micro_muzero import MicroMuZeroTrainer
 
-__all__ = ['MCTS', 'MicroMuZeroTrainer']
+__all__ = ['StochasticMCTS', 'MicroMuZeroTrainer']
