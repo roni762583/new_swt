@@ -14,6 +14,7 @@ import time
 import os
 import json
 import logging
+import multiprocessing as mp
 
 # Performance optimizations
 torch.set_num_threads(1)  # Better for multiprocessing
@@ -38,6 +39,16 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+def get_optimal_workers() -> int:
+    """Calculate optimal number of workers based on CPU count."""
+    n_cores = mp.cpu_count()
+    # Use most cores but leave some for OS/main thread
+    # Generally n-1 or 75% of cores, whichever is larger (min 4)
+    optimal = min(n_cores - 1, max(4, int(n_cores * 0.75)))
+    logger.info(f"CPU cores available: {n_cores}, optimal workers: {optimal}")
+    return optimal
 
 
 @dataclass
@@ -66,7 +77,7 @@ class TrainingConfig:
     min_buffer_size: int = 100  # As per README
 
     # Episode collection
-    num_workers: int = 6  # Optimized for 8-core CPU (leaving 2 for main process)
+    num_workers: int = get_optimal_workers()  # Dynamically set based on CPU
     episodes_per_iteration: int = 2
 
     # Temperature

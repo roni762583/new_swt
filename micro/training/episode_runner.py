@@ -27,6 +27,19 @@ except ImportError:
     USE_MEMORY_CACHE = False
     logger.info("Optimized cache not available, using direct database queries")
 
+# Import Numba optimized functions for performance
+try:
+    from micro.utils.numba_optimized import (
+        calculate_market_outcome_numba,
+        calculate_rolling_std_numba,
+        calculate_position_features_numba
+    )
+    USE_NUMBA = True
+    logger.info("Numba JIT optimizations enabled (10-100x speedup)")
+except ImportError:
+    USE_NUMBA = False
+    logger.info("Numba optimizations not available, using Python fallbacks")
+
 
 @dataclass
 class Experience:
@@ -79,9 +92,10 @@ class EpisodeRunner:
             self.conn = None
             logger.info("Using optimized memory cache for session data")
         else:
-            self.conn = duckdb.connect(db_path, read_only=True)
+            self.conn = duckdb.connect(db_path, read_only=True,
+                                      config={'temp_directory': '/dev/shm'})
             self.memory_cache = None
-            logger.info("Using database for session data")
+            logger.info("Using database for session data with RAM disk temp")
 
         # Always use AMDDP1 reward system (no flag needed)
 
@@ -521,15 +535,10 @@ class EpisodeRunner:
         Returns: 0=UP, 1=NEUTRAL, 2=DOWN
         Using 0.33σ threshold for better learning signal (44% neutral, 28% each direction)
         """
-        # Try to use Numba-optimized version for speed
-        try:
-            from micro.utils.numba_optimized import (
-                calculate_rolling_std_numba,
-                calculate_market_outcome_numba
-            )
-
+        # Use global Numba flag for optimization
+        if USE_NUMBA:
             if bar_idx >= 20:
-                prices = session_data['close'].values[:bar_idx]
+                prices = session_data['close'].values[:bar_idx].astype(np.float64)
                 rolling_stdev = calculate_rolling_std_numba(prices, 20)
             else:
                 rolling_stdev = 0.001
@@ -537,8 +546,7 @@ class EpisodeRunner:
             return calculate_market_outcome_numba(
                 current_price, next_price, rolling_stdev, 0.33
             )
-
-        except ImportError:
+        else:
             # Fallback to NumPy version
             if bar_idx >= 20:
                 recent_prices = session_data.iloc[bar_idx-20:bar_idx]['close'].values

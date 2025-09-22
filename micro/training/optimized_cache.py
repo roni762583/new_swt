@@ -41,7 +41,7 @@ class OptimizedMemoryCache:
         logger.info("Initializing on-demand cache (all columns, minimal rows)...")
 
         conn = duckdb.connect(self.db_path, read_only=True,
-                             config={'temp_directory': '/tmp'})
+                             config={'temp_directory': '/dev/shm'})
 
         # Get ALL columns - we need every single one for the features to work
         columns_df = conn.execute("DESCRIBE micro_features").fetchdf()
@@ -77,7 +77,7 @@ class OptimizedMemoryCache:
 
         # Load from database with ALL columns
         conn = duckdb.connect(self.db_path, read_only=True,
-                             config={'temp_directory': '/tmp'})
+                             config={'temp_directory': '/dev/shm'})
 
         # Build query for ALL columns
         columns_str = ", ".join(self.all_columns)
