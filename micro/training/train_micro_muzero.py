@@ -109,6 +109,7 @@ class Experience:
     done: bool
     market_outcome: int
     outcome_probs: np.ndarray
+    episode_expectancy: float = 0.0  # Track episode-level performance
     # Note: td_error, priority, visit_count removed - no longer using priority replay
 
 
@@ -119,23 +120,48 @@ class BalancedReplayBuffer:
     As described in README: maintains minimum 30% trading trajectories.
     """
 
-    def __init__(self, capacity: int = 10000, trade_quota: float = 0.3):
+    def __init__(self, capacity: int = 10000, trade_quota: float = 0.3,
+                 success_capacity: int = 1000, success_threshold: float = 5.0,
+                 recency_bias: bool = True):
         """
-        Initialize balanced replay buffer.
+        Initialize balanced replay buffer with success memory.
 
         Args:
             capacity: Maximum buffer size (10000 as per README)
             trade_quota: Minimum fraction of trading experiences (30%)
+            success_capacity: Size of success memory for profitable trades
+            success_threshold: Reward threshold for success memory (5.0 pips)
+            recency_bias: Whether to use recency-weighted sampling
         """
         self.capacity = capacity
         self.buffer = []
         self.trade_quota = trade_quota
+
+        # Success memory for profitable trades
+        self.success_buffer = []
+        self.success_capacity = success_capacity
+        self.success_threshold = success_threshold
+
+        # Recency bias flag
+        self.recency_bias = recency_bias
 
     def add(self, experience: Experience):
         """Add experience to buffer using quota-based eviction."""
         if len(self.buffer) >= self.capacity:
             self._evict_with_quota()
         self.buffer.append(experience)
+
+        # Add to success buffer if it's a profitable trade OR from a successful episode
+        if (experience.action == 3 and experience.reward > self.success_threshold) or \
+           (experience.episode_expectancy > 2.0):  # Episode with positive expectancy
+            if len(self.success_buffer) >= self.success_capacity:
+                # Keep best experiences based on reward + episode expectancy
+                if self.success_buffer:
+                    worst_idx = min(range(len(self.success_buffer)),
+                                  key=lambda i: self.success_buffer[i].reward +
+                                               self.success_buffer[i].episode_expectancy)
+                    self.success_buffer.pop(worst_idx)
+            self.success_buffer.append(experience)
 
     def _evict_with_quota(self):
         """Evict experience while maintaining trade quota.
@@ -167,7 +193,7 @@ class BalancedReplayBuffer:
         return trade_count / len(self.buffer)
 
     def sample(self, batch_size: int) -> List[Experience]:
-        """Simple random sampling without priorities or weights.
+        """Enhanced sampling with recency bias and success memory.
 
         Returns:
             List of experiences (no importance weights)
@@ -176,9 +202,28 @@ class BalancedReplayBuffer:
             # Return all experiences if buffer is smaller than batch
             return self.buffer.copy()
 
-        # Simple random sampling
-        indices = np.random.choice(len(self.buffer), batch_size, replace=False)
-        batch = [self.buffer[idx] for idx in indices]
+        # Calculate how many to sample from success memory (10% if available)
+        n_success = min(len(self.success_buffer), max(1, batch_size // 10))
+        n_regular = batch_size - n_success
+
+        batch = []
+
+        # Sample from success memory
+        if n_success > 0 and self.success_buffer:
+            success_indices = np.random.choice(len(self.success_buffer), n_success, replace=False)
+            batch.extend([self.success_buffer[idx] for idx in success_indices])
+
+        # Sample from regular buffer with recency bias if enabled
+        if self.recency_bias:
+            # Linear weight increase from 0.5 to 1.0 (newer = higher probability)
+            weights = np.linspace(0.5, 1.0, len(self.buffer))
+            weights /= weights.sum()
+            indices = np.random.choice(len(self.buffer), n_regular, replace=False, p=weights)
+        else:
+            # Simple random sampling
+            indices = np.random.choice(len(self.buffer), n_regular, replace=False)
+
+        batch.extend([self.buffer[idx] for idx in indices])
 
         # Ensure minimum trade diversity in sampled batch
         trade_count = sum(1 for exp in batch if exp.action in [1, 2, 3])
@@ -216,10 +261,12 @@ class BalancedReplayBuffer:
 
         return {
             'buffer_size': len(self.buffer),
+            'success_buffer_size': len(self.success_buffer),
             'action_distribution': action_counts,
             'trade_ratio': trade_fraction,
             'hold_ratio': 1.0 - trade_fraction,
-            'quota_satisfied': trade_fraction >= self.trade_quota
+            'quota_satisfied': trade_fraction >= self.trade_quota,
+            'success_ratio': len(self.success_buffer) / max(1, len(self.buffer))
         }
 
 
@@ -384,7 +431,7 @@ class MicroMuZeroTrainer:
 
         for episode in episodes:
             for exp in episode.experiences:
-                # Convert to buffer experience
+                # Convert to buffer experience with episode expectancy
                 buffer_exp = Experience(
                     observation=exp.observation,
                     action=exp.action,
@@ -393,7 +440,8 @@ class MicroMuZeroTrainer:
                     value=exp.value,
                     done=exp.done,
                     market_outcome=exp.market_outcome,
-                    outcome_probs=exp.outcome_probs
+                    outcome_probs=exp.outcome_probs,
+                    episode_expectancy=episode.expectancy  # Add episode-level performance
                 )
                 self.buffer.add(buffer_exp)
                 experiences_added += 1
