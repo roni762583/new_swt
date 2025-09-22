@@ -36,6 +36,10 @@ numba==0.57.1
 # Database
 duckdb==1.4.0
 
+# Visualization and reporting
+matplotlib==3.7.2
+seaborn==0.12.2
+
 # Testing
 pytest==7.4.3
 pytest-cov==4.1.0

@@ -44,9 +44,9 @@ logger = logging.getLogger(__name__)
 def get_optimal_workers() -> int:
     """Calculate optimal number of workers based on CPU count."""
     n_cores = mp.cpu_count()
-    # Use most cores but leave some for OS/main thread
-    # Generally n-1 or 75% of cores, whichever is larger (min 4)
-    optimal = min(n_cores - 1, max(4, int(n_cores * 0.75)))
+    # More aggressive usage: 85% of cores (was 75%)
+    # Since we're seeing only 25% CPU usage (201/800), we can be more aggressive
+    optimal = max(4, min(n_cores - 1, int(n_cores * 0.85)))
     logger.info(f"CPU cores available: {n_cores}, optimal workers: {optimal}")
     return optimal
 
