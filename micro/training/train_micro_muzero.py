@@ -122,16 +122,19 @@ class BalancedReplayBuffer:
 
     def __init__(self, capacity: int = 10000, trade_quota: float = 0.3,
                  success_capacity: int = 1000, success_threshold: float = 5.0,
-                 recency_bias: bool = True):
+                 recency_bias: bool = True, success_percentile: float = 80.0,
+                 expectancy_history_size: int = 500):
         """
-        Initialize balanced replay buffer with success memory.
+        Initialize balanced replay buffer with adaptive success memory.
 
         Args:
             capacity: Maximum buffer size (10000 as per README)
             trade_quota: Minimum fraction of trading experiences (30%)
             success_capacity: Size of success memory for profitable trades
-            success_threshold: Reward threshold for success memory (5.0 pips)
+            success_threshold: Reward threshold for individual profitable trades (5.0 pips)
             recency_bias: Whether to use recency-weighted sampling
+            success_percentile: Percentile threshold for episode success (top 20% = 80th percentile)
+            expectancy_history_size: Number of recent episodes to track for adaptive threshold
         """
         self.capacity = capacity
         self.buffer = []
@@ -140,7 +143,12 @@ class BalancedReplayBuffer:
         # Success memory for profitable trades
         self.success_buffer = []
         self.success_capacity = success_capacity
-        self.success_threshold = success_threshold
+        self.success_threshold = success_threshold  # For individual trades
+
+        # Adaptive episode success tracking
+        self.success_percentile = success_percentile
+        self.episode_expectancy_history = []
+        self.expectancy_history_size = expectancy_history_size
 
         # Recency bias flag
         self.recency_bias = recency_bias
@@ -151,9 +159,18 @@ class BalancedReplayBuffer:
             self._evict_with_quota()
         self.buffer.append(experience)
 
+        # Track episode expectancy for adaptive threshold
+        if experience.done:  # End of episode
+            self.episode_expectancy_history.append(experience.episode_expectancy)
+            if len(self.episode_expectancy_history) > self.expectancy_history_size:
+                self.episode_expectancy_history.pop(0)
+
+        # Calculate adaptive threshold for episode success (top 20%)
+        episode_threshold = self._get_adaptive_threshold()
+
         # Add to success buffer if it's a profitable trade OR from a successful episode
         if (experience.action == 3 and experience.reward > self.success_threshold) or \
-           (experience.episode_expectancy > 2.0):  # Episode with positive expectancy
+           (experience.episode_expectancy > episode_threshold):
             if len(self.success_buffer) >= self.success_capacity:
                 # Keep best experiences based on reward + episode expectancy
                 if self.success_buffer:
@@ -162,6 +179,14 @@ class BalancedReplayBuffer:
                                                self.success_buffer[i].episode_expectancy)
                     self.success_buffer.pop(worst_idx)
             self.success_buffer.append(experience)
+
+    def _get_adaptive_threshold(self) -> float:
+        """Calculate adaptive expectancy threshold based on recent history."""
+        if len(self.episode_expectancy_history) < 20:  # Need minimum history
+            return 0.0  # Start with any positive expectancy
+
+        # Use percentile of recent episodes (top 20% if percentile=80)
+        return np.percentile(self.episode_expectancy_history, self.success_percentile)
 
     def _evict_with_quota(self):
         """Evict experience while maintaining trade quota.
@@ -202,8 +227,10 @@ class BalancedReplayBuffer:
             # Return all experiences if buffer is smaller than batch
             return self.buffer.copy()
 
-        # Calculate how many to sample from success memory (10% if available)
-        n_success = min(len(self.success_buffer), max(1, batch_size // 10))
+        # Calculate how many to sample from success memory (10-15%, capped)
+        max_success = int(batch_size * 0.15)  # Hard cap at 15%
+        available_success = len(self.success_buffer)
+        n_success = min(available_success, max_success, max(1, batch_size // 10))
         n_regular = batch_size - n_success
 
         batch = []
@@ -266,7 +293,9 @@ class BalancedReplayBuffer:
             'trade_ratio': trade_fraction,
             'hold_ratio': 1.0 - trade_fraction,
             'quota_satisfied': trade_fraction >= self.trade_quota,
-            'success_ratio': len(self.success_buffer) / max(1, len(self.buffer))
+            'success_ratio': len(self.success_buffer) / max(1, len(self.buffer)),
+            'adaptive_threshold': self._get_adaptive_threshold(),
+            'episode_history_size': len(self.episode_expectancy_history)
         }
 
 

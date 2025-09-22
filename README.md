@@ -77,9 +77,16 @@
 - ✅ ~20% reduction in database I/O latency
 - ✅ Applied to both `optimized_cache.py` and `episode_runner.py`
 
-**Experience Buffer Analysis:**
-- Buffer capacity: 10,000 experiences (FIFO with quota-based eviction)
-- Trade quota: 30% minimum (currently achieving 75% trade experiences)
+**Experience Buffer Enhancements (Adaptive Success Memory):**
+- Main buffer: 10,000 experiences with FIFO + quota-based eviction
+- Trade quota: 30% minimum floor (currently achieving 75% trade experiences)
+- **Recency-weighted sampling**: Linear weights 0.5→1.0 for newer experiences
+- **Adaptive success memory**: 1,000 capacity for high-quality experiences
+  - Individual profitable trades (reward > 5.0 pips)
+  - Experiences from top 20% episodes (80th percentile, adaptive threshold)
+  - Capped at 10-15% of each training batch to prevent overfitting
+  - Smart eviction keeps best performers (reward + episode_expectancy)
+- **Episode expectancy tracking**: 500-episode rolling history for percentile calculation
 - Action distribution balanced: HOLD ~25%, BUY ~23%, SELL ~24%, CLOSE ~25%
 - No hold-only collapse detected ✅
 
