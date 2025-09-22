@@ -14,11 +14,12 @@ def get_metrics():
         # Get last 100 lines of logs
         result = subprocess.run(
             ["docker", "logs", "micro_training", "--tail", "100"],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
             timeout=2
         )
-        logs = result.stdout + result.stderr
+        logs = result.stdout
 
         # Parse latest episode
         metrics = {}

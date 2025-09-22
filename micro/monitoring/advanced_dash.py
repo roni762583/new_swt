@@ -16,18 +16,19 @@ class AdvancedDashboard:
         self.episode_history = deque(maxlen=100)
         self.last_episode = 0
 
-    def get_logs(self, lines=2000):
+    def get_logs(self, lines=3000):
         """Get recent container logs."""
         try:
             result = subprocess.run(
                 ["docker", "logs", self.container_name, "--tail", str(lines)],
-                capture_output=True,
-                text=True,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                timeout=3
+                text=True,
+                timeout=5
             )
             return result.stdout
-        except:
+        except Exception as e:
+            print(f"Error getting logs: {e}")
             return ""
 
     def parse_metrics(self, logs):

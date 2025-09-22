@@ -7,6 +7,7 @@ FIRST_RUN=true
 while true; do
     # Get latest episode info (fetch once per loop)
     # Note: Search all logs for Episode lines (training logs may be sparse)
+    # Handle both plain and INFO: prefixed logs
     EPISODE_LINE=$(docker logs micro_training 2>&1 | grep -E "Episode [0-9]+ \|" | tail -1)
 
     if [ ! -z "$EPISODE_LINE" ]; then
