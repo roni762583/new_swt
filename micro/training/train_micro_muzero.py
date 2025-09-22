@@ -529,8 +529,17 @@ class MicroMuZeroTrainer:
         avg_expectancy = np.mean(self.training_stats['expectancies'][-num_episodes:])
         avg_win_rate = total_wins / max(total_trades, 1) * 100
 
+        # Calculate R-based expectancy from recent episodes
+        recent_episodes = episodes[-min(10, len(episodes)):]
+        avg_expectancy_pips = np.mean([e.expectancy_pips for e in recent_episodes if hasattr(e, 'expectancy_pips')]) if recent_episodes else avg_expectancy
+        avg_expectancy_r = np.mean([e.expectancy_r for e in recent_episodes if hasattr(e, 'expectancy_r')]) if recent_episodes else 0.0
+        avg_r_value = np.mean([e.r_value for e in recent_episodes if hasattr(e, 'r_value')]) if recent_episodes else 10.0
+
         logger.info(f"Collected {len(episodes)} episodes, {experiences_added} experiences")
-        logger.info(f"Expectancy: {avg_expectancy:.4f} pips, Win Rate: {avg_win_rate:.1f}%")
+        if avg_expectancy_r != 0.0:
+            logger.info(f"Expectancy: {avg_expectancy_pips:.2f} pips = {avg_expectancy_r:.3f}R (R={avg_r_value:.1f} pips), Win Rate: {avg_win_rate:.1f}%")
+        else:
+            logger.info(f"Expectancy: {avg_expectancy:.4f} pips, Win Rate: {avg_win_rate:.1f}%")
 
         return experiences_added
 

@@ -1,6 +1,33 @@
 # 🎯 Micro Stochastic MuZero Trading System
 ## Production Technical Documentation - v3.1.0
-**Last Updated: September 22, 2025 | Current Episode: 5,400+**
+**Last Updated: September 22, 2025 | Current Episode: 6,500+**
+
+---
+
+## 📊 Expectancy Metrics (Peoples Fintech Formula)
+
+### How We Calculate Expectancy
+```python
+# Peoples Fintech Formula
+R = average_loss  # Average losing trade size (e.g., 10 pips)
+expectancy_pips = average_trade  # Raw expectancy in pips
+expectancy_R = expectancy_pips / R  # Normalized to risk units
+
+# Example Output
+"Expectancy: -3.78 pips = -0.378R (R=10.0 pips)"
+# Interpretation: Losing 37.8% of risk per trade on average
+```
+
+### Target Metrics
+- **Expectancy**: > 0.0R (profitable system)
+- **Win Rate**: > 40% (with good R:R ratio)
+- **R-Multiple**: Average win should be > 1.5R
+
+### Current Performance
+- Training at Episode 6500+ locally, 1200+ on cloud
+- Expectancy improving: -3.95 → -3.78 pips
+- Win rate: ~2% (early stage, model still learning)
+- Cloud: 10 workers, ~700 episodes/hour
 
 ---
 

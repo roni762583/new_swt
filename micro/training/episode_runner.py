@@ -62,9 +62,12 @@ class Episode:
     num_trades: int
     winning_trades: int
     expectancy: float
-    split: str  # 'train', 'val', or 'test'
-    session_idx: int
-    start_bar_index: int
+    expectancy_pips: float = 0.0  # Expectancy in pips
+    expectancy_r: float = 0.0  # Expectancy in R units (Peoples Fintech)
+    r_value: float = 10.0  # Average loss size (R)
+    split: str = 'train'  # 'train', 'val', or 'test'
+    session_idx: int = 0
+    start_bar_index: int = 0
 
 
 class EpisodeRunner:
@@ -333,6 +336,9 @@ class EpisodeRunner:
                 print(f"Expectancy: {expectancy_pips:.2f} pips = {expectancy_R:.3f}R (R={avg_loss:.1f})")
         else:
             expectancy = total_pnl / max(num_trades, 1)  # Fallback to old method
+            expectancy_pips = expectancy
+            expectancy_R = 0.0
+            avg_loss = 10.0
 
         return Episode(
             experiences=experiences,
@@ -340,6 +346,9 @@ class EpisodeRunner:
             num_trades=num_trades,
             winning_trades=winning_trades,
             expectancy=expectancy,
+            expectancy_pips=expectancy_pips,
+            expectancy_r=expectancy_R,
+            r_value=avg_loss,
             split=split,
             session_idx=session_idx,
             start_bar_index=start_bar_index

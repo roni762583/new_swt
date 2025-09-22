@@ -1,5 +1,18 @@
 # 🚀 Micro Stochastic MuZero Trading System - Complete Technical & Operational Manual
-**Version 3.0 | Last Updated: September 22, 2025 | Episode: 4,732**
+**Version 3.0 | Last Updated: September 22, 2025 | Episode: 6,500+**
+
+## 📈 Training Metrics (Peoples Fintech Formula)
+
+### Expectancy Calculation
+- **Formula**: `Expectancy = Average Trade / R` (where R = average loss)
+- **Display**: `-3.78 pips = -0.378R (R=10.0 pips)`
+- **Target**: Positive expectancy (> 0.0R) for profitable system
+- **Reference**: [Peoples Fintech Calculator](https://roni762583.github.io/peoplesfintech.github.io/ec.html)
+
+### Current Status
+- **Local**: Episode 6500+, Expectancy: -3.78 pips (-0.378R)
+- **Cloud**: Episode 1200+, 10 workers, ~700 eps/hour
+- **Sync**: GitHub-based code synchronization
 
 ## 📊 System Overview
 
