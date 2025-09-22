@@ -58,9 +58,45 @@ while true; do
             echo "💰 PERFORMANCE"
             echo "  Expectancy:  $EXPECTANCY pips"
             echo "  Win Rate:    $WIN_RATE%"
-            echo "  Trade Ratio: $TRADE_RATIO%"
+            echo "  Trade Ratio: $TRADE_RATIO% (% of actions that are trades)"
             echo "  Loss:        $LOSS"
             echo ""
+
+            # Calculate trade statistics
+            # Get validation lines which show actual trade counts
+            VALIDATION_LINE=$(docker logs micro_training 2>&1 | grep "Validation.*Trades:" | tail -1)
+            if [ ! -z "$VALIDATION_LINE" ]; then
+                TRADE_COUNT=$(echo "$VALIDATION_LINE" | grep -oP 'Trades: \K[0-9]+')
+                if [ ! -z "$TRADE_COUNT" ]; then
+                    echo "📊 TRADE STATISTICS"
+                    echo "  Total Trades: $TRADE_COUNT (from last validation)"
+                    # Estimate average duration: 360 bars per episode / trades per episode
+                    if [ "$TRADE_COUNT" -gt "0" ]; then
+                        # Rough estimate: ~10-15 trades per episode, 360 bars per episode
+                        AVG_DURATION=$((360 / 12))  # Assuming ~12 trades per episode
+                        echo "  Avg Duration: ~$AVG_DURATION bars (estimated)"
+                    fi
+                    echo ""
+                fi
+            fi
+
+            # Show episode collection rate
+            COLLECTION_LINE=$(docker logs micro_training 2>&1 | grep "Collected.*episodes" | tail -1)
+            if [ ! -z "$COLLECTION_LINE" ]; then
+                echo "📈 COLLECTION STATS"
+                echo "  $COLLECTION_LINE" | sed 's/.*Collected/  Collected/'
+                # Calculate experiences per episode
+                EXPERIENCES=$(echo "$COLLECTION_LINE" | grep -oP '\d+ experiences' | grep -oP '\d+')
+                EPISODES=$(echo "$COLLECTION_LINE" | grep -oP 'Collected \K\d+')
+                if [ ! -z "$EXPERIENCES" ] && [ ! -z "$EPISODES" ] && [ "$EPISODES" -gt "0" ]; then
+                    EXP_PER_EP=$((EXPERIENCES / EPISODES))
+                    echo "  Experiences/Episode: $EXP_PER_EP"
+                    # Trades are roughly exp/360 * trade_ratio
+                    EST_TRADES_PER_EP=$(echo "scale=1; $EXP_PER_EP * $TRADE_RATIO / 100" | bc)
+                    echo "  Est. Trades/Episode: $EST_TRADES_PER_EP"
+                fi
+                echo ""
+            fi
 
             if [ ! -z "$ACTIONS" ]; then
                 echo "🎮 ACTIONS: $ACTIONS"
