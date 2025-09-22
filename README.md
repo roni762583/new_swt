@@ -56,7 +56,7 @@
 - ✅ **Observation features** - Fixed to use proper 32 temporal lags for market/time features
 - ✅ **Training resumed** - Successfully running at episode 1200+
 
-### 🚀 Performance Optimizations Implemented (September 21, 2025):
+### 🚀 Performance Optimizations & Validation System (September 21, 2025):
 
 **Numba JIT Compilation:**
 - ✅ Added `numba==0.57.1` to requirements for JIT compilation
@@ -69,8 +69,8 @@
 
 **Dynamic Worker Scaling:**
 - ✅ Automatic CPU core detection with `get_optimal_workers()`
-- ✅ Now using 6-8 workers (was hardcoded to 4)
-- ✅ 50% more parallel episode collection capacity
+- ✅ Now using 85% of available CPU cores (was hardcoded to 4)
+- ✅ 2x more parallel episode collection capacity
 
 **RAM Disk I/O Optimization:**
 - ✅ Changed DuckDB temp directory from `/tmp` to `/dev/shm` (RAM disk)
@@ -79,7 +79,7 @@
 
 **Experience Buffer Enhancements (Adaptive Success Memory):**
 - Main buffer: 10,000 experiences with FIFO + quota-based eviction
-- Trade quota: 30% minimum floor (currently achieving 75% trade experiences)
+- Trade quota: 30% minimum floor (currently achieving 74% trade experiences)
 - **Recency-weighted sampling**: Linear weights 0.5→1.0 for newer experiences
 - **Adaptive success memory**: 1,000 capacity for high-quality experiences
   - Individual profitable trades (reward > 5.0 pips)
@@ -90,12 +90,31 @@
 - Action distribution balanced: HOLD ~25%, BUY ~23%, SELL ~24%, CLOSE ~25%
 - No hold-only collapse detected ✅
 
+**Complete Validation System Overhaul:**
+- ✅ **Monte Carlo Simulation**: 1000 runs with bootstrap sampling for confidence intervals
+- ✅ **Dr. Howard Bandy Metrics Implementation**:
+  - CAR (Compound Annual Return) with 95% confidence intervals
+  - Safe-f position sizing (Kelly Criterion × 0.25 safety factor)
+  - Maximum drawdown and recovery analysis
+  - Sharpe ratio and expectancy calculations
+- ✅ **Proper Episode-Based Validation**: Uses EpisodeRunner for realistic 360-bar sessions
+- ✅ **PDF Report Generation**: Comprehensive reports with:
+  - Equity curves (best, worst, median, 95% CI)
+  - Drawdown distribution analysis
+  - CAR distribution histograms
+  - Trading metrics summary table
+- ✅ **Automatic Validation Watcher**: Monitors checkpoints and runs validation on updates
+
+**Three-Container Docker Architecture:**
+- ✅ **Training Container** (`micro-training`): Auto-resumes from checkpoint toward 1M episodes
+- ✅ **Validation Container** (`micro-validation`): Automatically validates new checkpoints
+- ✅ **Live Container** (`micro-live`): Currently idling, awaiting validated checkpoint
+
 **Performance Results:**
-- Episode collection: ~7 seconds/episode (with 50% more workers)
-- Training progressing at Episode 1230+ (80 episodes since optimizations)
-- Expectancy improving: -3.93 → -3.92 pips
-- Best checkpoint regularly updated
+- Episode collection: ~6-7 seconds/episode (with optimized workers)
+- Training progressing at Episode 1870+
 - Memory usage optimized: 393KB per session (was 2.6GB total cache)
+- Validation running Monte Carlo simulations on best checkpoints
 
 ### 🔵 Planned Architecture Redesign:
 

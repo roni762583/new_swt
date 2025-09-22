@@ -8,11 +8,11 @@ import os
 import time
 import json
 import torch
-import duckdb
 import numpy as np
 from pathlib import Path
 from datetime import datetime
 import logging
+import subprocess
 
 # Add parent directory to path
 import sys
@@ -43,20 +43,21 @@ class BestCheckpointWatcher:
         self.check_interval = check_interval
         self.best_path = os.path.join(checkpoint_dir, "best.pth")
         self.last_mtime = None
+        self.last_validated_episode = None
 
         # Create results directory
         os.makedirs(results_dir, exist_ok=True)
 
-        # Initialize model
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        logger.info(f"Using device: {self.device}")
+        # Track validation history
+        self.validation_history_file = os.path.join(results_dir, "validation_history.json")
+        if os.path.exists(self.validation_history_file):
+            with open(self.validation_history_file, 'r') as f:
+                self.validation_history = json.load(f)
+        else:
+            self.validation_history = {}
 
-        # Connect to database
-        self.conn = duckdb.connect(data_path, read_only=True)
-        total_rows = self.conn.execute("SELECT COUNT(*) FROM micro_features").fetchone()[0]
-        self.val_start = int(total_rows * 0.7)  # Start of validation data
-        self.val_end = int(total_rows * 0.85)   # End of validation data
-        logger.info(f"Validation data: rows {self.val_start:,} to {self.val_end:,}")
+        logger.info(f"Watching directory: {self.checkpoint_dir}")
+        logger.info(f"Results directory: {self.results_dir}")
 
     def watch(self):
         """Main watching loop."""
@@ -94,145 +95,79 @@ class BestCheckpointWatcher:
                 time.sleep(self.check_interval)
 
     def validate_checkpoint(self):
-        """Run validation on best checkpoint."""
+        """Run validation on best checkpoint using validate_micro.py."""
         try:
-            # Load checkpoint
-            checkpoint = torch.load(self.best_path, map_location=self.device)
+            # Load checkpoint to get episode number
+            checkpoint = torch.load(self.best_path, map_location='cpu')
             episode = checkpoint.get('episode', 0)
 
-            logger.info(f"Validating checkpoint from episode {episode}")
-
-            # Initialize model
-            model = MicroStochasticMuZero(
-                input_features=15,
-                lag_window=32,
-                hidden_dim=256,
-                action_dim=4,
-                num_outcomes=3,
-                support_size=300
-            ).to(self.device)
-
-            # Load weights - handle both old and new checkpoint formats
-            if 'model_state_dict' in checkpoint:
-                model.load_state_dict(checkpoint['model_state_dict'])
-            elif 'model_state' in checkpoint:
-                model.set_weights(checkpoint['model_state'])
-            else:
-                logger.error("No model weights found in checkpoint")
+            # Skip if already validated this episode
+            if self.last_validated_episode == episode:
+                logger.debug(f"Episode {episode} already validated")
                 return
-            model.eval()
 
-            # Run validation episodes
-            results = self.run_validation(model, num_episodes=100)
+            logger.info(f"🎯 Validating checkpoint from episode {episode}")
 
-            # Save results
-            results['checkpoint'] = 'best.pth'
-            results['episode'] = episode
-            results['timestamp'] = datetime.now().isoformat()
-
-            # Save validation results
-            results_file = os.path.join(
-                self.results_dir,
-                f"validation_best_ep{episode:06d}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            # Copy best.pth to a temporary validation checkpoint
+            val_checkpoint_path = os.path.join(
+                "/tmp",
+                f"validation_ep{episode:06d}.pth"
             )
-            with open(results_file, 'w') as f:
-                json.dump(results, f, indent=2)
+            subprocess.run(["cp", self.best_path, val_checkpoint_path], check=True)
 
-            # Update best validation results
-            best_val_file = os.path.join(self.results_dir, "best_validation.json")
-            if os.path.exists(best_val_file):
-                with open(best_val_file, 'r') as f:
-                    best_val = json.load(f)
-                if results['expectancy'] > best_val.get('expectancy', -999):
-                    with open(best_val_file, 'w') as f:
-                        json.dump(results, f, indent=2)
-                    logger.info(f"🏆 New best validation! Expectancy: {results['expectancy']:.4f}")
+            # Run the full validation script
+            cmd = [
+                "python3",
+                "/workspace/micro/validation/validate_micro.py",
+                "--checkpoint", val_checkpoint_path,
+                "--num-runs", "1000",  # Monte Carlo runs
+                "--output-dir", self.results_dir
+            ]
+
+            logger.info("Starting validation with Monte Carlo simulation (1000 runs)...")
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=600  # 10 minute timeout
+            )
+
+            if result.returncode == 0:
+                logger.info("✅ Validation completed successfully")
+
+                # Parse validation results from stdout
+                for line in result.stdout.split('\n'):
+                    if 'CAR' in line or 'Safe-f' in line or 'Expectancy' in line:
+                        logger.info(f"  {line.strip()}")
+
+                # Update tracking
+                self.last_validated_episode = episode
+                self.validation_history[str(episode)] = {
+                    'timestamp': datetime.now().isoformat(),
+                    'status': 'success'
+                }
+
+                # Save history
+                with open(self.validation_history_file, 'w') as f:
+                    json.dump(self.validation_history, f, indent=2)
+
+                # Clean up temporary checkpoint
+                os.remove(val_checkpoint_path)
+
             else:
-                with open(best_val_file, 'w') as f:
-                    json.dump(results, f, indent=2)
+                logger.error(f"Validation failed with return code {result.returncode}")
+                logger.error(f"Error output: {result.stderr}")
+                self.validation_history[str(episode)] = {
+                    'timestamp': datetime.now().isoformat(),
+                    'status': 'failed',
+                    'error': result.stderr[:500]
+                }
 
-            # Log results
-            logger.info(f"Validation complete:")
-            logger.info(f"  Expectancy: {results['expectancy']:.4f}")
-            logger.info(f"  Win Rate: {results['win_rate']:.1f}%")
-            logger.info(f"  Trades: {results['num_trades']}")
-            logger.info(f"  Action Distribution: {results['action_distribution']}")
-
+        except subprocess.TimeoutExpired:
+            logger.error("Validation timed out after 10 minutes")
         except Exception as e:
             logger.error(f"Validation failed: {e}")
 
-    def run_validation(self, model, num_episodes: int = 100):
-        """Run validation episodes."""
-        total_reward = 0
-        total_trades = 0
-        winning_trades = 0
-        action_counts = {0: 0, 1: 0, 2: 0, 3: 0}
-
-        for episode in range(num_episodes):
-            # Get random validation window
-            start_idx = np.random.randint(self.val_start, self.val_end - 400)
-
-            # Fetch data
-            query = f"""
-            SELECT * FROM micro_features
-            WHERE bar_index >= {start_idx}
-            ORDER BY bar_index
-            LIMIT 400
-            """
-            data = self.conn.execute(query).fetchdf()
-
-            if len(data) < 100:
-                continue
-
-            # Run episode (simplified - you'd run full MCTS here)
-            episode_reward = 0
-            position = 0
-
-            for i in range(32, len(data) - 1):
-                # Create observation (simplified)
-                obs = self._create_observation(data, i)
-
-                # Get action from model (simplified - should use MCTS)
-                with torch.no_grad():
-                    obs_tensor = torch.tensor(obs, dtype=torch.float32).unsqueeze(0).to(self.device)
-                    hidden, policy_logits, _ = model.initial_inference(obs_tensor)
-                    action = torch.argmax(policy_logits).item()
-
-                action_counts[action] += 1
-
-                # Track trades (simplified)
-                if action in [1, 2] and position == 0:
-                    position = 1 if action == 1 else -1
-                elif action == 3 and position != 0:
-                    # Close position
-                    reward = np.random.normal(0, 10)  # Simplified P&L
-                    episode_reward += reward
-                    total_trades += 1
-                    if reward > 0:
-                        winning_trades += 1
-                    position = 0
-
-            total_reward += episode_reward
-
-        # Calculate metrics
-        expectancy = total_reward / max(total_trades, 1)
-        win_rate = (winning_trades / max(total_trades, 1)) * 100
-
-        return {
-            'num_episodes': num_episodes,
-            'num_trades': total_trades,
-            'total_reward': total_reward,
-            'expectancy': expectancy,
-            'win_rate': win_rate,
-            'action_distribution': action_counts,
-            'quality_score': expectancy * np.sqrt(max(total_trades, 1))
-        }
-
-    def _create_observation(self, data, idx):
-        """Create observation from data (simplified)."""
-        # This is a simplified version - real implementation would match training
-        obs = np.random.randn(32, 15).astype(np.float32) * 0.1
-        return obs
 
 
 def main():

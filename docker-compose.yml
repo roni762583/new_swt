@@ -50,7 +50,7 @@ services:
       - TZ=UTC
     volumes:
       - ./data:/workspace/data:ro
-      - ./micro/checkpoints:/workspace/micro/checkpoints:ro
+      - ./micro/checkpoints:/workspace/micro/checkpoints
       - ./micro/validation_results:/workspace/micro/validation_results
     command: python3 /workspace/micro/validation/validate_micro_watcher.py
     networks:
@@ -82,9 +82,9 @@ services:
       - OANDA_ACCOUNT_ID=${OANDA_ACCOUNT_ID}
       - OANDA_ENVIRONMENT=${OANDA_ENVIRONMENT:-practice}
     volumes:
-      - ./micro/checkpoints:/workspace/micro/checkpoints:ro
+      - ./micro/checkpoints:/workspace/micro/checkpoints
       - ./micro/logs:/workspace/micro/logs
-    command: python3 /workspace/micro/live/trade_micro.py --checkpoint best
+    command: python3 /workspace/micro/live/idle_wait.py
     networks:
       - micro-network
     ports:
