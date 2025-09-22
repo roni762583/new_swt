@@ -185,7 +185,13 @@ class BestCheckpointWatcher:
 
 def main():
     """Main entry point."""
-    watcher = BestCheckpointWatcher()
+    import os
+
+    # Read MC_RUNS from environment variable, default to 200
+    mc_runs = int(os.environ.get('MC_RUNS', 200))
+    logger.info(f"Using MC_RUNS={mc_runs} from environment")
+
+    watcher = BestCheckpointWatcher(monte_carlo_runs=mc_runs)
 
     try:
         watcher.watch()

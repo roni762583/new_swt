@@ -50,6 +50,7 @@ services:
       - PYTHONPATH=/workspace
       - MODE=validate
       - TZ=UTC
+      - MC_RUNS=200
     volumes:
       - ./data:/workspace/data:ro
       - ./micro:/workspace/micro

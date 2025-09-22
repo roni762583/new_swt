@@ -447,13 +447,13 @@ class EpisodeRunner:
 
         if action == 0:  # HOLD
             if position == 0:
-                reward = -0.05  # Small penalty for idle
+                reward = -0.01  # Small idle penalty when flat (reduced from -0.05)
             else:
-                reward = 0.0  # Neutral when in position
+                reward = 0.0  # No reward when holding position
 
         elif action == 1:  # BUY
             if position == 0:
-                reward = 1.0  # Reward decisive entry
+                reward = 0.0  # No entry bonus - only reward at close
                 position = 1
                 entry_price = current_price
                 entry_bar = current_bar
@@ -474,11 +474,11 @@ class EpisodeRunner:
                 prev_max_dd = 0.0
                 dd_sum = 0.0
             else:
-                reward = -1.0  # Invalid action
+                reward = 0.0  # Invalid action - no penalty to avoid noise
 
         elif action == 2:  # SELL
             if position == 0:
-                reward = 1.0  # Reward decisive entry
+                reward = 0.0  # No entry bonus - only reward at close
                 position = -1
                 entry_price = current_price
                 entry_bar = current_bar
@@ -499,7 +499,7 @@ class EpisodeRunner:
                 prev_max_dd = 0.0
                 dd_sum = 0.0
             else:
-                reward = -1.0  # Invalid action
+                reward = 0.0  # Invalid action - no penalty to avoid noise
 
         elif action == 3:  # CLOSE
             if position != 0:
@@ -514,7 +514,7 @@ class EpisodeRunner:
                 prev_max_dd = 0.0
                 dd_sum = 0.0
             else:
-                reward = -1.0  # Invalid action
+                reward = 0.0  # Invalid action - no penalty to avoid noise
 
         return reward, position, entry_price, entry_bar, trade_pnl, high_water_mark, prev_max_dd, dd_sum
 

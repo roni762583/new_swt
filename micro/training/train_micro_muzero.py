@@ -9,7 +9,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
-from torch.utils.tensorboard import SummaryWriter
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except ImportError:
+    # TensorBoard not required for validation
+    SummaryWriter = None
 import numpy as np
 import time
 import os
@@ -64,15 +68,15 @@ class TrainingConfig:
     num_outcomes: int = 3  # UP, NEUTRAL, DOWN
     support_size: int = 300
 
-    # MCTS - 1 simulation for fastest testing
-    num_simulations: int = 1  # Minimal for testing (1 sim × 360 steps = 360 sims/episode)
+    # MCTS - Increased for better signal quality
+    num_simulations: int = 25  # Increased from 1 to 25 for much better targets
     discount: float = 0.997
     depth_limit: int = 3  # FIXED at 3 - sweet spot for trading
 
-    # Training
-    learning_rate: float = 0.002  # FIXED - no decay
+    # Training - Adjusted for stability
+    learning_rate: float = 0.0005  # Reduced from 0.002 for stability
     weight_decay: float = 1e-5
-    batch_size: int = 64
+    batch_size: int = 128  # Increased from 64 for better value learning
     gradient_clip: float = 1.0
     buffer_size: int = 10000  # As per README
     min_buffer_size: int = 100  # As per README
@@ -347,8 +351,8 @@ class MicroMuZeroTrainer:
             num_simulations=config.num_simulations,
             discount=config.discount,
             depth_limit=config.depth_limit,  # Use config value (3)
-            dirichlet_alpha=1.0,
-            exploration_fraction=0.5
+            dirichlet_alpha=0.3,  # Reduced from 1.0 for less noise
+            exploration_fraction=0.25  # Reduced from 0.5 for clearer targets
         )
 
         # Initialize balanced replay buffer (NO priority replay)
@@ -386,8 +390,12 @@ class MicroMuZeroTrainer:
         # Initialize TensorBoard writer
         tensorboard_dir = os.path.join(config.log_dir, 'tensorboard')
         os.makedirs(tensorboard_dir, exist_ok=True)
-        self.writer = SummaryWriter(tensorboard_dir)
-        logger.info(f"TensorBoard logging to: {tensorboard_dir}")
+        if SummaryWriter is not None:
+            self.writer = SummaryWriter(tensorboard_dir)
+            logger.info(f"TensorBoard logging to: {tensorboard_dir}")
+        else:
+            self.writer = None
+            logger.warning("TensorBoard not available - skipping logging")
         logger.info(f"Run: tensorboard --logdir {tensorboard_dir} --port 6006")
 
         logger.info(f"Trainer initialized on {self.device}")
@@ -419,8 +427,8 @@ class MicroMuZeroTrainer:
             'num_simulations': self.config.num_simulations,
             'discount': self.config.discount,
             'depth_limit': 3,
-            'dirichlet_alpha': 1.0,
-            'exploration_fraction': 0.5
+            'dirichlet_alpha': 0.3,  # Reduced from 1.0
+            'exploration_fraction': 0.25  # Reduced from 0.5
         }
 
         # Save current model for workers
@@ -511,10 +519,11 @@ class MicroMuZeroTrainer:
                        f"CLOSE: {action_dist['CLOSE']:.1%}")
 
             # Log action distribution to TensorBoard
-            self.writer.add_scalar('Actions/HOLD', action_dist['HOLD'], self.episode)
-            self.writer.add_scalar('Actions/BUY', action_dist['BUY'], self.episode)
-            self.writer.add_scalar('Actions/SELL', action_dist['SELL'], self.episode)
-            self.writer.add_scalar('Actions/CLOSE', action_dist['CLOSE'], self.episode)
+            if self.writer:
+                self.writer.add_scalar('Actions/HOLD', action_dist['HOLD'], self.episode)
+                self.writer.add_scalar('Actions/BUY', action_dist['BUY'], self.episode)
+                self.writer.add_scalar('Actions/SELL', action_dist['SELL'], self.episode)
+                self.writer.add_scalar('Actions/CLOSE', action_dist['CLOSE'], self.episode)
 
         # Calculate metrics
         avg_expectancy = np.mean(self.training_stats['expectancies'][-num_episodes:])
@@ -723,15 +732,16 @@ class MicroMuZeroTrainer:
                     )
 
                     # Log to TensorBoard
-                    self.writer.add_scalar('Performance/Expectancy', recent_expectancy, self.episode)
-                    self.writer.add_scalar('Performance/WinRate', recent_win_rate, self.episode)
-                    self.writer.add_scalar('Performance/TradeRatio', losses.get('trade_ratio', 0), self.episode)
-                    self.writer.add_scalar('Loss/Total', losses['total_loss'], self.episode)
-                    self.writer.add_scalar('Loss/Policy', losses.get('policy_loss', 0), self.episode)
-                    self.writer.add_scalar('Loss/Value', losses.get('value_loss', 0), self.episode)
-                    self.writer.add_scalar('Loss/Outcome', losses.get('outcome_loss', 0), self.episode)
-                    self.writer.add_scalar('Training/EpisodesPerSecond', eps, self.episode)
-                    self.writer.add_scalar('Training/BufferSize', losses.get('buffer_size', 0), self.episode)
+                    if self.writer:
+                        self.writer.add_scalar('Performance/Expectancy', recent_expectancy, self.episode)
+                        self.writer.add_scalar('Performance/WinRate', recent_win_rate, self.episode)
+                        self.writer.add_scalar('Performance/TradeRatio', losses.get('trade_ratio', 0), self.episode)
+                        self.writer.add_scalar('Loss/Total', losses['total_loss'], self.episode)
+                        self.writer.add_scalar('Loss/Policy', losses.get('policy_loss', 0), self.episode)
+                        self.writer.add_scalar('Loss/Value', losses.get('value_loss', 0), self.episode)
+                        self.writer.add_scalar('Loss/Outcome', losses.get('outcome_loss', 0), self.episode)
+                        self.writer.add_scalar('Training/EpisodesPerSecond', eps, self.episode)
+                        self.writer.add_scalar('Training/BufferSize', losses.get('buffer_size', 0), self.episode)
 
                 # Save checkpoint with smart system
                 self.save_checkpoint()  # Handles both frequent and periodic saves
@@ -747,7 +757,8 @@ class MicroMuZeroTrainer:
             if self.episode_collector:
                 self.episode_collector.stop()
             self.save_checkpoint()
-            self.writer.close()  # Close TensorBoard writer
+            if self.writer:
+                self.writer.close()  # Close TensorBoard writer
             logger.info("Training complete")
 
     def validate(self):
