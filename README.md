@@ -112,9 +112,20 @@
 
 **Performance Results:**
 - Episode collection: ~6-7 seconds/episode (with optimized workers)
-- Training progressing at Episode 1870+
+- Training progressing at Episode 2000+ (0.2% complete)
 - Memory usage optimized: 393KB per session (was 2.6GB total cache)
 - Validation running Monte Carlo simulations on best checkpoints
+
+**📊 Terminal Dashboard for Real-Time Monitoring:**
+- ✅ **Simple bash dashboard**: `./monitor.sh` - updates every 3 seconds
+- ✅ **Python dashboards**: `micro/monitoring/dashboard.py` (curses) and `simple_dash.py`
+- **Displays**: Episode progress, ETA, expectancy, win rate, trade ratio, action distribution
+- **Current Stats** (Episode 2000):
+  - Speed: 1.5 episodes/sec
+  - Expectancy: -4.04 pips (improving)
+  - Win Rate: 9.6% (up from 7.4%)
+  - Trade Ratio: 74.8% (excellent engagement)
+  - Actions: Balanced (HOLD: 26%, BUY: 27%, SELL: 26%, CLOSE: 21%)
 
 ### 🔵 Planned Architecture Redesign:
 
