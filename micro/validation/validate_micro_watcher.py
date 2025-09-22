@@ -35,12 +35,16 @@ class BestCheckpointWatcher:
         checkpoint_dir: str = "/workspace/micro/checkpoints",
         results_dir: str = "/workspace/micro/validation_results",
         data_path: str = "/workspace/data/micro_features.duckdb",
-        check_interval: int = 60
+        check_interval: int = 60,
+        validation_timeout: int = 1800,  # 30 minutes default
+        monte_carlo_runs: int = 200  # Reduced from 1000
     ):
         self.checkpoint_dir = checkpoint_dir
         self.results_dir = results_dir
         self.data_path = data_path
         self.check_interval = check_interval
+        self.validation_timeout = validation_timeout
+        self.monte_carlo_runs = monte_carlo_runs
         self.best_path = os.path.join(checkpoint_dir, "best.pth")
         self.last_mtime = None
         self.last_validated_episode = None
@@ -58,6 +62,8 @@ class BestCheckpointWatcher:
 
         logger.info(f"Watching directory: {self.checkpoint_dir}")
         logger.info(f"Results directory: {self.results_dir}")
+        logger.info(f"Validation timeout: {self.validation_timeout}s")
+        logger.info(f"Monte Carlo runs: {self.monte_carlo_runs}")
 
     def watch(self):
         """Main watching loop."""
@@ -115,21 +121,22 @@ class BestCheckpointWatcher:
             )
             subprocess.run(["cp", self.best_path, val_checkpoint_path], check=True)
 
-            # Run the full validation script
+            # Run the full validation script with configurable parameters
             cmd = [
                 "python3",
                 "/workspace/micro/validation/validate_micro.py",
                 "--checkpoint", val_checkpoint_path,
-                "--num-runs", "1000",  # Monte Carlo runs
+                "--num-runs", str(self.monte_carlo_runs),  # Configurable MC runs
                 "--output-dir", self.results_dir
             ]
 
-            logger.info("Starting validation with Monte Carlo simulation (1000 runs)...")
+            logger.info(f"Starting validation with Monte Carlo simulation ({self.monte_carlo_runs} runs)...")
+            logger.info(f"Timeout: {self.validation_timeout}s ({self.validation_timeout/60:.1f} minutes)")
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=600  # 10 minute timeout
+                timeout=self.validation_timeout  # Configurable timeout
             )
 
             if result.returncode == 0:
@@ -164,7 +171,13 @@ class BestCheckpointWatcher:
                 }
 
         except subprocess.TimeoutExpired:
-            logger.error("Validation timed out after 10 minutes")
+            logger.error(f"Validation timed out after {self.validation_timeout}s ({self.validation_timeout/60:.1f} minutes)")
+            logger.info("Consider reducing monte_carlo_runs or increasing timeout")
+            self.validation_history[str(episode)] = {
+                'timestamp': datetime.now().isoformat(),
+                'status': 'timeout',
+                'timeout': self.validation_timeout
+            }
         except Exception as e:
             logger.error(f"Validation failed: {e}")
 

@@ -52,6 +52,7 @@ services:
       - TZ=UTC
     volumes:
       - ./data:/workspace/data:ro
+      - ./micro:/workspace/micro
       - ./micro/checkpoints:/workspace/micro/checkpoints
       - ./micro/validation_results:/workspace/micro/validation_results
     command: python3 /workspace/micro/validation/validate_micro_watcher.py

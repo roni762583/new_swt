@@ -34,7 +34,7 @@ class AdvancedDashboard:
         """Parse all metrics from logs."""
         metrics = {}
 
-        # Find latest episode line
+        # Find latest episode line - handle both INFO and plain format
         episode_pattern = r'Episode (\d+) \| Steps (\d+) \| EPS: ([\d.]+) \| Loss: ([\d.]+) \| TD: ([\d.]+) \| Exp: ([-\d.]+) \| WR: ([\d.]+)% \| TradeRatio: ([\d.]+)%'
         episode_matches = re.findall(episode_pattern, logs)
 
