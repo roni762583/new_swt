@@ -102,6 +102,9 @@ class EpisodeRunner:
 
         # Always use AMDDP1 reward system (no flag needed)
 
+        # Initialize trades tracking for Peoples Fintech expectancy
+        self.trades_pnl = []
+
         # Load pre-calculated valid session indices
         self.session_indices = self._load_session_indices(session_indices_path)
 
