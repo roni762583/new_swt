@@ -266,11 +266,16 @@ class PPOAgent:
 
         for epoch in range(n_epochs):
             # Mini-batch training
-            indices = np.random.permutation(len(states))
+            data_size = len(states)
+            indices = np.random.permutation(data_size)
 
-            for start_idx in range(0, len(states), batch_size):
-                end_idx = min(start_idx + batch_size, len(states))
+            for start_idx in range(0, data_size, batch_size):
+                end_idx = min(start_idx + batch_size, data_size)
                 batch_indices = indices[start_idx:end_idx]
+
+                # Skip if batch is empty
+                if len(batch_indices) == 0:
+                    continue
 
                 batch_states = states[batch_indices]
                 batch_actions = actions[batch_indices]

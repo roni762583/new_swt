@@ -33,7 +33,7 @@ services:
       - ./checkpoints:/app/checkpoints
       - ./results:/app/results
       - ../../../data:/app/data:ro
-      - /tmp/numba_cache:/tmp/numba_cache
+      - ./numba_cache:/tmp/numba_cache
 
     # Environment
     environment:
