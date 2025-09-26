@@ -53,13 +53,16 @@ Proximal Policy Optimization implementation for the optimal M5/H1 trading strate
   - 3: Close
 
 ### PPO Configuration
-- Policy Network: [256, 256] MLP with ReLU
-- Learning Rate: 3e-4
-- Batch Size: 64
-- N Steps: 2048
-- Gamma: 0.99
-- GAE Lambda: 0.95
-- Clip Range: 0.2
+- **Network Architecture**: [256, 256] MLP with ReLU activation
+- **Learning Rate**: 3e-4 (adaptive)
+- **Batch Size**: 64 minibatch
+- **N Steps**: 2048 (rollout buffer)
+- **Gamma**: 0.99 (discount factor)
+- **GAE Lambda**: 0.95 (advantage estimation)
+- **Clip Range**: 0.2 (PPO clipping)
+- **Entropy Coef**: 0.01 (exploration)
+- **Training Data**: 600k bars (60% of dataset)
+- **Validation Data**: 300k bars (30% of dataset)
 
 ## 🚀 Quick Start
 
@@ -76,11 +79,14 @@ DOCKER_BUILDKIT=1 docker compose -f docker-compose.buildkit.yml build
 DOCKER_BUILDKIT=1 docker compose -f docker-compose.buildkit.yml up
 
 # Or run specific operations:
-# Training only
-docker compose -f docker-compose.buildkit.yml run ppo python run.py train
+# Full PPO with neural networks (recommended)
+docker compose -f docker-compose.buildkit.yml run ppo python train.py
+
+# Minimal rule-based version (faster, no GPU needed)
+docker compose -f docker-compose.buildkit.yml run ppo python train_minimal.py
 
 # Validation only
-docker compose -f docker-compose.buildkit.yml run ppo python run.py validate
+docker compose -f docker-compose.buildkit.yml run ppo python validate_minimal.py
 
 # Resume from checkpoint
 docker compose -f docker-compose.buildkit.yml run ppo python train_minimal.py --load-checkpoint checkpoints/best_checkpoint.pkl
@@ -93,7 +99,7 @@ docker compose -f docker-compose.buildkit.yml run ppo python train_minimal.py --
 python -m venv venv
 source venv/bin/activate
 
-# Install minimal dependencies
+# Install dependencies (includes PyTorch, Stable-Baselines3)
 pip install -r requirements-minimal.txt
 
 # Run training with checkpoints
@@ -134,18 +140,23 @@ picco-ppo/
 
 ## 🎯 Training Commands
 
-### Basic Training
+### Full PPO Training (Neural Networks)
 ```bash
+# Basic training with defaults
 python train.py
-```
 
-### Advanced Options
-```bash
+# Custom configuration
 python train.py \
-    --timesteps 2000000 \
-    --n_envs 8 \
+    --timesteps 1000000 \
+    --n_envs 4 \
     --eval_freq 10000 \
     --save_freq 50000
+```
+
+### Minimal Training (Rule-based)
+```bash
+# Quick testing without neural networks
+python train_minimal.py
 ```
 
 ### Resume Training
@@ -188,11 +199,14 @@ manager.save_checkpoint(state, episode, expectancy_R, metrics)
 ### AMDDP1 Reward Function
 ```python
 # Asymmetric Mean Drawdown Duration Penalty
+# Penalizes drawdowns to encourage risk management
 reward = pnl_pips - 0.01 * cumulative_drawdown_sum
 
-# With profit protection
+# Profit protection: Don't punish profitable trades
 if pnl_pips > 0 and reward < 0:
-    reward = 0.001  # Small positive for profitable trades
+    reward = 0.001  # Small positive reward
+
+# Applied with 4 pip spread cost on position opening
 ```
 
 ### Van Tharp Expectancy Rating
@@ -260,9 +274,12 @@ def _calculate_reward(self, prev_equity: float) -> float:
 ## 📊 Empirical Foundation
 
 This implementation is based on extensive backtesting that showed:
-- M5/H1 outperforms M1/H1 by 3.2x (444.6 vs 138.5 pips)
-- Optimal feature set discovered through systematic analysis
-- Regime-adaptive strategy (trend following vs mean reversion)
+- **M5/H1 Performance**: 444.6 pips with 38.6% win rate
+- **3.2x Better**: Outperforms M1/H1 (138.5 pips)
+- **Optimal Features**: 17 carefully selected features
+- **Regime Adaptive**: Switches between trend/mean-reversion
+- **Realistic Costs**: 4 pip spread matches live trading
+- **Time Aware**: Captures market session patterns
 
 ## 🔗 Related Projects
 
