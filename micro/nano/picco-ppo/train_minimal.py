@@ -495,7 +495,7 @@ def train(load_checkpoint=None, save_freq=2):
 
             checkpoint_metrics = {
                 'total_trades': sum(r['trades'] for r in results),
-                'avg_return': np.mean([r['return'] for r in results]),
+                'avg_pips': np.mean([r['total_pips'] for r in results]),
                 'sessions_completed': len(results)
             }
 

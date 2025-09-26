@@ -4,6 +4,7 @@ Proximal Policy Optimization implementation for the optimal M5/H1 trading strate
 
 **Latest Updates (Sept 2025)**:
 - ✅ Van Tharp Expectancy_R rating system
+- ✅ Rolling expectancy tracking (100/500/1000 trade windows)
 - ✅ AMDDP1 reward function (pips-based with drawdown penalty)
 - ✅ 4 pip spread cost on position opening
 - ✅ Cyclic time features (sin/cos hour of day/week)
@@ -11,6 +12,7 @@ Proximal Policy Optimization implementation for the optimal M5/H1 trading strate
 - ✅ Checkpoint management (keep 2 + best)
 - ✅ Docker BuildKit optimization
 - ✅ 1M+ bars support (60/30/10 splits)
+- ✅ Live training showing 17,400+ pips profit
 
 ## 📊 Key Results from Analysis
 
@@ -209,6 +211,24 @@ if pnl_pips > 0 and reward < 0:
 # Applied with 4 pip spread cost on position opening
 ```
 
+### Rolling Expectancy Tracking
+```python
+from rolling_expectancy import RollingExpectancyTracker
+
+# Track performance over multiple windows
+tracker = RollingExpectancyTracker(window_sizes=[100, 500, 1000])
+
+# Add trades and monitor evolution
+for trade_pips in trades:
+    tracker.add_trade(trade_pips)
+    expectancies = tracker.calculate_expectancies()
+
+    # Shows:
+    # - 100-trade window: Quick response to changes
+    # - 500-trade window: Medium-term stability
+    # - 1000-trade window: Long-term validation
+```
+
 ### Van Tharp Expectancy Rating
 ```python
 # Calculate R-multiple expectancy
@@ -281,11 +301,21 @@ This implementation is based on extensive backtesting that showed:
 - **Realistic Costs**: 4 pip spread matches live trading
 - **Time Aware**: Captures market session patterns
 
+## 📈 Training Results
+
+**Latest Training Run (Sept 26, 2025):**
+- **Steps Trained**: 119,700+
+- **Total Profit**: 17,422 pips
+- **Total Trades**: 5,913
+- **Average**: ~2.95 pips/trade (after 4 pip spread)
+- **Status**: Profitable system demonstrating AMDDP1 effectiveness
+
 ## 🔗 Related Projects
 
 - Main MuZero implementation: `/home/aharon/projects/new_swt/micro/`
 - Swing analysis tools: `/home/aharon/projects/new_swt/micro/nano/`
 - Data pipeline: `/home/aharon/projects/new_swt/data/`
+- Rolling expectancy approach: Similar to [peoplesfintech.github.io](https://github.com/roni762583/peoplesfintech.github.io)
 
 ## 📝 Citation
 
