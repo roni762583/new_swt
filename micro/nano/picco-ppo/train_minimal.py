@@ -388,6 +388,10 @@ def train(load_checkpoint=None, save_freq=2):
     # Initialize checkpoint manager
     ckpt_manager = CheckpointManager("checkpoints")
 
+    # Initialize rolling expectancy tracker
+    from rolling_expectancy import RollingExpectancyTracker
+    expectancy_tracker = RollingExpectancyTracker(window_sizes=[100, 500, 1000])
+
     # Load checkpoint if provided
     start_episode = 0
     policy_state = None
@@ -458,10 +462,29 @@ def train(load_checkpoint=None, save_freq=2):
             expectancy_R = expectancy_pips / avg_loss
 
             all_trades_pnl.extend(env.trades_pnl)  # Accumulate for global stats
+
+            # Update rolling expectancy tracker
+            for trade_pips in env.trades_pnl:
+                expectancy_tracker.add_trade(trade_pips)
         else:
             expectancy_R = 0.0
             avg_loss = 10.0
             expectancy_pips = 0.0
+
+        # Get rolling expectancies
+        rolling_stats = expectancy_tracker.calculate_expectancies()
+
+        # Save rolling expectancy to file for monitoring
+        expectancy_log = {
+            'episode': episode + 1,
+            'total_trades': len(expectancy_tracker.all_trades),
+            'cumulative_pips': env.equity,
+            **rolling_stats
+        }
+
+        os.makedirs("results", exist_ok=True)
+        with open("results/rolling_expectancy.json", 'w') as f:
+            json.dump(expectancy_log, f, indent=2)
 
         # Episode summary
         total_pips = env.equity  # Already in pips
@@ -506,10 +529,21 @@ def train(load_checkpoint=None, save_freq=2):
                 metrics=checkpoint_metrics
             )
 
-        print(f"\nEpisode Results:")
+        print(f"\nEpisode {episode + 1} Results:")
         print(f"  Final P&L: {env.equity:.1f} pips")
         print(f"  Total Trades: {len(env.trades)}")
         print(f"  Expectancy: {expectancy_pips:.1f} pips = {expectancy_R:.3f}R (R={avg_loss:.1f} pips)")
+
+        # Display rolling expectancy every 10 episodes
+        if (episode + 1) % 10 == 0:
+            print("\n📊 ROLLING EXPECTANCY UPDATE:")
+            for window_size in [100, 500, 1000]:
+                exp_key = f'expectancy_R_{window_size}'
+                if exp_key in rolling_stats:
+                    exp_R = rolling_stats[exp_key]
+                    sample = rolling_stats[f'sample_size_{window_size}']
+                    quality = "🏆" if exp_R > 0.5 else "✅" if exp_R > 0.25 else "⚠️" if exp_R > 0 else "🔴"
+                    print(f"  {window_size:4d}-trade: {exp_R:+.3f}R {quality} (n={sample})")
 
         if env.trades:
             winning_trades = [t for t in env.trades if t['pips'] > 0]
