@@ -1,0 +1,28 @@
+FROM python:3.11-slim
+
+# Install build essentials for compiled extensions
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install Python dependencies with optimizations
+COPY requirements-optimized.txt .
+RUN pip install --no-cache-dir -r requirements-optimized.txt
+
+# Copy code
+COPY . .
+
+# Set environment variables for optimization
+ENV PYTHONUNBUFFERED=1
+ENV OMP_NUM_THREADS=8
+ENV MKL_NUM_THREADS=8
+ENV NUMEXPR_NUM_THREADS=8
+ENV VECLIB_MAXIMUM_THREADS=8
+ENV NUMBA_NUM_THREADS=8
+
+# Use all CPU cores
+CMD ["python", "-u", "train_optimized.py", "--episodes", "50", "--n_envs", "4"]

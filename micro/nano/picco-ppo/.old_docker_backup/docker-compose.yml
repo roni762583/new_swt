@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  ppo-training:
+    build:
+      context: .
+      dockerfile: Dockerfile.optimized
+    container_name: picco-ppo-training
+    volumes:
+      - ./checkpoints:/app/checkpoints
+      - ./results:/app/results
+      - ../../../data:/app/data:ro
+    environment:
+      - OMP_NUM_THREADS=8
+      - MKL_NUM_THREADS=8
+      - NUMBA_NUM_THREADS=8
+      - PYTHONUNBUFFERED=1
+    cpus: 8
+    mem_limit: 16g
+    command: python -u train_optimized.py --episodes 50 --n_envs 4
+    restart: unless-stopped
+
+  ppo-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile.optimized
+    container_name: picco-ppo-monitor
+    volumes:
+      - ./results:/app/results:ro
+    command: python -u monitor_expectancy.py
+    restart: unless-stopped
+    depends_on:
+      - ppo-training
