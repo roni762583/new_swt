@@ -1,0 +1,53 @@
+services:
+  # Single unified container with BuildKit optimization
+  ppo:
+    build:
+      context: .
+      dockerfile: Dockerfile.buildkit
+      # Enable BuildKit
+      args:
+        DOCKER_BUILDKIT: 1
+      cache_from:
+        - ppo-buildkit:latest
+    image: ppo-buildkit:latest
+    container_name: ppo_session
+
+    volumes:
+      # Mount data directory (read-only)
+      - ../../../data:/app/data:ro
+
+      # Mount output directories (read-write)
+      - ./models:/app/models
+      - ./results:/app/results
+      - ./checkpoints:/app/checkpoints
+
+      # Mount scripts for hot-reload during development
+      - ./train_minimal.py:/app/train_minimal.py:ro
+      - ./validate_minimal.py:/app/validate_minimal.py:ro
+      - ./run.py:/app/run.py:ro
+      - ./checkpoint_manager.py:/app/checkpoint_manager.py:ro
+      - ./env:/app/env:ro
+
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DOCKER_BUILDKIT=1
+
+    # Default: run complete session (train + validate)
+    command: python run.py session
+
+# Usage Examples:
+#
+# Full session (train + validate):
+#   DOCKER_BUILDKIT=1 docker compose -f docker-compose.buildkit.yml up
+#
+# Just training:
+#   DOCKER_BUILDKIT=1 docker compose -f docker-compose.buildkit.yml run ppo python run.py train
+#
+# Just validation:
+#   DOCKER_BUILDKIT=1 docker compose -f docker-compose.buildkit.yml run ppo python run.py validate
+#
+# Evaluate model:
+#   DOCKER_BUILDKIT=1 docker compose -f docker-compose.buildkit.yml run ppo python run.py evaluate
+#
+# Full PPO with neural network:
+#   DOCKER_BUILDKIT=1 docker compose -f docker-compose.buildkit.yml run ppo python run.py session --full

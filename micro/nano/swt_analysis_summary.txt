@@ -1,0 +1,40 @@
+======================================================================
+SWT (WAVELET SCATTERING) FEATURE ANALYSIS SUMMARY
+======================================================================
+
+📊 OVERALL PERFORMANCE:
+  • Average R² (5 base features): 0.0016
+  • Average R² (SWT features): 0.0023
+  • Average R² (Combined): 0.0043
+
+🌊 BEST HORIZONS FOR SWT FEATURES:
+  • 30.0 min: R² = 0.0042
+  • 15.0 min: R² = 0.0035
+  • 10.0 min: R² = 0.0033
+
+✅ SWT OUTPERFORMS BASE FEATURES AT:
+  • 1.0 min: +0.0006 R² (420.3% improvement)
+  • 2.0 min: +0.0008 R² (337.5% improvement)
+  • 3.0 min: +0.0011 R² (314.7% improvement)
+  • 4.0 min: +0.0014 R² (291.2% improvement)
+  • 5.0 min: +0.0014 R² (230.1% improvement)
+  • 10.0 min: +0.0018 R² (113.6% improvement)
+  • 15.0 min: +0.0004 R² (14.9% improvement)
+
+🔄 COMBINED MODEL INSIGHTS:
+  • 30.0 min: Combined R² = 0.0110 (+0.0047 over base)
+  • 15.0 min: Combined R² = 0.0073 (+0.0043 over base)
+  • 10.0 min: Combined R² = 0.0057 (+0.0042 over base)
+
+📈 FEATURE EFFICIENCY:
+  • Base features: 5 dimensions
+  • SWT features: 29 dimensions
+  • R² per dimension (base): 0.000319
+  • R² per dimension (SWT): 0.000079
+  • Base features are 4.1x more efficient per dimension
+
+======================================================================
+💡 TRADING IMPLICATIONS:
+--------------------------------------------------
+🟡 SWT features show marginal improvement over base features
+   Average improvement: 42.9%

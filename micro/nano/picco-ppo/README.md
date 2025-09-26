@@ -1,0 +1,261 @@
+# PPO M5/H1 Trading System
+
+Proximal Policy Optimization implementation for the optimal M5/H1 trading strategy discovered through comprehensive timeframe analysis.
+
+**Latest Updates (Sept 2025)**:
+- ✅ Van Tharp Expectancy_R rating system
+- ✅ AMDDP1 reward function implementation
+- ✅ Checkpoint management (keep 2 + best)
+- ✅ Docker BuildKit optimization
+- ✅ Unified container for all operations
+- ✅ 1M+ bars support (60/30/10 splits)
+
+## 📊 Key Results from Analysis
+
+- **Best Timeframe**: M5 execution with H1 context
+- **Historical Performance**: 444.6 pips, 38.6% win rate
+- **Optimal Features**: 7 market features + 6 position features
+- **Reward Function**: AMDDP1 with drawdown penalties
+- **Performance Rating**: Van Tharp Expectancy_R system
+
+## 🏗️ Architecture
+
+### Environment (`env/trading_env.py`)
+- **State Space (13 features)**:
+  - 7 Market Features:
+    - `react_ratio`: (close - SMA200)/(SMA20 - SMA200), clipped [-5, 5]
+    - `h1_trend`: Higher timeframe direction (-1, 0, 1)
+    - `h1_momentum`: H1 5-bar rate of change
+    - `efficiency_ratio`: Kaufman's efficiency (0-1)
+    - `bb_position`: Position in Bollinger Bands (-1 to 1)
+    - `rsi_extreme`: (RSI - 50)/50, range [-1, 1]
+    - `use_mean_reversion`: 1 if efficiency < 0.3, else 0
+  - 6 Position Features (from micro setup):
+    - `position_side`: -1 (short), 0 (flat), 1 (long)
+    - `position_pips`: Current unrealized P&L in pips
+    - `bars_since_entry`: Time in position
+    - `pips_from_peak`: Distance from maximum profit
+    - `max_drawdown_pips`: Max DD in current position
+    - `accumulated_dd`: Cumulative drawdown over time
+
+- **Action Space**:
+  - 0: Hold
+  - 1: Buy
+  - 2: Sell
+  - 3: Close
+
+### PPO Configuration
+- Policy Network: [256, 256] MLP with ReLU
+- Learning Rate: 3e-4
+- Batch Size: 64
+- N Steps: 2048
+- Gamma: 0.99
+- GAE Lambda: 0.95
+- Clip Range: 0.2
+
+## 🚀 Quick Start
+
+### Docker Training (Recommended)
+
+```bash
+# Navigate to PPO directory
+cd /home/aharon/projects/new_swt/micro/nano/picco-ppo/
+
+# Build with BuildKit caching
+DOCKER_BUILDKIT=1 docker compose -f docker-compose.buildkit.yml build
+
+# Run complete session (train + validate)
+DOCKER_BUILDKIT=1 docker compose -f docker-compose.buildkit.yml up
+
+# Or run specific operations:
+# Training only
+docker compose -f docker-compose.buildkit.yml run ppo python run.py train
+
+# Validation only
+docker compose -f docker-compose.buildkit.yml run ppo python run.py validate
+
+# Resume from checkpoint
+docker compose -f docker-compose.buildkit.yml run ppo python train_minimal.py --load-checkpoint checkpoints/best_checkpoint.pkl
+```
+
+### Local Training
+
+```bash
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate
+
+# Install minimal dependencies
+pip install -r requirements-minimal.txt
+
+# Run training with checkpoints
+python train_minimal.py --save-freq 2
+
+# Run validation
+python validate_minimal.py
+```
+
+### Evaluation
+
+```bash
+# Evaluate trained model
+python evaluate.py --model models/best/best_model.zip --n_episodes 10
+
+# Or with Docker
+docker compose --profile eval up evaluator
+```
+
+## 📁 Project Structure
+
+```
+picco-ppo/
+├── env/
+│   └── trading_env.py             # Gymnasium environment
+├── run.py                         # Unified runner for all operations
+├── train_minimal.py               # AMDDP1 training implementation
+├── validate_minimal.py            # Validation with expectancy_R
+├── checkpoint_manager.py          # Checkpoint save/load system
+├── models/                        # Saved models
+├── checkpoints/                   # Training checkpoints
+├── results/                       # Evaluation results
+├── Dockerfile.buildkit           # BuildKit-optimized Docker
+├── docker-compose.buildkit.yml   # Docker orchestration
+├── requirements-minimal.txt       # Minimal dependencies
+└── FEATURE_FORMULAS.md           # Complete feature documentation
+```
+
+## 🎯 Training Commands
+
+### Basic Training
+```bash
+python train.py
+```
+
+### Advanced Options
+```bash
+python train.py \
+    --timesteps 2000000 \
+    --n_envs 8 \
+    --eval_freq 10000 \
+    --save_freq 50000
+```
+
+### Resume Training
+```bash
+python train.py --load_model models/checkpoint_1000000_steps.zip
+```
+
+## 📈 Performance Monitoring
+
+### TensorBoard Metrics
+- Episode rewards
+- Policy loss
+- Value loss
+- Entropy
+- Learning rate
+- Custom trading metrics
+
+### Evaluation Metrics
+- **Expectancy_R**: Van Tharp R-multiple system
+- **Total return (%)**: Overall profitability
+- **Win rate**: Percentage of winning trades
+- **Sharpe ratio**: Risk-adjusted returns
+- **Max drawdown**: Worst peak-to-trough
+- **Trade frequency**: Trades per episode
+
+## 🔧 Key Features
+
+### Checkpoint Management
+```python
+from checkpoint_manager import CheckpointManager
+
+# Automatically manages checkpoints
+manager = CheckpointManager("checkpoints")
+manager.save_checkpoint(state, episode, expectancy_R, metrics)
+```
+- Keeps 2 recent + best performer
+- Tracks expectancy_R for each checkpoint
+- Resume from any checkpoint
+
+### Van Tharp Expectancy Rating
+```python
+# Calculate R-multiple expectancy
+avg_loss = abs(np.mean(losses))  # R value
+expectancy_R = expectancy_pips / avg_loss
+
+# System quality rating
+if expectancy_R > 0.5:
+    quality = "EXCELLENT"
+elif expectancy_R > 0.25:
+    quality = "GOOD"
+```
+
+## 🔧 Customization
+
+### Modify Hyperparameters
+
+Edit `train.py`:
+```python
+ppo_config = {
+    "learning_rate": 3e-4,  # Adjust learning rate
+    "n_steps": 2048,        # Steps before update
+    "batch_size": 64,       # Minibatch size
+    "ent_coef": 0.01,      # Exploration coefficient
+}
+```
+
+### Change Network Architecture
+
+```python
+"policy_kwargs": {
+    "net_arch": [512, 256, 128],  # Deeper network
+    "activation_fn": torch.nn.Tanh,  # Different activation
+}
+```
+
+### Adjust Reward Function
+
+Edit `env/trading_env.py`:
+```python
+def _calculate_reward(self, prev_equity: float) -> float:
+    # Customize reward shaping here
+    pass
+```
+
+## 🐛 Troubleshooting
+
+### Out of Memory
+- Reduce `n_envs` parameter
+- Decrease `batch_size`
+- Use smaller network architecture
+
+### Slow Training
+- Enable GPU: Check CUDA availability
+- Use SubprocVecEnv for true parallelization
+- Reduce evaluation frequency
+
+### Poor Performance
+- Increase training timesteps
+- Tune hyperparameters
+- Check data quality and features
+
+## 📊 Empirical Foundation
+
+This implementation is based on extensive backtesting that showed:
+- M5/H1 outperforms M1/H1 by 3.2x (444.6 vs 138.5 pips)
+- Optimal feature set discovered through systematic analysis
+- Regime-adaptive strategy (trend following vs mean reversion)
+
+## 🔗 Related Projects
+
+- Main MuZero implementation: `/home/aharon/projects/new_swt/micro/`
+- Swing analysis tools: `/home/aharon/projects/new_swt/micro/nano/`
+- Data pipeline: `/home/aharon/projects/new_swt/data/`
+
+## 📝 Citation
+
+Based on the optimal feature analysis and timeframe comparison performed in the nano experiments, achieving 444.6 pips with 38.6% win rate on GBPJPY M5/H1 data.
+
+## 📄 License
+
+Proprietary - Internal use only

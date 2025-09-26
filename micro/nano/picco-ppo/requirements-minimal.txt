@@ -1,0 +1,5 @@
+# Minimal requirements for rule-based PPO
+numpy
+pandas
+duckdb
+tqdm

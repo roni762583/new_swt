@@ -1,0 +1,38 @@
+FROM python:3.11-slim
+
+WORKDIR /workspace
+
+# Install system dependencies for TA-Lib
+RUN apt-get update && apt-get install -y \
+    wget \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download and install TA-Lib C library
+RUN wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz && \
+    tar -xzf ta-lib-0.4.0-src.tar.gz && \
+    cd ta-lib && \
+    ./configure --prefix=/usr && \
+    make && \
+    make install && \
+    cd .. && \
+    rm -rf ta-lib ta-lib-0.4.0-src.tar.gz
+
+# Install numpy first (required for TA-Lib)
+RUN pip install --no-cache-dir numpy==1.24.3
+
+# Install TA-Lib Python wrapper
+RUN pip install --no-cache-dir TA-Lib==0.4.28
+
+# Install remaining Python packages
+RUN pip install --no-cache-dir \
+    pandas==2.0.3 \
+    statsmodels==0.14.0 \
+    scikit-learn==1.3.0 \
+    duckdb==1.1.0 \
+    matplotlib==3.7.2
+
+# Copy analysis scripts
+COPY . /workspace/
+
+CMD ["python", "talib_feature_analysis.py"]

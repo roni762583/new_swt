@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+
+# PPO Training outputs
+models/
+!models/.gitkeep
+results/
+!results/.gitkeep
+tensorboard/
+!tensorboard/.gitkeep
+logs/
+!logs/.gitkeep
+
+# Training artifacts
+*.json
+*.csv
+*.png
+*.jpg
+*.pdf
+*.zip
+*.pth
+*.pkl
+
+# Keep example/default files
+!training_results_example.json
+!FEATURE_FORMULAS.md
+!README.md
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker
+.dockerignore
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  ppo-trainer:
+    build: .
+    image: ppo-m5h1-trader:latest
+    container_name: ppo_trainer
+
+    # For GPU support
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    volumes:
+      # Mount data directory
+      - ../../../data:/app/data:ro
+
+      # Mount model outputs
+      - ./models:/app/models
+      - ./tensorboard:/app/tensorboard
+      - ./logs:/app/logs
+      - ./results:/app/results
+
+      # Mount code for development
+      - .:/app
+
+    environment:
+      - PYTHONUNBUFFERED=1
+      - CUDA_VISIBLE_DEVICES=0
+      - TF_CPP_MIN_LOG_LEVEL=2
+
+    command: python train_minimal.py
+
+  tensorboard:
+    image: tensorflow/tensorflow:latest
+    container_name: ppo_tensorboard
+    ports:
+      - "6006:6006"
+    volumes:
+      - ./tensorboard:/logs
+    command: tensorboard --logdir=/logs --bind_all
+
+  evaluator:
+    build: .
+    image: ppo-m5h1-trader:latest
+    container_name: ppo_evaluator
+
+    volumes:
+      - ../../../data:/app/data:ro
+      - ./models:/app/models
+      - ./results:/app/results
+
+    environment:
+      - PYTHONUNBUFFERED=1
+
+    command: python evaluate.py --model models/best/best_model.zip
+
+    profiles:
+      - eval

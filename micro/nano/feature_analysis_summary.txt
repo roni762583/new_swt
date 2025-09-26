@@ -1,0 +1,71 @@
+======================================================================
+FEATURE PREDICTIVE POWER ANALYSIS SUMMARY
+======================================================================
+
+📊 OVERALL PERFORMANCE:
+  • Average R² (base features): 0.0007
+  • Average R² (with time): 0.0008
+  • Average improvement: 0.0001
+
+🎯 BEST HORIZONS FOR BASE FEATURES:
+  • 30 min: R² = 0.0026
+  • 15 min: R² = 0.0013
+  • 10 min: R² = 0.0007
+
+⏰ TIME FEATURES MOST VALUABLE AT:
+  • 30 min: +0.0003 R² (12.2% improvement)
+  • 15 min: +0.0002 R² (11.9% improvement)
+  • 10 min: +0.0001 R² (10.5% improvement)
+
+📈 HORIZON-BY-HORIZON INTERPRETATION:
+--------------------------------------------------
+
+1-MINUTE HORIZON:
+  R² Base: 0.0001 | With Time: 0.0001
+  MSE Reduction: 0.0%
+  Interpretation: No predictive power predictability, no benefit from time
+
+2-MINUTE HORIZON:
+  R² Base: 0.0001 | With Time: 0.0001
+  MSE Reduction: 0.0%
+  Interpretation: No predictive power predictability, no benefit from time
+
+3-MINUTE HORIZON:
+  R² Base: 0.0002 | With Time: 0.0002
+  MSE Reduction: 0.0%
+  Interpretation: No predictive power predictability, no benefit from time
+
+4-MINUTE HORIZON:
+  R² Base: 0.0002 | With Time: 0.0003
+  MSE Reduction: 0.0%
+  Interpretation: No predictive power predictability, no benefit from time
+
+5-MINUTE HORIZON:
+  R² Base: 0.0002 | With Time: 0.0003
+  MSE Reduction: 0.0%
+  Interpretation: No predictive power predictability, no benefit from time
+
+10-MINUTE HORIZON:
+  R² Base: 0.0007 | With Time: 0.0008
+  MSE Reduction: 0.0%
+  Interpretation: No predictive power predictability, no benefit from time
+
+15-MINUTE HORIZON:
+  R² Base: 0.0013 | With Time: 0.0015
+  MSE Reduction: 0.0%
+  Interpretation: Very weak predictability, no benefit from time
+
+30-MINUTE HORIZON:
+  R² Base: 0.0026 | With Time: 0.0029
+  MSE Reduction: 0.0%
+  Interpretation: Very weak predictability, no benefit from time
+
+======================================================================
+💡 TRADING IMPLICATIONS:
+--------------------------------------------------
+⚠️ Short-term (1-5 min): Limited predictive power
+   Average R²: 0.0002
+⚠️ Medium-term (10-30 min): Limited predictive power
+   Average R²: 0.0015
+⚠️ Time encodings: Minimal impact on predictions
+   Average gain: 0.0001

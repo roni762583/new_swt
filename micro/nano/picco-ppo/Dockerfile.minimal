@@ -1,0 +1,24 @@
+# Minimal Dockerfile for PPO training
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install minimal dependencies
+RUN pip install --no-cache-dir \
+    numpy \
+    pandas \
+    duckdb \
+    tqdm
+
+# Copy all necessary files
+COPY train_minimal.py validate_minimal.py run.py ./
+COPY train.py evaluate.py ./
+COPY env/ ./env/
+
+# Create directories
+RUN mkdir -p models results
+
+# Environment variables
+ENV PYTHONUNBUFFERED=1
+
+CMD ["python", "train_minimal.py"]

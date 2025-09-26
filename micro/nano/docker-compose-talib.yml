@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  talib-analysis:
+    build:
+      context: .
+      dockerfile: Dockerfile.talib
+    container_name: talib_analysis
+    volumes:
+      - /home/aharon/projects/new_swt/data:/data:ro  # Mount data directory read-only
+      - .:/workspace  # Mount nano directory for scripts and results
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: python talib_feature_analysis.py

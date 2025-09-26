@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  nano-analysis:
+    build: .
+    container_name: nano_analysis
+    volumes:
+      - /home/aharon/projects/new_swt/data:/data:ro  # Mount data directory read-only
+      - .:/workspace  # Mount nano directory for scripts and results
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: python feature_analysis.py

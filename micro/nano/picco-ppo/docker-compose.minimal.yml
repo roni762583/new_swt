@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  # Single unified container for all operations
+  ppo-unified:
+    build:
+      context: .
+      dockerfile: Dockerfile.minimal
+    image: ppo-minimal:latest
+    container_name: ppo_unified
+
+    volumes:
+      # Mount data directory
+      - ../../../data:/app/data:ro
+
+      # Mount output directories
+      - ./models:/app/models
+      - ./results:/app/results
+
+      # Mount all scripts for development
+      - ./train_minimal.py:/app/train_minimal.py:ro
+      - ./validate_minimal.py:/app/validate_minimal.py:ro
+      - ./run.py:/app/run.py:ro
+      - ./train.py:/app/train.py:ro
+      - ./evaluate.py:/app/evaluate.py:ro
+      - ./env:/app/env:ro
+
+    environment:
+      - PYTHONUNBUFFERED=1
+
+    # Default: run complete session (train + validate)
+    command: python run.py session
+
+  # Alternative commands via override
+  # docker compose run ppo-unified python run.py train
+  # docker compose run ppo-unified python run.py validate
+  # docker compose run ppo-unified python run.py evaluate
+  # docker compose run ppo-unified python run.py session --full
