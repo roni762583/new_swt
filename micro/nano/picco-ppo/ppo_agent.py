@@ -120,11 +120,17 @@ class PolicyNetwork(nn.Module):
         return logits, value
 
     def get_action(self, state):
-        """Sample action from policy."""
+        """Sample action from policy with action masking."""
         state_tensor = torch.FloatTensor(state).unsqueeze(0)
 
         with torch.no_grad():
             logits, value = self(state_tensor)
+
+            # Action masking: prevent CLOSE when no position
+            position_side = state[7]  # position_side feature at index 7
+            if abs(position_side) < 0.01:  # No position
+                logits[0, 3] = -1e8  # Mask CLOSE action
+
             probs = F.softmax(logits, dim=-1)
             dist = Categorical(probs)
             action = dist.sample()
@@ -155,7 +161,7 @@ class PPOAgent:
         gae_lambda=0.95,
         clip_ratio=0.1,  # Tighter clipping for trading
         value_coef=0.5,
-        entropy_coef=0.01,  # Increased from 0.005 to encourage exploration
+        entropy_coef=0.05,  # Increased from 0.01 to combat policy collapse
         max_grad_norm=0.5,
         lr_schedule='linear',  # Add LR scheduling
         device='cpu'
@@ -166,7 +172,7 @@ class PPOAgent:
         self.gae_lambda = gae_lambda
         self.clip_ratio = clip_ratio
         self.value_coef = value_coef
-        self.entropy_coef = entropy_coef
+        self.entropy_coef = 0.05  # Force high entropy to combat policy collapse
         self.max_grad_norm = max_grad_norm
         self.lr_schedule = lr_schedule
         self.initial_lr = learning_rate
@@ -308,11 +314,17 @@ class PPOAgent:
                 # Value loss
                 value_loss = F.mse_loss(values, batch_returns)
 
-                # Entropy bonus (for exploration)
+                # Entropy bonus (increased weight to encourage exploration)
                 entropy_loss = -entropy.mean()
 
-                # Total loss
-                loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss
+                # Add exploration bonus for non-hold actions
+                exploration_bonus = 0.0
+                if epoch == 0:  # Only on first epoch to avoid double counting
+                    non_hold_actions = (batch_actions != 0).float()
+                    exploration_bonus = -0.01 * non_hold_actions.mean()  # Reward non-hold actions
+
+                # Total loss with exploration bonus
+                loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss + exploration_bonus
 
                 # Optimize
                 self.optimizer.zero_grad()
@@ -413,10 +425,18 @@ class PPOLearningPolicy:
                 print(f"   Entropy: {stats.get('entropy', 0):.4f}")
                 print(f"   Steps trained: {self.agent.total_steps}")
 
-                # Decay learning rate if using schedule
+                # Adaptive learning rate with reset on poor performance
                 if self.agent.lr_schedule == 'linear':
-                    progress = min(1.0, self.agent.update_count / 1000)
-                    new_lr = self.agent.initial_lr * (1 - 0.9 * progress)
+                    # Reset learning rate if entropy is too low (policy collapse)
+                    if stats.get('entropy', 1.0) < 0.5:
+                        # Reset to higher LR to escape local minimum
+                        new_lr = self.agent.initial_lr * 2.0
+                        print(f"   ⚠️ Low entropy detected! Boosting LR to {new_lr:.6f}")
+                    else:
+                        # Normal decay
+                        progress = min(1.0, self.agent.update_count / 1000)
+                        new_lr = self.agent.initial_lr * (1 - 0.9 * progress)
+
                     for param_group in self.agent.optimizer.param_groups:
                         param_group['lr'] = new_lr
 
