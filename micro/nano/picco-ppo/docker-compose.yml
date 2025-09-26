@@ -34,6 +34,7 @@ services:
       - ./results:/app/results
       - ../../../data:/app/data:ro
       - ./numba_cache:/tmp/numba_cache
+      - pip-cache:/root/.cache/pip
 
     # Environment
     environment:
@@ -152,6 +153,10 @@ services:
 networks:
   ppo-network:
     driver: bridge
+
+volumes:
+  pip-cache:
+    driver: local
 
 # ======= USAGE =======
 # Build with caching:
