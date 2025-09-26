@@ -81,9 +81,9 @@ class PolicyNetwork(nn.Module):
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
-            # Use Xavier for hidden layers, smaller init for output layers
+            # Use Xavier for hidden layers, standard init for output layers
             if module.out_features == 4 or module.out_features == 1:
-                nn.init.orthogonal_(module.weight, gain=0.01)
+                nn.init.orthogonal_(module.weight, gain=1.0)  # Changed from 0.01 to 1.0
             else:
                 nn.init.xavier_uniform_(module.weight, gain=np.sqrt(2))
             nn.init.constant_(module.bias, 0.0)
@@ -155,7 +155,7 @@ class PPOAgent:
         gae_lambda=0.95,
         clip_ratio=0.1,  # Tighter clipping for trading
         value_coef=0.5,
-        entropy_coef=0.005,  # Less exploration needed
+        entropy_coef=0.01,  # Increased from 0.005 to encourage exploration
         max_grad_norm=0.5,
         lr_schedule='linear',  # Add LR scheduling
         device='cpu'
@@ -264,9 +264,20 @@ class PPOAgent:
         policy_losses = []
         value_losses = []
 
+        # Ensure all tensors have same length (use minimum)
+        data_size = min(len(states), len(advantages), len(returns))
+        if data_size == 0:
+            return {}
+
+        # Truncate tensors to same size
+        states = states[:data_size]
+        actions = actions[:data_size]
+        old_log_probs = old_log_probs[:data_size]
+        advantages = advantages[:data_size]
+        returns = returns[:data_size]
+
         for epoch in range(n_epochs):
             # Mini-batch training
-            data_size = len(states)
             indices = np.random.permutation(data_size)
 
             for start_idx in range(0, data_size, batch_size):

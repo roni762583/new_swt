@@ -57,14 +57,20 @@ class ParallelTradingEnv:
         self.n_envs = n_envs
         self.envs = []
 
-        # Create environments with different random seeds
+        # Create environments with different random seeds and smaller data segments
         for i in range(n_envs):
+            # Use smaller, non-overlapping data segments for each environment
+            segment_size = 50000  # 50K rows per environment
+            start_idx = 100000 + i * segment_size
+            end_idx = start_idx + segment_size
+
             env = TradingEnv(
-                start_idx=100000 + i * 50000,  # Different data segments
-                end_idx=600000,
-                max_episode_steps=2880 // n_envs  # Shorter episodes for diversity
+                start_idx=start_idx,
+                end_idx=end_idx,
+                max_episode_steps=720  # Reasonable episode length
             )
             self.envs.append(env)
+            print(f"   ✓ Environment {i+1} created: bars {start_idx}-{end_idx}")
 
     def reset(self):
         """Reset all environments in parallel."""
@@ -207,37 +213,51 @@ def train_optimized(episodes=50, n_envs=4, n_workers=None):
         env_dones = np.zeros(n_envs, dtype=bool)
 
         step = 0
-        while not np.all(env_dones):
+        action_counts = {0: 0, 1: 0, 2: 0, 3: 0}  # Track action distribution
+        max_steps = 2880  # Maximum steps per episode across all environments
+
+        while step < max_steps:
             # Get actions for all environments
             actions = []
             for i in range(n_envs):
-                if not env_dones[i]:
-                    action = policy.get_action(states[i])
-                    actions.append(action)
-                else:
-                    actions.append(0)  # Dummy action for done envs
+                action = policy.get_action(states[i])
+                actions.append(action)
+                action_counts[action] = action_counts.get(action, 0) + 1
 
             # Step all environments
             next_states, rewards, dones, infos = parallel_env.step(actions)
 
             # Process results for each environment
             for i in range(n_envs):
-                if not env_dones[i]:
-                    # Store transition
-                    policy.store_transition(
-                        states[i], actions[i], rewards[i],
-                        next_states[i], dones[i]
-                    )
+                # Store transition for learning
+                policy.store_transition(
+                    states[i], actions[i], rewards[i],
+                    next_states[i], dones[i]
+                )
 
-                    # Update metrics
-                    episode_reward[i] += rewards[i]
-                    if 'trade_result' in infos[i] and infos[i]['trade_result'] != 0:
-                        trade_pips = infos[i]['trade_result']
-                        episode_trades[i].append(trade_pips)
-                        all_trades.append(trade_pips)
-                        expectancy_tracker.add_trade(trade_pips)
+                # Update metrics
+                episode_reward[i] += rewards[i]
 
-                    env_dones[i] = dones[i]
+                # Debug: Check what's in info
+                if step < 10 and i == 0:  # Only first env, first 10 steps
+                    print(f"     Debug - Env {i} info keys: {list(infos[i].keys())}")
+                    if 'trade_result' in infos[i]:
+                        print(f"     Debug - trade_result: {infos[i]['trade_result']}")
+
+                if 'trade_result' in infos[i] and infos[i]['trade_result'] != 0:
+                    trade_pips = infos[i]['trade_result']
+                    episode_trades[i].append(trade_pips)
+                    all_trades.append(trade_pips)
+                    expectancy_tracker.add_trade(trade_pips)
+                    print(f"     ✅ TRADE CLOSED: {trade_pips:.1f} pips (Env {i+1})")
+
+                # Reset environment if done
+                if dones[i]:
+                    print(f"     Env {i+1} episode done: {len(episode_trades[i])} trades, Reward: {episode_reward[i]:.2f}")
+                    # Reset this specific environment for continuous training
+                    reset_state, _ = parallel_env.envs[i].reset()
+                    next_states[i] = reset_state
+                    # Don't reset metrics - accumulate across mini-episodes
 
             states = next_states
             step += 1
@@ -249,6 +269,10 @@ def train_optimized(episodes=50, n_envs=4, n_workers=None):
                 total_trades = sum(len(trades) for trades in episode_trades)
                 print(f"   Step {step}: Active={active_envs}/{n_envs}, "
                       f"Avg Reward={avg_reward:.2f}, Trades={total_trades}")
+                if step > 0:
+                    total_actions = sum(action_counts.values())
+                    print(f"   Actions: Hold={action_counts[0]}/{total_actions}, "
+                          f"Buy={action_counts[1]}, Sell={action_counts[2]}, Close={action_counts[3]}")
 
         # Episode summary
         total_reward = np.sum(episode_reward)
@@ -325,9 +349,6 @@ def train_optimized(episodes=50, n_envs=4, n_workers=None):
 
             if saved_path:
                 print(f"   ✅ Saved: {saved_path}")
-
-        # Save expectancy data
-        expectancy_tracker.save_to_file()
 
     print("\n" + "="*60)
     print("✅ OPTIMIZED TRAINING COMPLETE")
