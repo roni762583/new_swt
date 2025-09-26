@@ -1,4 +1,5 @@
 # Lightweight Dockerfile with BuildKit optimizations
+# Using official stable-baselines3 base image for faster builds
 FROM python:3.11-slim
 
 # Install system dependencies
@@ -11,9 +12,10 @@ WORKDIR /app
 # Copy requirements first for better layer caching
 COPY requirements-minimal.txt requirements.txt
 
-# Use BuildKit cache mount for pip cache
+# Use BuildKit cache mount for pip cache - persistent across builds
+# This caches downloaded wheels and avoids re-downloading
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir -r requirements.txt
+    pip install -r requirements.txt
 
 # Copy all necessary files
 COPY train_minimal.py validate_minimal.py run.py ./

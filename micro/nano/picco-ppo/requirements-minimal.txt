@@ -1,5 +1,8 @@
-# Minimal requirements for rule-based PPO
+# Requirements for real PPO with neural networks
 numpy
 pandas
 duckdb
 tqdm
+gymnasium
+stable-baselines3
+torch

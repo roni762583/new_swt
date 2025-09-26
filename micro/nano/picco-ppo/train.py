@@ -27,7 +27,7 @@ from stable_baselines3.common.callbacks import (
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
-from env.trading_env import M5H1TradingEnv
+from env.trading_env import TradingEnv
 
 # Setup logging
 logging.basicConfig(
@@ -63,12 +63,11 @@ class TradingCallback(EvalCallback):
 def create_env(start_idx: int, end_idx: int, seed: int = None):
     """Create a single trading environment."""
 
-    env = M5H1TradingEnv(
-        db_path="../../../../data/master.duckdb",
-        start_idx=start_idx,
-        end_idx=end_idx,
-        initial_balance=10000.0,
-        max_episode_steps=1000,
+    env = TradingEnv(
+        data_path="../../../data/master.duckdb",
+        initial_balance=0.0,  # Track pips only
+        transaction_cost=4.0,  # 4 pips spread
+        max_episode_steps=2000,
         reward_scaling=0.01
     )
 

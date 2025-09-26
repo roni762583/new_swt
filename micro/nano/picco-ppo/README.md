@@ -4,24 +4,27 @@ Proximal Policy Optimization implementation for the optimal M5/H1 trading strate
 
 **Latest Updates (Sept 2025)**:
 - ✅ Van Tharp Expectancy_R rating system
-- ✅ AMDDP1 reward function implementation
+- ✅ AMDDP1 reward function (pips-based with drawdown penalty)
+- ✅ 4 pip spread cost on position opening
+- ✅ Cyclic time features (sin/cos hour of day/week)
+- ✅ Real PPO with neural networks (stable-baselines3)
 - ✅ Checkpoint management (keep 2 + best)
 - ✅ Docker BuildKit optimization
-- ✅ Unified container for all operations
 - ✅ 1M+ bars support (60/30/10 splits)
 
 ## 📊 Key Results from Analysis
 
 - **Best Timeframe**: M5 execution with H1 context
 - **Historical Performance**: 444.6 pips, 38.6% win rate
-- **Optimal Features**: 7 market features + 6 position features
-- **Reward Function**: AMDDP1 with drawdown penalties
+- **Optimal Features**: 7 market + 6 position + 4 time = 17 total
+- **Reward Function**: AMDDP1 = pnl_pips - 0.01 * cumulative_drawdown
+- **Trading Costs**: 4 pip spread on position opening
 - **Performance Rating**: Van Tharp Expectancy_R system
 
 ## 🏗️ Architecture
 
 ### Environment (`env/trading_env.py`)
-- **State Space (13 features)**:
+- **State Space (17 features)**:
   - 7 Market Features:
     - `react_ratio`: (close - SMA200)/(SMA20 - SMA200), clipped [-5, 5]
     - `h1_trend`: Higher timeframe direction (-1, 0, 1)
@@ -37,6 +40,11 @@ Proximal Policy Optimization implementation for the optimal M5/H1 trading strate
     - `pips_from_peak`: Distance from maximum profit
     - `max_drawdown_pips`: Max DD in current position
     - `accumulated_dd`: Cumulative drawdown over time
+  - 4 Time Features (cyclic encoding):
+    - `sin_hour_day`: sin(2π * hour / 24)
+    - `cos_hour_day`: cos(2π * hour / 24)
+    - `sin_hour_week`: sin(2π * hour / 120) - 120hr trading week
+    - `cos_hour_week`: cos(2π * hour / 120) - Sun 5pm to Fri 5pm EST
 
 - **Action Space**:
   - 0: Hold
@@ -176,6 +184,16 @@ manager.save_checkpoint(state, episode, expectancy_R, metrics)
 - Keeps 2 recent + best performer
 - Tracks expectancy_R for each checkpoint
 - Resume from any checkpoint
+
+### AMDDP1 Reward Function
+```python
+# Asymmetric Mean Drawdown Duration Penalty
+reward = pnl_pips - 0.01 * cumulative_drawdown_sum
+
+# With profit protection
+if pnl_pips > 0 and reward < 0:
+    reward = 0.001  # Small positive for profitable trades
+```
 
 ### Van Tharp Expectancy Rating
 ```python

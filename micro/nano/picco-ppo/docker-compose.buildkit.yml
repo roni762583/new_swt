@@ -3,12 +3,15 @@ services:
   ppo:
     build:
       context: .
-      dockerfile: Dockerfile.buildkit
-      # Enable BuildKit
+      dockerfile: Dockerfile.optimized
+      # Enable BuildKit with cache
       args:
         DOCKER_BUILDKIT: 1
       cache_from:
-        - ppo-buildkit:latest
+        - ppo-optimized:cache-base
+        - ppo-optimized:cache-deps
+        - ppo-optimized:latest
+      target: final
     image: ppo-buildkit:latest
     container_name: ppo_session
 

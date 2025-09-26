@@ -43,6 +43,9 @@ class MinimalTradingEnv:
 
     def _load_data(self):
         """Load and prepare M5/H1 data"""
+        print(f"📂 Loading data from {self.db_path}")
+        print(f"   Range: bars {self.start_idx:,} to {self.end_idx:,}")
+
         conn = duckdb.connect(self.db_path, read_only=True)
 
         # Load M1 data
@@ -53,7 +56,11 @@ class MinimalTradingEnv:
         ORDER BY bar_index
         """
 
-        m1_data = pd.read_sql(query, conn)
+        print("   Executing query...")
+        cursor = conn.execute(query)
+        print("   Fetching data...")
+        m1_data = cursor.df()
+        print(f"   Loaded {len(m1_data):,} M1 bars")
         conn.close()
 
         # Aggregate to M5
@@ -130,8 +137,8 @@ class MinimalTradingEnv:
     def reset(self):
         """Reset environment"""
         self.current_step = 250  # Start after warmup
-        self.balance = 10000.0
-        self.equity = 10000.0
+        self.balance = 0.0  # Track pips only
+        self.equity = 0.0  # Track pips only
 
         # Position tracking
         self.position_side = 0.0
@@ -238,9 +245,9 @@ class MinimalTradingEnv:
         else:
             pips = (self.entry_price - price) * self.pip_multiplier
 
-        # Apply AMDDP1 to balance (for tracking, reward already calculated)
+        # Apply AMDDP1 to balance (tracking pips only)
         self.balance += pips - 0.2  # Subtract transaction cost
-        self.equity = self.balance
+        self.equity = self.balance  # In pips
 
         # Track trade
         self.trades.append({
@@ -406,7 +413,7 @@ def train(load_checkpoint=None, save_freq=2):
     policy = SimplePolicy()
 
     # Training parameters
-    n_episodes = 5  # Full training session
+    n_episodes = 10  # 10 full passes through 600k bars
     results = training_history.copy()  # Resume from history if loaded
     all_trades_pnl = []  # Track all trades for R calculation
 
@@ -414,7 +421,7 @@ def train(load_checkpoint=None, save_freq=2):
     episode_range = range(start_episode, start_episode + n_episodes)
 
     for episode_num, episode in enumerate(episode_range):
-        print(f"\nEpisode {episode + 1} (Session {episode_num + 1}/{n_episodes})")
+        print(f"\nEpisode {episode + 1} (Pass {episode_num + 1}/{n_episodes} through 600k bars)")
         print("-" * 40)
 
         state = env.reset()
@@ -433,7 +440,7 @@ def train(load_checkpoint=None, save_freq=2):
 
             # Log progress
             if steps % 100 == 0:
-                print(f"  Step {steps}: Equity=${env.equity:.2f}, Trades={len(env.trades)}")
+                print(f"  Step {steps}: P&L={env.equity:.1f} pips, Trades={len(env.trades)}")
 
             state = next_state
 
@@ -457,10 +464,10 @@ def train(load_checkpoint=None, save_freq=2):
             expectancy_pips = 0.0
 
         # Episode summary
-        total_return = (env.equity - 10000) / 10000 * 100
+        total_pips = env.equity  # Already in pips
         results.append({
             'episode': episode + 1,
-            'return': total_return,
+            'total_pips': total_pips,
             'trades': len(env.trades),
             'final_equity': env.equity,
             'expectancy_pips': expectancy_pips,
@@ -500,8 +507,7 @@ def train(load_checkpoint=None, save_freq=2):
             )
 
         print(f"\nEpisode Results:")
-        print(f"  Final Equity: ${env.equity:.2f}")
-        print(f"  Total Return: {total_return:.2f}%")
+        print(f"  Final P&L: {env.equity:.1f} pips")
         print(f"  Total Trades: {len(env.trades)}")
         print(f"  Expectancy: {expectancy_pips:.1f} pips = {expectancy_R:.3f}R (R={avg_loss:.1f} pips)")
 
@@ -531,8 +537,8 @@ def train(load_checkpoint=None, save_freq=2):
         global_R = 10.0
         global_expectancy_pips = 0.0
 
-    print(f"\nAverage Return: {df['return'].mean():.2f}%")
-    print(f"Best Return: {df['return'].max():.2f}%")
+    print(f"\nAverage P&L: {df['total_pips'].mean():.1f} pips")
+    print(f"Best P&L: {df['total_pips'].max():.1f} pips")
     print(f"Average Trades: {df['trades'].mean():.1f}")
     print(f"\n🎯 SESSION PERFORMANCE (Van Tharp):")
     print(f"  Overall Expectancy: {global_expectancy_pips:.1f} pips = {global_expectancy_R:.3f}R")
