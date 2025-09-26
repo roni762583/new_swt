@@ -51,29 +51,40 @@ class PolicyNetwork(nn.Module):
         # Combined feature size: 32 + 16 + 16 = 64
         combined_dim = 64
 
-        # Shared trunk with residual connections
+        # Deeper shared trunk (4 layers: 64→256→128→64)
         self.trunk = nn.Sequential(
-            nn.Linear(combined_dim, 128),
+            nn.Linear(combined_dim, 64),
+            nn.LayerNorm(64),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+
+            nn.Linear(64, 256),
+            nn.LayerNorm(256),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+
+            nn.Linear(256, 128),
             nn.LayerNorm(128),
             nn.ReLU(),
             nn.Dropout(0.1),
-            nn.Linear(128, 128),
-            nn.LayerNorm(128),
+
+            nn.Linear(128, 64),
+            nn.LayerNorm(64),
             nn.ReLU(),
             nn.Dropout(0.1)
         )
 
-        # Separate heads for policy and value
+        # Separate heads for policy and value (connect from trunk output: 64)
         self.policy_head = nn.Sequential(
-            nn.Linear(128, 64),
+            nn.Linear(64, 32),
             nn.ReLU(),
-            nn.Linear(64, action_dim)
+            nn.Linear(32, action_dim)
         )
 
         self.value_head = nn.Sequential(
-            nn.Linear(128, 64),
+            nn.Linear(64, 32),
             nn.ReLU(),
-            nn.Linear(64, 1)
+            nn.Linear(32, 1)
         )
 
         # Initialize weights appropriately
