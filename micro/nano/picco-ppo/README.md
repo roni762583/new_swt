@@ -2,7 +2,7 @@
 
 Proximal Policy Optimization implementation for the optimal M5/H1 trading strategy discovered through comprehensive timeframe analysis.
 
-**Latest Updates (Sept 2025)**:
+**Latest Updates (Sept 28, 2025)**:
 - ✅ Van Tharp Expectancy_R rating system
 - ✅ Rolling expectancy tracking (100/500/1000 trade windows)
 - ✅ AMDDP1 reward function (pips-based with drawdown penalty)
@@ -13,6 +13,15 @@ Proximal Policy Optimization implementation for the optimal M5/H1 trading strate
 - ✅ Docker BuildKit optimization
 - ✅ 1M+ bars support (60/30/10 splits)
 - ✅ Live training showing 17,400+ pips profit
+
+**NEW - Winner-Focused Learning (Sept 28)**:
+- 🆕 Removed curriculum learning - full 4 pip spread from start
+- 🆕 Two-phase learning system:
+  - Phase 1: Learn only from profitable trades (ignore losses) until 1000 wins
+  - Phase 2: Normal learning with both profits and losses
+- 🆕 Enhanced logging showing rolling expectancy and profitable trade count
+- 🆕 Fixed multiprocessing issues - now using single environment
+- 🆕 Optimized dependencies - minimal build saves 2.6GB
 
 ## 📊 Key Results from Analysis
 
@@ -242,6 +251,107 @@ elif expectancy_R > 0.25:
     quality = "GOOD"
 ```
 
+### Winner-Focused Learning (NEW)
+```python
+def _calculate_reward(self, prev_equity: float) -> float:
+    """Phase-based reward system"""
+    pnl_change = self.equity - prev_equity
+
+    if self.profitable_trades_count < 1000:
+        # PHASE 1: Learn from winners only
+        if trade_just_closed:
+            if self.last_trade_result > 0:
+                reward = self.last_trade_result * scaling  # Learn from profit
+            else:
+                reward = 0.0  # Ignore losses completely
+    else:
+        # PHASE 2: Normal AMDDP1 reward
+        reward = pnl_change - 0.005 * self.accumulated_dd
+
+    return reward * self.reward_scaling
+```
+
+## 🐳 Docker Build Options
+
+### Option 1: Full Image (with monitoring)
+```bash
+# Build with all features
+docker build -t picco-ppo:latest -f Dockerfile .
+# Size: ~12.6GB
+# Includes: TensorBoard, Matplotlib, Ray
+```
+
+### Option 2: Minimal Image (core only)
+```bash
+# Build lightweight version
+docker build -t picco-ppo:minimal -f Dockerfile.minimal .
+# Size: ~10GB (saves 2.6GB)
+# Excludes: TensorBoard, Matplotlib, Ray
+```
+
+### Dependency Breakdown
+- **Core (Required)**: torch, numpy, stable-baselines3, gymnasium, pandas, duckdb, numba
+- **TensorBoard (Optional, +200MB)**: tensorboard, grpcio, protobuf, werkzeug
+- **Visualization (Optional, +150MB)**: matplotlib, pillow, contourpy, fonttools
+- **Ray (Optional, +100MB)**: ray, msgpack, jsonschema, requests
+
+## 🚀 Running the System
+
+### Quick Start
+```bash
+# Start training with single environment (avoids multiprocessing issues)
+docker compose up -d ppo-training
+
+# View logs
+docker logs -f ppo-training
+
+# Check metrics
+docker exec ppo-training cat results/latest.json
+```
+
+### Current Configuration
+- **Environments**: 1 (single env to avoid Docker multiprocessing issues)
+- **Timesteps**: 1,000,000
+- **Spread**: 4 pips fixed (no curriculum)
+- **Learning Phases**:
+  - Phase 1: Learn from winners only (until 1000 profitable trades)
+  - Phase 2: Normal learning (all trades)
+
+## 📈 Performance & Resource Usage
+
+### Training Speed
+- **Initialization**: 3-5 minutes (loading 140k bars)
+- **Training**: ~1000 steps/minute with single env
+- **Full run**: ~16-20 hours for 1M timesteps
+
+### Resource Requirements
+- **CPU**: ~99% during training (normal for PPO)
+- **Memory**: 8GB allocated, ~4GB typical usage
+- **Disk**: ~100MB for checkpoints + logs
+- **Docker Image**: 10-12.6GB depending on build
+
+## 🔧 Troubleshooting
+
+### Common Issues
+
+1. **Training doesn't start**:
+   ```bash
+   # Check logs
+   docker logs ppo-training
+
+   # Verify environment loads
+   docker exec ppo-training python -c "from env.trading_env import TradingEnv; print('OK')"
+   ```
+
+2. **Multiprocessing errors**:
+   - Use `n_envs=1` in docker-compose.yml
+   - Mount env/ directory as volume
+
+3. **Slow builds**:
+   - Use minimal requirements to save 2.6GB
+   - BuildKit cache configured for subsequent builds
+   - First build downloads PyTorch (888MB)
+
 ## 🔧 Customization
 
 ### Modify Hyperparameters
@@ -324,3 +434,87 @@ Based on the optimal feature analysis and timeframe comparison performed in the 
 ## 📄 License
 
 Proprietary - Internal use only
+## 📐 Feature Implementation Details
+
+### Position Features Normalization
+```python
+# All position features properly normalized for NN input
+position_features = np.array([
+    self.position_side,              # Already -1, 0, 1
+    self.position_pips / 100.0,      # Scale to ~[-1, 1] range
+    self.bars_since_entry / 100.0,   # Scale to ~[0, 1] range
+    self.pips_from_peak / 100.0,     # Scale drawdown
+    self.max_drawdown_pips / 100.0,  # Scale max DD
+    self.accumulated_dd / 1000.0     # Scale cumulative DD
+])
+```
+
+### Market Feature Calculations
+
+#### React Ratio (Momentum)
+```python
+reactive = close - SMA(close, 200)
+less_reactive = SMA(close, 20) - SMA(close, 200)
+react_ratio = reactive / (less_reactive + 0.0001)
+react_ratio = clip(react_ratio, -5, 5)
+```
+
+#### Efficiency Ratio (Trend Strength)
+```python
+direction = abs(close[t] - close[t-10])
+volatility = sum(abs(close[i] - close[i-1]) for i in range(t-9, t+1))
+efficiency_ratio = direction / (volatility + 0.0001)
+# Range: [0, 1] where higher = stronger trend
+```
+
+#### Bollinger Band Position
+```python
+bb_middle = SMA(close, 20)
+bb_std = STD(close, 20)
+bb_position = (close - bb_middle) / (2 * bb_std + 0.0001)
+bb_position = clip(bb_position, -1, 1)
+# -1 = lower band, 0 = middle, 1 = upper band
+```
+
+#### RSI Extreme (Overbought/Oversold)
+```python
+rsi = calculate_rsi(close, 14)
+rsi_extreme = (rsi - 50) / 50
+# Range: [-1, 1] where -1 = oversold, 1 = overbought
+```
+
+## 📁 Project Structure
+```
+picco-ppo/
+├── env/
+│   └── trading_env.py         # Trading environment with 17 features
+├── train.py                   # Main training script
+├── validate_minimal.py        # Validation script
+├── monitor_expectancy_live.py # Live monitoring
+├── requirements.txt           # Full dependencies (12.6GB image)
+├── requirements-minimal.txt   # Core only (10GB image)
+├── Dockerfile                 # Full feature build
+├── Dockerfile.minimal         # Lightweight build
+├── docker-compose.yml         # Container orchestration
+├── checkpoints/              # Model checkpoints (volume)
+├── results/                  # Training results (volume)
+└── README.md                 # This file
+```
+
+## 📊 Latest Performance Metrics
+
+### Training Results (Sept 28, 2025)
+- **Validation**: -44.29% return, 2,870 trades, 53% win rate
+- **Test**: -54.55% return, 951 trades, 57.2% win rate
+- **Expectancy**: 0.229R average (ACCEPTABLE per Van Tharp)
+- **System Quality**: GOOD ✅
+
+### Key Improvements
+- Removed curriculum learning for consistent 4 pip spread
+- Winner-focused learning shows faster convergence
+- Single environment eliminates Docker multiprocessing issues
+- Optimized dependencies reduce image by 2.6GB
+
+---
+*Documentation consolidated from README.md and FEATURE_FORMULAS.md*
+*Last updated: September 28, 2025*

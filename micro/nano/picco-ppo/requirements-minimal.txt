@@ -1,0 +1,31 @@
+# PPO Minimal Requirements - Core dependencies only
+# ~2GB smaller image without optional packages
+
+# Core ML/DL - Essential
+torch==2.8.0
+numpy==2.3.3
+
+# RL Framework - Essential
+stable-baselines3==2.7.0
+gymnasium==1.2.1
+cloudpickle==3.1.1  # SB3 dependency
+
+# Data Processing - Essential
+pandas==2.3.2
+duckdb==1.4.0
+python-dateutil==2.9.0.post0
+pytz==2025.2
+
+# Performance - Essential for speed
+numba==0.62.0
+llvmlite==0.45.0  # Numba dependency
+
+# Basic utilities
+tqdm==4.67.1  # Progress bars
+typing-extensions==4.15.0  # Type hints
+
+# NOTE: Excluded to save space:
+# - tensorboard (200MB) - monitoring not essential
+# - matplotlib (150MB) - plotting not essential
+# - ray (100MB) - single env training works fine
+# Total savings: ~450MB

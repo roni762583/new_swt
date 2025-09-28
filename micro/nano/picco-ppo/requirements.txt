@@ -1,27 +1,48 @@
-# PPO Neural Network Trading - Unified Requirements
-# Production-ready with all optimizations
+# PPO Neural Network Trading - Complete Requirements
+# Production-ready with all dependencies locked
 
-# Core ML/DL
-torch>=2.0.0
-numpy>=1.24.0
+# Core ML/DL - Pin to specific versions for consistency
+torch==2.8.0
+numpy==2.3.3
+
+# RL Framework - Critical dependency
+stable-baselines3==2.7.0
+gymnasium==1.2.1
+cloudpickle==3.1.1
 
 # Data Processing
-pandas>=2.0.0
-duckdb>=0.9.0
-
-# RL Environment
-gymnasium>=0.29.0
-stable-baselines3>=2.0.0
+pandas==2.3.2
+duckdb==1.4.0
+python-dateutil==2.9.0.post0
+pytz==2025.2
 
 # Performance Optimizations
-numba>=0.58.0          # JIT compilation for 10-100x speedup
-ray>=2.7.0             # Distributed computing
-joblib>=1.3.0          # Parallel processing
+numba==0.62.0          # JIT compilation
+llvmlite==0.45.0       # Numba dependency
+ray==2.49.2            # Distributed computing
+joblib==1.5.2          # Parallel processing
+
+# Visualization & Monitoring
+matplotlib==3.10.6     # Plotting
+tensorboard==2.20.0    # TensorBoard monitoring
+tensorboard-data-server==0.7.2
 
 # Utilities
-tqdm>=4.65.0           # Progress bars
-python-dateutil>=2.8.2 # Date handling
+tqdm==4.67.1           # Progress bars
+PyYAML==6.0.3          # Config files
+requests==2.32.5       # HTTP requests
 
-# Optional visualization
-matplotlib>=3.7.0      # Plotting
-tensorboard>=2.14.0    # Monitoring
+# Dependencies for above packages
+contourpy==1.3.3
+cycler==0.12.1
+fonttools==4.60.0
+kiwisolver==1.4.9
+pillow==11.3.0
+pyparsing==3.2.5
+packaging==25.0
+grpcio==1.75.1
+Markdown==3.9
+MarkupSafe==3.0.2
+Werkzeug==3.1.3
+absl-py==2.3.1
+protobuf==6.32.1

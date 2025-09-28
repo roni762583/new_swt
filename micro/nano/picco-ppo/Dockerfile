@@ -22,16 +22,9 @@ FROM base as deps
 # Copy and install requirements with caching
 COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip && \
-    pip install -r requirements.txt
-
-# Install additional optimizations
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install \
-    numba>=0.58.0 \
-    ray>=2.7.0 \
-    joblib>=1.3.0 \
-    tqdm>=4.65.0
+    pip install --upgrade pip==25.2 && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip list
 
 # ======= STAGE 2: Application =======
 FROM deps as app
@@ -39,8 +32,8 @@ FROM deps as app
 # Copy application code
 COPY env/ ./env/
 COPY *.py ./
-COPY checkpoints/ ./checkpoints/
-COPY results/ ./results/
+# Create directories (checkpoints and results will be volumes)
+RUN mkdir -p ./checkpoints ./results ./tensorboard ./models
 
 # Set optimization environment variables
 ENV PYTHONUNBUFFERED=1 \
@@ -55,8 +48,8 @@ ENV PYTHONUNBUFFERED=1 \
     NUMBA_CACHE_DIR=/tmp/numba_cache \
     NUMBA_THREADING_LAYER=omp
 
-# Create necessary directories
-RUN mkdir -p /tmp/numba_cache checkpoints results
+# Create cache directory for Numba
+RUN mkdir -p /tmp/numba_cache
 
 # ======= STAGE 3: Production =======
 FROM app as production

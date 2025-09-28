@@ -251,14 +251,8 @@ class TradingEnv(gym.Env):
         self.episode_trades = []
         self.last_trade_result = 0.0
 
-        # Curriculum learning: gradually increase spread
-        self.curriculum_episodes += 1
-        if self.curriculum_episodes % 10 == 0:  # Every 10 episodes
-            # Gradually increase spread from 0 to 4 pips over 100 episodes
-            progress = min(1.0, self.curriculum_episodes / 100)
-            self.transaction_cost = self.base_transaction_cost * progress
-            if self.curriculum_episodes % 50 == 0:
-                print(f"📈 Curriculum: Spread now {self.transaction_cost:.1f} pips (Episode {self.curriculum_episodes})")
+        # No curriculum - always use full spread
+        # Spread is fixed at 4 pips from initialization
 
         # Get initial observation
         obs = self._get_observation()

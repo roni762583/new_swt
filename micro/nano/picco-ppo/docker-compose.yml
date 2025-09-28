@@ -35,6 +35,7 @@ services:
       - ../../../data:/app/data:ro
       - ./numba_cache:/tmp/numba_cache
       - pip-cache:/root/.cache/pip
+      - ./env:/app/env  # Mount local env directory to use fixed trading_env.py
 
     # Environment
     environment:
@@ -46,10 +47,11 @@ services:
       - TZ=America/New_York
 
     # Command - using standard PPO training with new reward system
+    # Running with single env to avoid multiprocessing issues in Docker
     command: >
       python -u train.py
       --timesteps 1000000
-      --n_envs 4
+      --n_envs 1
 
     # Restart policy
     restart: unless-stopped
@@ -137,19 +139,20 @@ services:
     networks:
       - ppo-network
 
-  # ======= TENSORBOARD SERVICE =======
-  ppo-tensorboard:
-    image: tensorflow/tensorflow:latest
-    container_name: ppo-tensorboard
-    ports:
-      - "6006:6006"
-    volumes:
-      - ./tensorboard:/app/tensorboard:ro
-      - ./models:/app/models:ro
-    command: tensorboard --logdir=/app/tensorboard --bind_all --reload_interval=10
-    networks:
-      - ppo-network
-    restart: unless-stopped
+  # ======= TENSORBOARD SERVICE (Optional - adds 1GB) =======
+  # Uncomment if you want monitoring dashboard
+  # ppo-tensorboard:
+  #   image: tensorflow/tensorflow:latest
+  #   container_name: ppo-tensorboard
+  #   ports:
+  #     - "6006:6006"
+  #   volumes:
+  #     - ./tensorboard:/app/tensorboard:ro
+  #     - ./models:/app/models:ro
+  #   command: tensorboard --logdir=/app/tensorboard --bind_all --reload_interval=10
+  #   networks:
+  #     - ppo-network
+  #   restart: unless-stopped
 
 networks:
   ppo-network:
