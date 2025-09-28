@@ -45,12 +45,11 @@ services:
       - NUMBA_CACHE_DIR=/tmp/numba_cache
       - TZ=America/New_York
 
-    # Command - using optimized training with neural networks
+    # Command - using standard PPO training with new reward system
     command: >
-      python -u train_optimized.py
-      --episodes 100
+      python -u train.py
+      --timesteps 1000000
       --n_envs 4
-      --n_workers 8
 
     # Restart policy
     restart: unless-stopped
@@ -138,17 +137,19 @@ services:
     networks:
       - ppo-network
 
-  # ======= TENSORBOARD SERVICE (Optional) =======
-  # ppo-tensorboard:
-  #   image: tensorflow/tensorflow:latest
-  #   container_name: ppo-tensorboard
-  #   ports:
-  #     - "6006:6006"
-  #   volumes:
-  #     - ./results:/app/results:ro
-  #   command: tensorboard --logdir=/app/results --bind_all
-  #   networks:
-  #     - ppo-network
+  # ======= TENSORBOARD SERVICE =======
+  ppo-tensorboard:
+    image: tensorflow/tensorflow:latest
+    container_name: ppo-tensorboard
+    ports:
+      - "6006:6006"
+    volumes:
+      - ./tensorboard:/app/tensorboard:ro
+      - ./models:/app/models:ro
+    command: tensorboard --logdir=/app/tensorboard --bind_all --reload_interval=10
+    networks:
+      - ppo-network
+    restart: unless-stopped
 
 networks:
   ppo-network:

@@ -26,6 +26,7 @@ from stable_baselines3.common.callbacks import (
 )
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
+from collections import deque
 
 from env.trading_env import TradingEnv
 
@@ -44,35 +45,100 @@ class TradingCallback(EvalCallback):
         super().__init__(*args, **kwargs)
         self.best_mean_reward = -np.inf
         self.best_equity = -np.inf
+        self.trade_results = deque(maxlen=100)  # Track last 100 trades
+        self.all_trade_results = []  # Track all trades
+        self.profitable_trades_total = 0
+        self.total_trades = 0
 
     def _on_step(self) -> bool:
         # Log custom metrics every 1000 steps
         if self.n_calls % 1000 == 0:
-            if len(self.evaluations_results) > 0:
-                mean_reward = np.mean(self.evaluations_results[-1])
-                logger.info(f"Step {self.n_calls}: Mean Reward = {mean_reward:.2f}")
+            # Collect trade results from all environments
+            infos = self.locals.get('infos', [])
+            for info in infos:
+                if 'trade_result' in info:
+                    trade_pips = info['trade_result']
+                    self.trade_results.append(trade_pips)
+                    self.all_trade_results.append(trade_pips)
+                    self.total_trades += 1
+                    if trade_pips > 0:
+                        self.profitable_trades_total += 1
 
-                # Get equity from eval env
-                eval_env = self.eval_env.envs[0]
-                if hasattr(eval_env, 'equity'):
-                    logger.info(f"  Current Equity: ${eval_env.equity:.2f}")
+            # Calculate rolling expectancy
+            if len(self.trade_results) > 0:
+                rolling_expectancy = np.mean(self.trade_results)
+                win_rate = sum(1 for t in self.trade_results if t > 0) / len(self.trade_results) * 100
+
+                print(f"\n{'='*60}")
+                print(f"   Step {self.n_calls:,}: TRADING METRICS")
+                print(f"   Profitable Trades: {self.profitable_trades_total:,} / 1000 target")
+                print(f"   Total Trades: {self.total_trades:,}")
+                print(f"   Rolling Expectancy (100): {rolling_expectancy:.2f} pips")
+                print(f"   Rolling Win Rate: {win_rate:.1f}%")
+
+                # Check learning phase from env
+                for env_idx, info in enumerate(infos[:1]):
+                    if 'learning_phase' in info:
+                        print(f"   Learning Phase: {info['learning_phase'].upper()}")
+                        if info['learning_phase'] == 'full_learning':
+                            print(f"   ✅ FULL LEARNING ACTIVATED!")
+                print(f"{'='*60}\n")
 
         return True
 
 
-def create_env(start_idx: int, end_idx: int, seed: int = None):
+class LoggingWrapper(Monitor):
+    """Wrapper to log trading metrics."""
+
+    def __init__(self, env):
+        super().__init__(env)
+        self.trade_count = 0
+        self.profitable_trades = 0
+        self.recent_trades = deque(maxlen=50)
+
+    def step(self, action):
+        obs, reward, done, truncated, info = super().step(action)
+
+        # Log trade results
+        if 'trade_result' in info:
+            trade_pips = info['trade_result']
+            self.trade_count += 1
+            self.recent_trades.append(trade_pips)
+
+            if trade_pips > 0:
+                self.profitable_trades += 1
+
+            # Log every trade initially, then every 10th trade
+            if self.profitable_trades <= 100 or self.trade_count % 10 == 0:
+                expectancy = np.mean(self.recent_trades) if self.recent_trades else 0
+                win_rate = sum(1 for t in self.recent_trades if t > 0) / len(self.recent_trades) * 100 if self.recent_trades else 0
+
+                status = "✅" if trade_pips > 0 else "❌"
+                print(f"     {status} TRADE CLOSED: {trade_pips:.1f} pips (Env {info.get('env_id', 0)})")
+
+                if self.trade_count % 10 == 0:
+                    print(f"     [Profitable: {info.get('profitable_trades', 0)}/1000, Expectancy: {expectancy:.1f} pips, Win Rate: {win_rate:.0f}%]")
+
+        return obs, reward, done, truncated, info
+
+def create_env(start_idx: int, end_idx: int, seed: int = None, env_id: int = 0):
     """Create a single trading environment."""
 
     env = TradingEnv(
-        data_path="../../../data/master.duckdb",
-        initial_balance=0.0,  # Track pips only
-        transaction_cost=4.0,  # 4 pips spread
+        db_path="/app/data/master.duckdb",
+        start_idx=start_idx,
+        end_idx=end_idx,
+        initial_balance=10000.0,  # Start with realistic balance
+        transaction_cost=4.0,  # FULL 4 pips spread from start - NO curriculum
         max_episode_steps=2000,
         reward_scaling=0.01
     )
 
-    # Wrap with Monitor for logging
-    env = Monitor(env)
+    # Wrap with logging wrapper
+    env = LoggingWrapper(env)
+
+    # Store env_id for tracking
+    env.env_id = env_id
 
     if seed is not None:
         env.reset(seed=seed)
@@ -127,7 +193,7 @@ def train_ppo(
             env_range = (train_end - train_start) // n_envs
             start = train_start + rank * env_range
             end = start + env_range
-            return create_env(start, end, seed=rank)
+            return create_env(start, end, seed=rank, env_id=rank + 1)
         return _init
 
     # Use SubprocVecEnv for true parallelization
@@ -138,7 +204,7 @@ def train_ppo(
 
     # Create evaluation environment
     logger.info("Creating evaluation environment...")
-    eval_env = DummyVecEnv([lambda: create_env(eval_start, eval_end, seed=42)])
+    eval_env = DummyVecEnv([lambda: create_env(eval_start, eval_end, seed=42, env_id=0)])
 
     # Check environment
     logger.info("Checking environment compatibility...")
@@ -205,9 +271,9 @@ def train_ppo(
         model.learn(
             total_timesteps=total_timesteps,
             callback=callbacks,
-            log_interval=10,
+            log_interval=100,  # Less frequent logging
             tb_log_name=run_name,
-            progress_bar=True
+            progress_bar=False  # Disable progress bar for cleaner output
         )
     except KeyboardInterrupt:
         logger.info("Training interrupted by user")
