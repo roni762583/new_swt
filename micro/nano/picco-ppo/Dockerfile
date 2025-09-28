@@ -32,8 +32,12 @@ FROM deps as app
 # Copy application code
 COPY env/ ./env/
 COPY *.py ./
+COPY entrypoint.sh ./
 # Create directories (checkpoints and results will be volumes)
 RUN mkdir -p ./checkpoints ./results ./tensorboard ./models
+
+# Make entrypoint executable
+RUN chmod +x entrypoint.sh
 
 # Set optimization environment variables
 ENV PYTHONUNBUFFERED=1 \
@@ -58,5 +62,8 @@ FROM app as production
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import torch; import numpy; print('OK')" || exit 1
 
+# Use entrypoint to precompute features if needed
+ENTRYPOINT ["/app/entrypoint.sh"]
+
 # Default command - can be overridden in docker-compose
-CMD ["python", "-u", "train_optimized.py", "--episodes", "50", "--n_envs", "4"]
+CMD ["python", "-u", "train.py", "--timesteps", "1000000", "--n_envs", "1"]

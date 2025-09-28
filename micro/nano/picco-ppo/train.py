@@ -28,7 +28,12 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from collections import deque
 
-from env.trading_env import TradingEnv
+try:
+    from env.trading_env_optimized import OptimizedTradingEnv as TradingEnv
+    print("Using OptimizedTradingEnv with precomputed features")
+except ImportError:
+    from env.trading_env import TradingEnv
+    print("Warning: Falling back to original TradingEnv")
 
 # Setup logging
 logging.basicConfig(
@@ -121,17 +126,24 @@ class LoggingWrapper(Monitor):
 
         return obs, reward, done, truncated, info
 
-def create_env(start_idx: int, end_idx: int, seed: int = None, env_id: int = 0):
-    """Create a single trading environment."""
+def create_env(seed: int = None, env_id: int = 0):
+    """Create a single trading environment using precomputed features."""
+
+    # Check if we're in Docker or local environment
+    import os
+    if os.path.exists("/app/precomputed_features.duckdb"):
+        db_path = "/app/precomputed_features.duckdb"
+    else:
+        db_path = "precomputed_features.duckdb"
 
     env = TradingEnv(
-        db_path="/app/data/master.duckdb",
-        start_idx=start_idx,
-        end_idx=end_idx,
-        initial_balance=10000.0,  # Start with realistic balance
-        transaction_cost=4.0,  # FULL 4 pips spread from start - NO curriculum
-        max_episode_steps=2000,
-        reward_scaling=0.01
+        db_path=db_path,
+        episode_length=2000,  # M5 bars per episode
+        initial_balance=10000.0,
+        trade_size=1000.0,
+        spread=4.0,  # FULL 4 pips spread from start - NO curriculum
+        reward_scaling=0.01,
+        seed=seed
     )
 
     # Wrap with logging wrapper
@@ -177,23 +189,13 @@ def train_ppo(
     logger.info(f"Total timesteps: {total_timesteps:,}")
     logger.info(f"Parallel environments: {n_envs}")
 
-    # Data split for train/eval
-    # Using different data ranges to prevent overfitting
-    train_start = 100000
-    train_end = 800000
-    eval_start = 800000
-    eval_end = 900000
-
     # Create vectorized training environments
     logger.info("Creating training environments...")
 
     def make_env(rank: int):
         def _init():
-            # Each env gets a different slice of training data
-            env_range = (train_end - train_start) // n_envs
-            start = train_start + rank * env_range
-            end = start + env_range
-            return create_env(start, end, seed=rank, env_id=rank + 1)
+            # Each env gets a different random seed
+            return create_env(seed=rank, env_id=rank + 1)
         return _init
 
     # Use SubprocVecEnv for true parallelization
@@ -204,11 +206,11 @@ def train_ppo(
 
     # Create evaluation environment
     logger.info("Creating evaluation environment...")
-    eval_env = DummyVecEnv([lambda: create_env(eval_start, eval_end, seed=42, env_id=0)])
+    eval_env = DummyVecEnv([lambda: create_env(seed=42, env_id=0)])
 
     # Check environment
     logger.info("Checking environment compatibility...")
-    check_env(create_env(train_start, train_end))
+    check_env(create_env(seed=42))
 
     # PPO hyperparameters optimized for trading
     ppo_config = {

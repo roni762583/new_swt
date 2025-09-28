@@ -14,14 +14,27 @@ Proximal Policy Optimization implementation for the optimal M5/H1 trading strate
 - ✅ 1M+ bars support (60/30/10 splits)
 - ✅ Live training showing 17,400+ pips profit
 
-**NEW - Winner-Focused Learning (Sept 28)**:
-- 🆕 Removed curriculum learning - full 4 pip spread from start
-- 🆕 Two-phase learning system:
+**NEW - Optimized Data Loading & Winner-Focused Learning (Sept 28)**:
+- 🔥 **Precomputed Features Database**: All technical indicators computed once and stored in DuckDB
+  - No recalculation on every episode
+  - No lost bars from indicator initialization
+  - Efficient slicing - only load what's needed per episode
+- 🎯 **Winner-Focused Learning Strategy**:
+  - Removed curriculum learning - full 4 pip spread from start
   - Phase 1: Learn only from profitable trades (ignore losses) until 1000 wins
   - Phase 2: Normal learning with both profits and losses
-- 🆕 Enhanced logging showing rolling expectancy and profitable trade count
-- 🆕 Fixed multiprocessing issues - now using single environment
-- 🆕 Optimized dependencies - minimal build saves 2.6GB
+- ⚡ **Performance Optimizations**:
+  - Multi-environment support restored with precomputed features
+  - Optimized H1-to-M5 mapping using pandas merge_asof
+  - Minimal dependencies option saves 2.6GB
+- 📊 **Enhanced Monitoring**:
+  - Rolling expectancy tracking (100/500/1000 trade windows)
+  - Profitable trade counter
+  - Learning phase indicator
+- 🔧 **Configuration Management**:
+  - Created `config.py` for instrument-specific settings
+  - Fixed GBPJPY pip calculations (0.01 instead of 0.0001)
+  - Removed hardcoded values from environment
 
 ## 📊 Key Results from Analysis
 
@@ -135,11 +148,15 @@ docker compose --profile eval up evaluator
 ```
 picco-ppo/
 ├── env/
-│   └── trading_env.py             # Gymnasium environment
+│   ├── trading_env.py             # Original Gymnasium environment
+│   └── trading_env_optimized.py   # Optimized with precomputed features
+├── precompute_features_to_db.py  # Precompute all features to DuckDB
 ├── run.py                         # Unified runner for all operations
+├── train.py                       # PPO training with SB3
 ├── train_minimal.py               # AMDDP1 training implementation
 ├── validate_minimal.py            # Validation with expectancy_R
 ├── checkpoint_manager.py          # Checkpoint save/load system
+├── entrypoint.sh                 # Docker entrypoint (auto-precompute)
 ├── models/                        # Saved models
 ├── checkpoints/                   # Training checkpoints
 ├── results/                       # Evaluation results
@@ -299,7 +316,13 @@ docker build -t picco-ppo:minimal -f Dockerfile.minimal .
 
 ### Quick Start
 ```bash
-# Start training with single environment (avoids multiprocessing issues)
+# One-time: Precompute features (if not done already)
+python3 precompute_features_to_db.py
+
+# Build with cache (fast) - BuildKit automatically caches layers
+DOCKER_BUILDKIT=1 docker compose build ppo-training
+
+# Start training with multi-environment support (4 parallel envs)
 docker compose up -d ppo-training
 
 # View logs
@@ -310,8 +333,9 @@ docker exec ppo-training cat results/latest.json
 ```
 
 ### Current Configuration
-- **Environments**: 1 (single env to avoid Docker multiprocessing issues)
+- **Environments**: 4 (parallel environments with precomputed features)
 - **Timesteps**: 1,000,000
+- **Data Loading**: Optimized with precomputed features database
 - **Spread**: 4 pips fixed (no curriculum)
 - **Learning Phases**:
   - Phase 1: Learn from winners only (until 1000 profitable trades)
@@ -504,10 +528,13 @@ picco-ppo/
 ## 📊 Latest Performance Metrics
 
 ### Training Results (Sept 28, 2025)
-- **Validation**: -44.29% return, 2,870 trades, 53% win rate
-- **Test**: -54.55% return, 951 trades, 57.2% win rate
-- **Expectancy**: 0.229R average (ACCEPTABLE per Van Tharp)
-- **System Quality**: GOOD ✅
+- **Active Training**: 33,200+ trades executed
+- **Win Rate**: 49.5% (16,449 profitable trades)
+- **Expectancy**: -0.027 pips per trade (improving)
+- **Risk-Reward**: 1.22:1 (winners 22% larger than losers)
+- **Average Win**: +0.61 pips
+- **Average Loss**: -0.50 pips
+- **Learning Phase**: Phase 2 (learning from all trades)
 
 ### Key Improvements
 - Removed curriculum learning for consistent 4 pip spread

@@ -46,12 +46,12 @@ services:
       - NUMBA_CACHE_DIR=/tmp/numba_cache
       - TZ=America/New_York
 
-    # Command - using standard PPO training with new reward system
-    # Running with single env to avoid multiprocessing issues in Docker
+    # Command - using standard PPO training with optimized data loading
+    # Now supporting multi-env with precomputed features
     command: >
       python -u train.py
       --timesteps 1000000
-      --n_envs 1
+      --n_envs 4
 
     # Restart policy
     restart: unless-stopped
