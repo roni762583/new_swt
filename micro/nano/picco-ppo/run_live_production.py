@@ -67,10 +67,6 @@ class TradingConfig:
     trading_start_hour: int = 1  # 1 AM UTC
     trading_end_hour: int = 21  # 9 PM UTC
 
-    # Safety
-    enable_trading: bool = False  # MUST BE EXPLICITLY SET TO TRUE
-    dry_run: bool = True  # Log trades without execution
-
     def validate(self):
         """Validate configuration"""
         if not self.oanda_api_token:
@@ -79,11 +75,13 @@ class TradingConfig:
             raise ValueError("OANDA_ACCOUNT_ID environment variable not set")
         if not os.path.exists(self.checkpoint_path):
             raise ValueError(f"Checkpoint not found: {self.checkpoint_path}")
-        if self.enable_trading and not self.dry_run:
-            logger.warning("🔴 LIVE TRADING ENABLED - REAL MONEY AT RISK")
-            response = input("Type 'CONFIRM' to proceed with live trading: ")
-            if response != 'CONFIRM':
-                raise ValueError("Live trading not confirmed")
+
+        # ALWAYS LIVE TRADING - NO SIMULATION
+        logger.warning("🔴 LIVE TRADING SYSTEM - REAL MONEY AT RISK")
+        logger.warning("🔴 This will execute REAL trades with REAL money")
+        response = input("Type 'CONFIRM LIVE TRADING' to proceed: ")
+        if response != 'CONFIRM LIVE TRADING':
+            raise ValueError("Live trading not confirmed - must type 'CONFIRM LIVE TRADING'")
 
 
 # =======================
@@ -195,26 +193,7 @@ class BrokerIntegration:
         return {'units': 0, 'averagePrice': 0, 'unrealizedPL': 0}
 
     async def place_order(self, action: int, units: int) -> bool:
-        """Place order with broker"""
-
-        # Safety check
-        if not self.config.enable_trading:
-            logger.warning(f"📝 Trading disabled - would execute: {action} with {units} units")
-            return False
-
-        if self.config.dry_run:
-            logger.info(f"🔸 DRY RUN - {action}: {units} units")
-            # Update simulated position
-            if action == 1:  # BUY
-                self.position.state = PositionState.LONG
-                self.position.units = units
-            elif action == 2:  # SELL
-                self.position.state = PositionState.SHORT
-                self.position.units = -units
-            elif action == 3:  # CLOSE
-                self.position.state = PositionState.FLAT
-                self.position.units = 0
-            return True
+        """Place LIVE order with broker - ALWAYS EXECUTES REAL TRADES"""
 
         if not self.has_broker:
             logger.error("❌ No broker connection")
