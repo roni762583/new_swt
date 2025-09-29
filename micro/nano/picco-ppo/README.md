@@ -28,10 +28,11 @@ Proximal Policy Optimization implementation with **rolling std-based gating**, *
   - No recalculation on every episode
   - No lost bars from indicator initialization
   - Efficient slicing - only load what's needed per episode
-- 🎯 **Winner-Focused Learning Strategy**:
-  - Removed curriculum learning - full 4 pip spread from start
-  - Phase 1: Learn only from profitable trades (ignore losses) until 1000 wins
-  - Phase 2: Normal learning with both profits and losses
+- 🎯 **Weighted Learning Strategy** (Replaced winner-only approach):
+  - Full 4 pip spread from start (no curriculum on spread)
+  - Winners: Always weight = 1.0 (full learning)
+  - Losers: Weight = 0.2 → 1.0 (gradually increased over 200k steps)
+  - Prevents survivorship bias while emphasizing successful patterns early
 - ⚡ **Performance Optimizations**:
   - Multi-environment support restored with precomputed features
   - Optimized H1-to-M5 mapping using pandas merge_asof
@@ -164,11 +165,11 @@ else:
 - **Max Grad Norm**: 0.5 (gradient clipping)
 - **L2 Weight Decay**: 1e-4 (regularization)
 
-### 4. Risk Management
+### 4. Environment Constraints (Training)
 - **Fixed Position Size**: 1000 units (no compounding)
-- **Max Drawdown**: 5% circuit breaker
-- **Daily Loss Limit**: 2% max
-- **Early Stopping**: If expectancy < -0.3 for 10 episodes
+- **Max Positions**: 1 at a time (no pyramiding)
+
+Note: Risk limits (max drawdown, daily loss, etc.) are applied ONLY at deployment, not during training to preserve natural reward distribution.
 
 ## 🚀 Quick Start
 
@@ -527,14 +528,6 @@ This implementation is based on extensive backtesting that showed:
 - **Realistic Costs**: 4 pip spread matches live trading
 - **Time Aware**: Captures market session patterns
 
-## 📈 Training Results
-
-**Latest Training Run (Sept 26, 2025):**
-- **Steps Trained**: 119,700+
-- **Total Profit**: 17,422 pips
-- **Total Trades**: 5,913
-- **Average**: ~2.95 pips/trade (after 4 pip spread)
-- **Status**: Profitable system demonstrating AMDDP1 effectiveness
 
 ## 🔗 Related Projects
 
@@ -621,24 +614,19 @@ picco-ppo/
 
 > 🎉 **MILESTONE ACHIEVED**: System has achieved **POSITIVE EXPECTANCY** (+0.022 pips/trade) while overcoming a 4-pip spread handicap!
 
-### Training Results (Sept 28, 2025 - Live Update)
-- **Training Status**: Running with centralized config (21:02 EST)
-- **Current Phase**: Phase 1 - Learning from winners only
-- **Checkpoint Settings**: Saving every 10,000 timesteps
-- **Configuration**: All settings now in `config.py`
-- **Previous Best**: +0.022 pips expectancy at 53,700 trades
+### Latest Training Results (Sept 29, 2025)
+- **Training Status**: Running v2 with rolling σ gating
+- **Current Phase**: Weighted learning (winners: 1.0, losers: 0.2→1.0)
+- **Progress**: 32,768+ timesteps (3.3% of 1M target)
+- **Win Rate**: ~12-13% (improving from 6%)
+- **Gate Rate**: 56% (successfully filtering noise)
 - **Key Improvements**:
-  - ✅ Fixed GBPJPY pip calculations (0.01 not 0.0001)
-  - ✅ Centralized all settings in config.py
-  - ✅ Checkpoint frequency reduced to 10k (was 50k)
-  - ✅ All mounts properly configured (config, database, env, train)
+  - ✅ Rolling σ replaces ATR for adaptive thresholds
+  - ✅ Weighted learning replaces winner-only bias
+  - ✅ Smaller network [128,128] reduces overfitting
+  - ✅ Clean separation of training vs deployment controls
 
-### Key Improvements
-- Removed curriculum learning for consistent 4 pip spread
-- Winner-focused learning shows faster convergence
-- Single environment eliminates Docker multiprocessing issues
-- Optimized dependencies reduce image by 2.6GB
 
 ---
-*Documentation consolidated from README.md and FEATURE_FORMULAS.md*
-*Last updated: September 28, 2025*
+*Documentation updated with clean separation of training vs deployment controls*
+*Last updated: September 29, 2025*
