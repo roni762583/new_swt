@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  ppo-training-improved:
+    image: ppo-improved:latest
+    container_name: ppo_training_improved
+    volumes:
+      # Mount all necessary directories
+      - ./env:/app/env:ro
+      - ./checkpoints:/app/checkpoints
+      - ./models:/app/models
+      - ./results:/app/results
+      - ./tensorboard:/app/tensorboard
+      - ./validation_results:/app/validation_results
+      # Mount improved files
+      - ./config_improved.py:/app/config_improved.py:ro
+      - ./train_improved.py:/app/train_improved.py:ro
+      - ./validate_improved.py:/app/validate_improved.py:ro
+      - ./trade_live_improved.py:/app/trade_live_improved.py:ro
+      # Mount database
+      - ./precomputed_features.duckdb:/app/precomputed_features.duckdb:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - OMP_NUM_THREADS=4
+      - NUMBA_CACHE_DIR=/tmp/numba_cache
+      - TF_CPP_MIN_LOG_LEVEL=2
+    mem_limit: 8g
+    memswap_limit: 8g
+    cpus: 6
+    command: python train_improved.py
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; exit(0 if os.path.exists('checkpoints/latest.pth') else 1)"]
+      interval: 5m
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"

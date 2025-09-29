@@ -1,8 +1,17 @@
-# PPO M5/H1 Trading System
+# PPO M5/H1 Trading System - Improved Version
 
-Proximal Policy Optimization implementation for the optimal M5/H1 trading strategy discovered through comprehensive timeframe analysis.
+Proximal Policy Optimization implementation with **rolling std-based gating**, **weighted learning**, and optimized hyperparameters for stable profitability.
 
-**Latest Updates (Sept 28, 2025)**:
+**🔥 Major Improvements (Sept 29, 2025)**:
+- ✅ **Rolling σ replaces ATR** - Better noise scaling for M5 timeframe
+- ✅ **Smart Gating System** - Prevents false entries using σ-based thresholds
+- ✅ **Weighted Learning** - Replaces biased winner-only phase
+- ✅ **Optimized PPO Config** - Smaller network, better regularization
+- ✅ **Clean Training/Deployment Separation** - Risk limits only at deployment
+- ✅ **Enhanced Monitoring** - Gate rates, false rejects, rolling metrics
+- ✅ **Training Active** - 16k+ timesteps, ~11% win rate, improving steadily
+
+**Previous Updates (Sept 28, 2025)**:
 - ✅ Van Tharp Expectancy_R rating system
 - ✅ Rolling expectancy tracking (100/500/1000 trade windows)
 - ✅ AMDDP1 reward function (pips-based with drawdown penalty)
@@ -122,13 +131,62 @@ PPO_CONFIG = {
 
 To modify settings, edit `config.py` - no need to change code!
 
+## 🎯 Key Improvements Implemented
+
+### 1. Rolling Standard Deviation Gating
+```python
+# Replaces ATR with faster-reacting rolling σ
+σ = rolling_std(price_changes, window=12)  # 12 bars for M5
+threshold = max(0.25 * σ, 2 * spread, 2.0 pips)
+gate_allowed = |recent_move| >= threshold
+```
+- **Window**: 12 bars for M5 (1 hour), 60 for M1
+- **Threshold**: k × σ where k anneals from 0.15 → 0.25
+- **Hard Gate**: Blocks entries during high noise (early training)
+- **Soft Gate**: Penalties after 500k steps
+
+### 2. Weighted Learning (No Winner Bias)
+```python
+# Instead of ignoring losses completely:
+if trade_profitable:
+    weight = 1.0  # Full weight for winners
+else:
+    weight = 0.2 → 1.0  # Gradual anneal for losses
+```
+- Preserves gradient information from failures
+- Anneals over 200k steps to equal weighting
+- Prevents survivorship bias
+
+### 3. Optimized Hyperparameters
+- **Network**: [128, 128] instead of [256, 256] (less overfitting)
+- **Entropy**: 0.02 → 0.005 (annealed exploration)
+- **Value Coef**: 0.25 (reduced from 0.5)
+- **Max Grad Norm**: 0.5 (gradient clipping)
+- **L2 Weight Decay**: 1e-4 (regularization)
+
+### 4. Risk Management
+- **Fixed Position Size**: 1000 units (no compounding)
+- **Max Drawdown**: 5% circuit breaker
+- **Daily Loss Limit**: 2% max
+- **Early Stopping**: If expectancy < -0.3 for 10 episodes
+
 ## 🚀 Quick Start
 
-### Docker Training (Recommended)
+### Using Improved Version
 
 ```bash
 # Navigate to PPO directory
 cd /home/aharon/projects/new_swt/micro/nano/picco-ppo/
+
+# Option 1: Use improved training (recommended)
+python train_improved.py
+
+# Option 2: Docker with improved config
+docker build -t ppo-improved -f Dockerfile .
+docker run -v $(pwd):/workspace ppo-improved python train_improved.py
+
+# Option 3: Continue with existing training (legacy)
+docker compose up -d ppo-training
 
 # Build with BuildKit caching
 DOCKER_BUILDKIT=1 docker compose -f docker-compose.buildkit.yml build
