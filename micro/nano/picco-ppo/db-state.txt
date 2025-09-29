@@ -1,0 +1,101 @@
+DATABASE STATE REPORT - COMPLETE SCHEMA WITH FORMULAS
+Generated on: 2025-09-29 (Final clean state)
+
+
+================================================================================
+DATABASE: /home/aharon/projects/new_swt/micro/nano/picco-ppo/precomputed_features.duckdb
+================================================================================
+Tables found: 1
+
+============================================================
+TABLE: m5_features
+============================================================
+Row count: 99,950
+Column count: 22
+
+Full column listing with exact formulas:
+------------------------------------------------------------
+   1. open                      DOUBLE       Raw M5 bar open price
+   2. high                      DOUBLE       Raw M5 bar high price
+   3. low                       DOUBLE       Raw M5 bar low price
+   4. close                     DOUBLE       Raw M5 bar close price
+   5. volume                    BIGINT       Raw M5 bar volume
+   6. bar_index                 BIGINT       Sequential bar number
+   7. timestamp                 TIMESTAMP_NS Bar timestamp
+   8. sma20                     DOUBLE       close.rolling(20).mean()
+   9. sma200                    DOUBLE       close.rolling(200).mean()
+  10. tr                        DOUBLE       max(high-low, abs(high-prev_close), abs(low-prev_close))
+  11. atr                       DOUBLE       tr.rolling(14).mean()
+  12. reactive                  DOUBLE       close - sma200
+  13. lessreactive              DOUBLE       sma20 - sma200
+  14. react_ratio               DOUBLE       reactive / (lessreactive + 0.0001), clipped to [-5, 5]
+  15. efficiency_ratio          DOUBLE       abs(close - close.shift(10)) / close.diff().abs().rolling(10).sum()
+  16. bb_position               DOUBLE       (close - sma20) / (2 * close.rolling(20).std()), clipped to [-1, 1]
+  17. rsi                       DOUBLE       100 - (100 / (1 + RS)), where RS = avg_gain/avg_loss over 14 periods
+  18. rsi_extreme               DOUBLE       (rsi - 50) / 50
+  19. atr_ratio                 DOUBLE       atr / (sma20 + 0.0001)
+  20. h1_trend                  BIGINT       1 if close > h1_sma20*1.001, -1 if close < h1_sma20*0.999, else 0
+  21. h1_momentum               DOUBLE       H1 close.pct_change(5) mapped to M5 bars
+  22. use_mean_reversion        DOUBLE       1.0 if (h1_trend == 0 AND efficiency_ratio < 0.3), else 0.0
+
+File size: 14.51 MB
+
+
+================================================================================
+DATABASE: /home/aharon/projects/new_swt/micro/nano/picco-ppo/master.duckdb
+================================================================================
+Tables found: 1
+
+============================================================
+TABLE: master
+============================================================
+Row count: 1,333,912
+Column count: 11
+
+Full column listing:
+------------------------------------------------------------
+   1. timestamp                 TIMESTAMP    Bar timestamp (PRIMARY KEY)
+   2. bar_index                 BIGINT       Sequential bar number
+   3. open                      DOUBLE       M1 bar open price
+   4. high                      DOUBLE       M1 bar high price
+   5. low                       DOUBLE       M1 bar low price
+   6. close                     DOUBLE       M1 bar close price
+   7. volume                    BIGINT       M1 bar volume
+   8. swing_high_m1             BOOLEAN      True if M1 swing high (h[i] > h[i-1] and h[i] > h[i+1])
+   9. swing_low_m1              BOOLEAN      True if M1 swing low (l[i] < l[i-1] and l[i] < l[i+1])
+  10. swing_high_h1             BOOLEAN      True if H1 swing high (highest M1 swing high in hour)
+  11. swing_low_h1              BOOLEAN      True if H1 swing low (lowest M1 swing low in hour)
+
+Data range: 2022-01-02 17:05:00 to 2025-08-06 19:59:00
+Price range: 149.048 to 208.112 (GBPJPY)
+Source: GBPJPY_M1_REAL_2022-2025.csv
+Indexes: idx_master_timestamp, idx_master_bar_index
+
+Swing Statistics:
+- M1 swing highs: 274,699 (20.59% of bars)
+- M1 swing lows: 274,264 (20.56% of bars)
+- H1 swing highs: 22,394 (1.68% of bars)
+- H1 swing lows: 22,394 (1.68% of bars)
+
+✅ Status: Production-ready with swing point detection
+
+File size: 168 MB
+
+
+================================================================================
+RECENT CHANGES (2025-09-29):
+================================================================================
+1. ✅ Deleted 323 redundant columns (c_* and wst_*) from original master
+2. ✅ Restored master table with proper OHLCV data including 'close' column
+3. ✅ Created and tested HalfTrend indicator implementation
+4. ✅ Removed halftrend table and associated scripts (cleanup complete)
+5. ✅ Deleted oldmaster table (no longer needed)
+6. ✅ Added swing point detection columns for M1 and H1 timeframes
+7. ✅ Moved master.duckdb to picco-ppo directory for consolidation
+8. ✅ Database now in clean state with enhanced swing detection
+
+Current working databases (both in /home/aharon/projects/new_swt/micro/nano/picco-ppo/):
+- precomputed_features.duckdb: Contains m5_features table (15 MB)
+- master.duckdb: Contains master table with swing points (168 MB)
+
+Database Status: CLEAN, OPTIMIZED, ENHANCED, and CONSOLIDATED
