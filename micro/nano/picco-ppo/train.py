@@ -16,6 +16,9 @@ import torch
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Import configuration
+from config import TRAINING, PPO_CONFIG, NETWORK_CONFIG
+
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.env_checker import check_env
@@ -138,11 +141,10 @@ def create_env(seed: int = None, env_id: int = 0):
 
     env = TradingEnv(
         db_path=db_path,
-        episode_length=2000,  # M5 bars per episode
-        initial_balance=10000.0,
-        trade_size=1000.0,
-        spread=4.0,  # FULL 4 pips spread from start - NO curriculum
-        reward_scaling=0.01,
+        episode_length=TRAINING["episode_length"],
+        initial_balance=TRAINING["initial_balance"],
+        instrument="GBPJPY",  # Uses config for pip values, spread, trade_size
+        reward_scaling=TRAINING["reward_scaling"],
         seed=seed
     )
 
@@ -159,12 +161,12 @@ def create_env(seed: int = None, env_id: int = 0):
 
 
 def train_ppo(
-    total_timesteps: int = 1_000_000,
-    n_envs: int = 4,
-    eval_freq: int = 10_000,
-    save_freq: int = 50_000,
-    tensorboard_log: str = "./tensorboard/",
-    model_dir: str = "./models/"
+    total_timesteps: int = None,
+    n_envs: int = None,
+    eval_freq: int = None,
+    save_freq: int = None,
+    tensorboard_log: str = None,
+    model_dir: str = None
 ):
     """
     Train PPO agent on trading environment.
@@ -177,6 +179,14 @@ def train_ppo(
         tensorboard_log: TensorBoard log directory
         model_dir: Model save directory
     """
+
+    # Use config values as defaults
+    total_timesteps = total_timesteps or TRAINING["total_timesteps"]
+    n_envs = n_envs or TRAINING["n_envs"]
+    eval_freq = eval_freq or TRAINING["eval_freq"]
+    save_freq = save_freq or TRAINING["save_freq"]
+    tensorboard_log = tensorboard_log or TRAINING["tensorboard_log"]
+    model_dir = model_dir or TRAINING["model_dir"]
 
     # Create directories
     os.makedirs(tensorboard_log, exist_ok=True)
@@ -212,32 +222,18 @@ def train_ppo(
     logger.info("Checking environment compatibility...")
     check_env(create_env(seed=42))
 
-    # PPO hyperparameters optimized for trading
+    # PPO hyperparameters from config
     ppo_config = {
         "policy": "MlpPolicy",
         "env": train_env,
-        "learning_rate": 3e-4,  # Adaptive learning rate
-        "n_steps": 2048,  # Steps per update
-        "batch_size": 64,  # Minibatch size
-        "n_epochs": 10,  # PPO epochs
-        "gamma": 0.99,  # Discount factor
-        "gae_lambda": 0.95,  # GAE lambda
-        "clip_range": 0.2,  # PPO clip parameter
-        "clip_range_vf": None,  # Value function clip
-        "ent_coef": 0.01,  # Entropy coefficient for exploration
-        "vf_coef": 0.5,  # Value function coefficient
-        "max_grad_norm": 0.5,  # Gradient clipping
-        "use_sde": False,  # State dependent exploration
-        "sde_sample_freq": -1,
+        **PPO_CONFIG,  # Unpack all PPO config values
         "policy_kwargs": {
-            "net_arch": [256, 256],  # Two hidden layers
-            "activation_fn": torch.nn.ReLU,
-            "normalize_images": False
+            "net_arch": NETWORK_CONFIG["net_arch"],
+            "activation_fn": getattr(torch.nn, NETWORK_CONFIG["activation_fn"]),
+            "normalize_images": NETWORK_CONFIG["normalize_images"]
         },
-        "verbose": 1,
         "tensorboard_log": tensorboard_log,
         "device": "cuda" if torch.cuda.is_available() else "cpu",
-        "seed": 42
     }
 
     logger.info(f"Device: {ppo_config['device']}")
@@ -306,7 +302,7 @@ def main():
                        help="Number of parallel environments")
     parser.add_argument("--eval_freq", type=int, default=10_000,
                        help="Evaluation frequency")
-    parser.add_argument("--save_freq", type=int, default=50_000,
+    parser.add_argument("--save_freq", type=int, default=10_000,
                        help="Model save frequency")
     parser.add_argument("--tensorboard_dir", type=str, default="./tensorboard/",
                        help="TensorBoard log directory")

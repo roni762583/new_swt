@@ -36,6 +36,9 @@ services:
       - ./numba_cache:/tmp/numba_cache
       - pip-cache:/root/.cache/pip
       - ./env:/app/env  # Mount local env directory to use fixed trading_env.py
+      - ./precomputed_features.duckdb:/app/precomputed_features.duckdb:ro  # Mount precomputed features
+      - ./config.py:/app/config.py:ro  # Mount config file
+      - ./train.py:/app/train.py:ro  # Mount training script
 
     # Environment
     environment:
