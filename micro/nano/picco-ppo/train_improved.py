@@ -18,7 +18,7 @@ from typing import Dict, Any
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from env.trading_env_improved import ImprovedTradingEnv
+from env.trading_env_4action import TradingEnv4Action
 from config_improved import *
 
 # Setup logging
@@ -146,7 +146,7 @@ def make_env(env_id: int, rank: int, seed: int = 0):
     def _init():
         # Get current timestep for curriculum
         # Note: This is approximate as we don't have access to global timesteps here
-        env = ImprovedTradingEnv(
+        env = TradingEnv4Action(
             db_path="precomputed_features.duckdb",
             episode_length=TRAINING["episode_length"],
             initial_balance=TRAINING["initial_balance"],
@@ -268,7 +268,8 @@ def train():
         callbacks.append(eval_callback)
 
     # Log configuration
-    logger.info("Starting training with improved configuration:")
+    logger.info("Starting training with 4-action environment:")
+    logger.info(f"  - Actions: [0=Hold, 1=Buy, 2=Sell, 3=Close]")
     logger.info(f"  - Gating: σ-based with k={GATING_CONFIG['k_threshold_start']} → {GATING_CONFIG['k_threshold_end']}")
     logger.info(f"  - Learning: Weighted sampling (winner={LEARNING_CONFIG['winner_weight']}, loser={LEARNING_CONFIG['loser_weight_start']}→1.0)")
     logger.info(f"  - PPO: lr={PPO_CONFIG['learning_rate']}, entropy={PPO_CONFIG['ent_coef']}→{PPO_CONFIG['ent_coef_end']}")
@@ -281,7 +282,7 @@ def train():
             total_timesteps=TRAINING["total_timesteps"],
             callback=callbacks,
             log_interval=1,
-            tb_log_name=f"ppo_improved_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            tb_log_name=f"ppo_4action_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             reset_num_timesteps=True,
             progress_bar=False,
         )

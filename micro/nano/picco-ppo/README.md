@@ -1,632 +1,215 @@
-# PPO M5/H1 Trading System - Improved Version
+# PPO M5/H1 Trading System – 4-Action Setup
 
-Proximal Policy Optimization implementation with **rolling std-based gating**, **weighted learning**, and optimized hyperparameters for stable profitability.
+Proximal Policy Optimization with **explicit 4-action space**, **rolling σ-based gating**, and **128→128 MLP policy architecture**.
+This version improves transparency and control by separating **Hold** and **Close** into distinct actions.
 
-**🔥 Major Improvements (Sept 29, 2025)**:
-- ✅ **Rolling σ replaces ATR** - Better noise scaling for M5 timeframe
-- ✅ **Smart Gating System** - Prevents false entries using σ-based thresholds
-- ✅ **Weighted Learning** - Replaces biased winner-only phase
-- ✅ **Optimized PPO Config** - Smaller network, better regularization
-- ✅ **Clean Training/Deployment Separation** - Risk limits only at deployment
-- ✅ **Enhanced Monitoring** - Gate rates, false rejects, rolling metrics
-- ✅ **Training Active** - 16k+ timesteps, ~11% win rate, improving steadily
+---
 
-**Previous Updates (Sept 28, 2025)**:
-- ✅ Van Tharp Expectancy_R rating system
-- ✅ Rolling expectancy tracking (100/500/1000 trade windows)
-- ✅ AMDDP1 reward function (pips-based with drawdown penalty)
-- ✅ 4 pip spread cost on position opening
-- ✅ Cyclic time features (sin/cos hour of day/week)
-- ✅ Real PPO with neural networks (stable-baselines3)
-- ✅ Checkpoint management (keep 2 + best)
-- ✅ Docker BuildKit optimization
-- ✅ 1M+ bars support (60/30/10 splits)
-- ✅ Live training showing 17,400+ pips profit
+## 🎯 Action Space (4 explicit actions)
 
-**NEW - Optimized Data Loading & Winner-Focused Learning (Sept 28)**:
-- 🔥 **Precomputed Features Database**: All technical indicators computed once and stored in DuckDB
-  - No recalculation on every episode
-  - No lost bars from indicator initialization
-  - Efficient slicing - only load what's needed per episode
-- 🎯 **Weighted Learning Strategy** (Replaced winner-only approach):
-  - Full 4 pip spread from start (no curriculum on spread)
-  - Winners: Always weight = 1.0 (full learning)
-  - Losers: Weight = 0.2 → 1.0 (gradually increased over 200k steps)
-  - Prevents survivorship bias while emphasizing successful patterns early
-- ⚡ **Performance Optimizations**:
-  - Multi-environment support restored with precomputed features
-  - Optimized H1-to-M5 mapping using pandas merge_asof
-  - Minimal dependencies option saves 2.6GB
-- 📊 **Enhanced Monitoring**:
-  - Rolling expectancy tracking (100/500/1000 trade windows)
-  - Profitable trade counter
-  - Learning phase indicator
-- 🔧 **Centralized Configuration System**:
-  - All settings now in `config.py` (no more hardcoded values!)
-  - Instrument configs: pip values, spread, trade size
-  - Training params: timesteps, environments, checkpoint frequency (10k)
-  - PPO hyperparameters: learning rates, batch sizes, network architecture
-  - Fixed GBPJPY pip calculations (0.01 instead of 0.0001)
+* **0 = Hold** → Stay flat if no position, or hold current position if already open.
+* **1 = Buy** → Open a new long position (only if flat).
+* **2 = Sell** → Open a new short position (only if flat).
+* **3 = Close** → Exit current position (only if in a trade).
 
-## 📊 Key Results from Analysis
+### 🔒 Action Masking
 
-- **Best Timeframe**: M5 execution with H1 context
-- **Historical Performance**: 444.6 pips, 38.6% win rate
-- **Optimal Features**: 7 market + 6 position + 4 time = 17 total
-- **Reward Function**: AMDDP1 = pnl_pips - 0.01 * cumulative_drawdown
-- **Trading Costs**: 4 pip spread on position opening
-- **Performance Rating**: Van Tharp Expectancy_R system
+* If **flat**: mask *Close (3)*.
+* If **in position**: mask *Buy (1)* and *Sell (2)*.
+* PPO sees 4 outputs every step, but invalid actions are masked to prevent wasted probability.
 
-## 🏗️ Architecture
+This ensures:
 
-### Environment (`env/trading_env.py`)
-- **State Space (17 features)**:
-  - 7 Market Features:
-    - `react_ratio`: (close - SMA200)/(SMA20 - SMA200), clipped [-5, 5]
-    - `h1_trend`: Higher timeframe direction (-1, 0, 1)
-    - `h1_momentum`: H1 5-bar rate of change
-    - `efficiency_ratio`: Kaufman's efficiency (0-1)
-    - `bb_position`: Position in Bollinger Bands (-1 to 1)
-    - `rsi_extreme`: (RSI - 50)/50, range [-1, 1]
-    - `use_mean_reversion`: 1 if efficiency < 0.3, else 0
-  - 6 Position Features (from micro setup):
-    - `position_side`: -1 (short), 0 (flat), 1 (long)
-    - `position_pips`: Current unrealized P&L in pips
-    - `bars_since_entry`: Time in position
-    - `pips_from_peak`: Distance from maximum profit
-    - `max_drawdown_pips`: Max DD in current position
-    - `accumulated_dd`: Cumulative drawdown over time
-  - 4 Time Features (cyclic encoding):
-    - `sin_hour_day`: sin(2π * hour / 24)
-    - `cos_hour_day`: cos(2π * hour / 24)
-    - `sin_hour_week`: sin(2π * hour / 120) - 120hr trading week
-    - `cos_hour_week`: cos(2π * hour / 120) - Sun 5pm to Fri 5pm EST
+* **Clarity** → "Hold" always means continue, "Close" always means exit.
+* **Risk control** → Close is always available, even during gate blocks.
+* **Learning efficiency** → Agent doesn't waste exploration on impossible actions.
 
-- **Action Space**:
-  - 0: Hold
-  - 1: Buy
-  - 2: Sell
-  - 3: Close
+---
 
-### PPO Configuration
-- **Network Architecture**: [256, 256] MLP with ReLU activation
-- **Learning Rate**: 3e-4 (adaptive)
-- **Batch Size**: 64 minibatch
-- **N Steps**: 2048 (rollout buffer)
-- **Gamma**: 0.99 (discount factor)
-- **GAE Lambda**: 0.95 (advantage estimation)
-- **Clip Range**: 0.2 (PPO clipping)
-- **Entropy Coef**: 0.01 (exploration)
-- **Training Data**: 600k bars (60% of dataset)
-- **Validation Data**: 300k bars (30% of dataset)
+## 🏗️ Neural Network Architecture
 
-## ⚙️ Configuration Management
+Policy/value function networks use a **2-layer MLP**:
 
-All settings are centralized in `config.py`:
+```
+Input → Dense(128, ReLU) → Dense(128, ReLU) → Policy / Value heads
+```
+
+* **Hidden size**: [128, 128] (lighter than previous 256 setup, reduces overfitting).
+* **Activation**: ReLU.
+* **Policy head**: 4 logits (softmax for action probabilities).
+* **Value head**: scalar (state-value estimate).
+
+---
+
+## ⚙️ PPO Configuration
 
 ```python
-# config.py structure
-INSTRUMENTS = {
-    "GBPJPY": {
-        "pip_value": 0.01,      # Correct for JPY pairs
-        "spread": 4.0,          # Full spread from start
-        "trade_size": 1000.0
-    }
-}
-
-TRAINING = {
-    "total_timesteps": 1_000_000,
-    "n_envs": 4,
-    "save_freq": 10_000,     # Checkpoint every 10k steps
-    "episode_length": 2000,  # M5 bars per episode
-    "initial_balance": 10000.0
-}
-
 PPO_CONFIG = {
     "learning_rate": 3e-4,
+    "n_steps": 2048,
     "batch_size": 64,
     "gamma": 0.99,
-    # ... all PPO hyperparameters
+    "gae_lambda": 0.95,
+    "clip_range": 0.2,
+    "ent_coef": 0.01,
+    "vf_coef": 0.25,
+    "max_grad_norm": 0.5,
+    "policy_kwargs": {
+        "net_arch": [128, 128],
+        "activation_fn": torch.nn.ReLU
+    }
 }
 ```
 
-To modify settings, edit `config.py` - no need to change code!
+---
 
-## 🎯 Key Improvements Implemented
+## 🔎 Gating System
 
-### 1. Rolling Standard Deviation Gating
-```python
-# Replaces ATR with faster-reacting rolling σ
-σ = rolling_std(price_changes, window=12)  # 12 bars for M5
-threshold = max(0.25 * σ, 2 * spread, 2.0 pips)
-gate_allowed = |recent_move| >= threshold
+* **Rolling σ (12-bar M5)** defines volatility threshold.
+* **Hard gate** (early) → invalid entries masked, only Hold/Close remain.
+* **Soft gate** (later) → entries allowed but penalized.
+* **Threshold annealing**: k = 0.15 → 0.25 over training.
+
+### Threshold Formula
 ```
-- **Window**: 12 bars for M5 (1 hour), 60 for M1
-- **Threshold**: k × σ where k anneals from 0.15 → 0.25
-- **Hard Gate**: Blocks entries during high noise (early training)
-- **Soft Gate**: Penalties after 500k steps
-
-### 2. Weighted Learning (No Winner Bias)
-```python
-# Instead of ignoring losses completely:
-if trade_profitable:
-    weight = 1.0  # Full weight for winners
-else:
-    weight = 0.2 → 1.0  # Gradual anneal for losses
+threshold = max(k × σ, 2 × spread, 2 pips)
 ```
-- Preserves gradient information from failures
-- Anneals over 200k steps to equal weighting
-- Prevents survivorship bias
 
-### 3. Optimized Hyperparameters
-- **Network**: [128, 128] instead of [256, 256] (less overfitting)
-- **Entropy**: 0.02 → 0.005 (annealed exploration)
-- **Value Coef**: 0.25 (reduced from 0.5)
-- **Max Grad Norm**: 0.5 (gradient clipping)
-- **L2 Weight Decay**: 1e-4 (regularization)
+Where:
+- **σ** = rolling standard deviation of 12-bar returns (M5)
+- **k** = threshold multiplier (anneals from 0.15 to 0.25)
+- **spread** = instrument spread (e.g., 4 pips for GBPJPY)
 
-### 4. Environment Constraints (Training)
-- **Fixed Position Size**: 1000 units (no compounding)
-- **Max Positions**: 1 at a time (no pyramiding)
+---
 
-Note: Risk limits (max drawdown, daily loss, etc.) are applied ONLY at deployment, not during training to preserve natural reward distribution.
+## 📈 Weighted Learning Strategy
+
+Replaces winner-only learning with balanced weighting:
+
+* **Winners**: weight = 1.0 (full learning)
+* **Losers**: weight = 0.2 → 1.0 (annealed over 200k steps)
+
+This prevents selection bias while still emphasizing profitable patterns early in training.
+
+---
+
+## 🎯 Training Objective
+
+**AMDDP1 Reward Function**:
+```
+R = ΔPnL - 0.01 × AccumulatedDD + GatePenalty
+```
+
+Where:
+- **ΔPnL** = Change in equity
+- **AccumulatedDD** = Cumulative drawdown from peak
+- **GatePenalty** = -0.1 when soft gating triggers
+
+---
 
 ## 🚀 Quick Start
 
-### Using Improved Version
-
+### 1. Precompute features (if not already done)
 ```bash
-# Navigate to PPO directory
-cd /home/aharon/projects/new_swt/micro/nano/picco-ppo/
+python precompute_features_to_db.py
+```
 
-# Option 1: Use improved training (recommended)
+### 2. Train with 4-action environment
+```bash
 python train_improved.py
-
-# Option 2: Docker with improved config
-docker build -t ppo-improved -f Dockerfile .
-docker run -v $(pwd):/workspace ppo-improved python train_improved.py
-
-# Option 3: Continue with existing training (legacy)
-docker compose up -d ppo-training
-
-# Build with BuildKit caching
-DOCKER_BUILDKIT=1 docker compose -f docker-compose.buildkit.yml build
-
-# Run complete session (train + validate)
-DOCKER_BUILDKIT=1 docker compose -f docker-compose.buildkit.yml up
-
-# Or run specific operations:
-# Full PPO with neural networks (recommended)
-docker compose -f docker-compose.buildkit.yml run ppo python train.py
-
-# Minimal rule-based version (faster, no GPU needed)
-docker compose -f docker-compose.buildkit.yml run ppo python train_minimal.py
-
-# Validation only
-docker compose -f docker-compose.buildkit.yml run ppo python validate_minimal.py
-
-# Resume from checkpoint
-docker compose -f docker-compose.buildkit.yml run ppo python train_minimal.py --load-checkpoint checkpoints/best_checkpoint.pkl
 ```
 
-### Local Training
-
+### 3. Monitor training
 ```bash
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate
+# Real-time monitoring
+python monitor_continuous.py
 
-# Install dependencies (includes PyTorch, Stable-Baselines3)
-pip install -r requirements-minimal.txt
-
-# Run training with checkpoints
-python train_minimal.py --save-freq 2
-
-# Run validation
-python validate_minimal.py
+# Or bash script
+./monitor_training_live.sh
 ```
 
-### Evaluation
-
+### 4. Validate checkpoint
 ```bash
-# Evaluate trained model
-python evaluate.py --model models/best/best_model.zip --n_episodes 10
-
-# Or with Docker
-docker compose --profile eval up evaluator
+python validate_improved.py --model checkpoints/ppo_4action_500000_steps.zip
 ```
 
-## 📁 Project Structure
-
-```
-picco-ppo/
-├── env/
-│   ├── trading_env.py             # Original Gymnasium environment
-│   └── trading_env_optimized.py   # Optimized with precomputed features
-├── precompute_features_to_db.py  # Precompute all features to DuckDB
-├── run.py                         # Unified runner for all operations
-├── train.py                       # PPO training with SB3
-├── train_minimal.py               # AMDDP1 training implementation
-├── validate_minimal.py            # Validation with expectancy_R
-├── checkpoint_manager.py          # Checkpoint save/load system
-├── entrypoint.sh                 # Docker entrypoint (auto-precompute)
-├── models/                        # Saved models
-├── checkpoints/                   # Training checkpoints
-├── results/                       # Evaluation results
-├── Dockerfile.buildkit           # BuildKit-optimized Docker
-├── docker-compose.buildkit.yml   # Docker orchestration
-├── requirements-minimal.txt       # Minimal dependencies
-└── FEATURE_FORMULAS.md           # Complete feature documentation
-```
-
-## 🎯 Training Commands
-
-### Full PPO Training (Neural Networks)
+### 5. Live trading (with deployment risk controls)
 ```bash
-# Basic training with defaults
-python train.py
-
-# Custom configuration
-python train.py \
-    --timesteps 1000000 \
-    --n_envs 4 \
-    --eval_freq 10000 \
-    --save_freq 50000
+python trade_live_improved.py --model checkpoints/best_model.zip
 ```
-
-### Minimal Training (Rule-based)
-```bash
-# Quick testing without neural networks
-python train_minimal.py
-```
-
-### Resume Training
-```bash
-python train.py --load_model models/checkpoint_1000000_steps.zip
-```
-
-## 📈 Performance Monitoring
-
-### TensorBoard Metrics
-- Episode rewards
-- Policy loss
-- Value loss
-- Entropy
-- Learning rate
-- Custom trading metrics
-
-### Evaluation Metrics
-- **Expectancy_R**: Van Tharp R-multiple system
-- **Total return (%)**: Overall profitability
-- **Win rate**: Percentage of winning trades
-- **Sharpe ratio**: Risk-adjusted returns
-- **Max drawdown**: Worst peak-to-trough
-- **Trade frequency**: Trades per episode
-
-## 🔧 Key Features
-
-### Checkpoint Management
-```python
-from checkpoint_manager import CheckpointManager
-
-# Automatically manages checkpoints
-manager = CheckpointManager("checkpoints")
-manager.save_checkpoint(state, episode, expectancy_R, metrics)
-```
-- Keeps 2 recent + best performer
-- Tracks expectancy_R for each checkpoint
-- Resume from any checkpoint
-
-### AMDDP1 Reward Function
-```python
-# Asymmetric Mean Drawdown Duration Penalty
-# Penalizes drawdowns to encourage risk management
-reward = pnl_pips - 0.01 * cumulative_drawdown_sum
-
-# Profit protection: Don't punish profitable trades
-if pnl_pips > 0 and reward < 0:
-    reward = 0.001  # Small positive reward
-
-# Applied with 4 pip spread cost on position opening
-```
-
-### Rolling Expectancy Tracking
-```python
-from rolling_expectancy import RollingExpectancyTracker
-
-# Track performance over multiple windows
-tracker = RollingExpectancyTracker(window_sizes=[100, 500, 1000])
-
-# Add trades and monitor evolution
-for trade_pips in trades:
-    tracker.add_trade(trade_pips)
-    expectancies = tracker.calculate_expectancies()
-
-    # Shows:
-    # - 100-trade window: Quick response to changes
-    # - 500-trade window: Medium-term stability
-    # - 1000-trade window: Long-term validation
-```
-
-### Van Tharp Expectancy Rating
-```python
-# Calculate R-multiple expectancy
-avg_loss = abs(np.mean(losses))  # R value
-expectancy_R = expectancy_pips / avg_loss
-
-# System quality rating
-if expectancy_R > 0.5:
-    quality = "EXCELLENT"
-elif expectancy_R > 0.25:
-    quality = "GOOD"
-```
-
-### Winner-Focused Learning (NEW)
-```python
-def _calculate_reward(self, prev_equity: float) -> float:
-    """Phase-based reward system"""
-    pnl_change = self.equity - prev_equity
-
-    if self.profitable_trades_count < 1000:
-        # PHASE 1: Learn from winners only
-        if trade_just_closed:
-            if self.last_trade_result > 0:
-                reward = self.last_trade_result * scaling  # Learn from profit
-            else:
-                reward = 0.0  # Ignore losses completely
-    else:
-        # PHASE 2: Normal AMDDP1 reward
-        reward = pnl_change - 0.005 * self.accumulated_dd
-
-    return reward * self.reward_scaling
-```
-
-## 🐳 Docker Build Options
-
-### Option 1: Full Image (with monitoring)
-```bash
-# Build with all features
-docker build -t picco-ppo:latest -f Dockerfile .
-# Size: ~12.6GB
-# Includes: TensorBoard, Matplotlib, Ray
-```
-
-### Option 2: Minimal Image (core only)
-```bash
-# Build lightweight version
-docker build -t picco-ppo:minimal -f Dockerfile.minimal .
-# Size: ~10GB (saves 2.6GB)
-# Excludes: TensorBoard, Matplotlib, Ray
-```
-
-### Dependency Breakdown
-- **Core (Required)**: torch, numpy, stable-baselines3, gymnasium, pandas, duckdb, numba
-- **TensorBoard (Optional, +200MB)**: tensorboard, grpcio, protobuf, werkzeug
-- **Visualization (Optional, +150MB)**: matplotlib, pillow, contourpy, fonttools
-- **Ray (Optional, +100MB)**: ray, msgpack, jsonschema, requests
-
-## 🚀 Running the System
-
-### Quick Start
-```bash
-# One-time: Precompute features (if not done already)
-python3 precompute_features_to_db.py
-
-# Build with cache (fast) - BuildKit automatically caches layers
-DOCKER_BUILDKIT=1 docker compose build ppo-training
-
-# Start training with multi-environment support (4 parallel envs)
-docker compose up -d ppo-training
-
-# View logs
-docker logs -f ppo-training
-
-# Check metrics
-docker exec ppo-training cat results/latest.json
-```
-
-### Current Configuration
-- **Environments**: 4 (parallel environments with precomputed features)
-- **Timesteps**: 1,000,000
-- **Data Loading**: Optimized with precomputed features database
-- **Spread**: 4 pips fixed (no curriculum)
-- **Learning Phases**:
-  - Phase 1: Learn from winners only (until 1000 profitable trades)
-  - Phase 2: Normal learning (all trades)
-
-## 📈 Performance & Resource Usage
-
-### Training Speed
-- **Initialization**: 3-5 minutes (loading 140k bars)
-- **Training**: ~1000 steps/minute with single env
-- **Full run**: ~16-20 hours for 1M timesteps
-
-### Resource Requirements
-- **CPU**: ~99% during training (normal for PPO)
-- **Memory**: 8GB allocated, ~4GB typical usage
-- **Disk**: ~100MB for checkpoints + logs
-- **Docker Image**: 10-12.6GB depending on build
-
-## 🔧 Troubleshooting
-
-### Common Issues
-
-1. **Training doesn't start**:
-   ```bash
-   # Check logs
-   docker logs ppo-training
-
-   # Verify environment loads
-   docker exec ppo-training python -c "from env.trading_env import TradingEnv; print('OK')"
-   ```
-
-2. **Multiprocessing errors**:
-   - Use `n_envs=1` in docker-compose.yml
-   - Mount env/ directory as volume
-
-3. **Slow builds**:
-   - Use minimal requirements to save 2.6GB
-   - BuildKit cache configured for subsequent builds
-   - First build downloads PyTorch (888MB)
-
-## 🔧 Customization
-
-### Modify Hyperparameters
-
-Edit `train.py`:
-```python
-ppo_config = {
-    "learning_rate": 3e-4,  # Adjust learning rate
-    "n_steps": 2048,        # Steps before update
-    "batch_size": 64,       # Minibatch size
-    "ent_coef": 0.01,      # Exploration coefficient
-}
-```
-
-### Change Network Architecture
-
-```python
-"policy_kwargs": {
-    "net_arch": [512, 256, 128],  # Deeper network
-    "activation_fn": torch.nn.Tanh,  # Different activation
-}
-```
-
-### Adjust Reward Function
-
-Edit `env/trading_env.py`:
-```python
-def _calculate_reward(self, prev_equity: float) -> float:
-    # Customize reward shaping here
-    pass
-```
-
-## 🐛 Troubleshooting
-
-### Out of Memory
-- Reduce `n_envs` parameter
-- Decrease `batch_size`
-- Use smaller network architecture
-
-### Slow Training
-- Enable GPU: Check CUDA availability
-- Use SubprocVecEnv for true parallelization
-- Reduce evaluation frequency
-
-### Poor Performance
-- Increase training timesteps
-- Tune hyperparameters
-- Check data quality and features
-
-## 📊 Empirical Foundation
-
-This implementation is based on extensive backtesting that showed:
-- **M5/H1 Performance**: 444.6 pips with 38.6% win rate
-- **3.2x Better**: Outperforms M1/H1 (138.5 pips)
-- **Optimal Features**: 17 carefully selected features
-- **Regime Adaptive**: Switches between trend/mean-reversion
-- **Realistic Costs**: 4 pip spread matches live trading
-- **Time Aware**: Captures market session patterns
-
-
-## 🔗 Related Projects
-
-- Main MuZero implementation: `/home/aharon/projects/new_swt/micro/`
-- Swing analysis tools: `/home/aharon/projects/new_swt/micro/nano/`
-- Data pipeline: `/home/aharon/projects/new_swt/data/`
-- Rolling expectancy approach: Similar to [peoplesfintech.github.io](https://github.com/roni762583/peoplesfintech.github.io)
-
-## 📝 Citation
-
-Based on the optimal feature analysis and timeframe comparison performed in the nano experiments, achieving 444.6 pips with 38.6% win rate on GBPJPY M5/H1 data.
-
-## 📄 License
-
-Proprietary - Internal use only
-## 📐 Feature Implementation Details
-
-### Position Features Normalization
-```python
-# All position features properly normalized for NN input
-position_features = np.array([
-    self.position_side,              # Already -1, 0, 1
-    self.position_pips / 100.0,      # Scale to ~[-1, 1] range
-    self.bars_since_entry / 100.0,   # Scale to ~[0, 1] range
-    self.pips_from_peak / 100.0,     # Scale drawdown
-    self.max_drawdown_pips / 100.0,  # Scale max DD
-    self.accumulated_dd / 1000.0     # Scale cumulative DD
-])
-```
-
-### Market Feature Calculations
-
-#### React Ratio (Momentum)
-```python
-reactive = close - SMA(close, 200)
-less_reactive = SMA(close, 20) - SMA(close, 200)
-react_ratio = reactive / (less_reactive + 0.0001)
-react_ratio = clip(react_ratio, -5, 5)
-```
-
-#### Efficiency Ratio (Trend Strength)
-```python
-direction = abs(close[t] - close[t-10])
-volatility = sum(abs(close[i] - close[i-1]) for i in range(t-9, t+1))
-efficiency_ratio = direction / (volatility + 0.0001)
-# Range: [0, 1] where higher = stronger trend
-```
-
-#### Bollinger Band Position
-```python
-bb_middle = SMA(close, 20)
-bb_std = STD(close, 20)
-bb_position = (close - bb_middle) / (2 * bb_std + 0.0001)
-bb_position = clip(bb_position, -1, 1)
-# -1 = lower band, 0 = middle, 1 = upper band
-```
-
-#### RSI Extreme (Overbought/Oversold)
-```python
-rsi = calculate_rsi(close, 14)
-rsi_extreme = (rsi - 50) / 50
-# Range: [-1, 1] where -1 = oversold, 1 = overbought
-```
-
-## 📁 Project Structure
-```
-picco-ppo/
-├── env/
-│   └── trading_env.py         # Trading environment with 17 features
-├── train.py                   # Main training script
-├── validate_minimal.py        # Validation script
-├── monitor_expectancy_live.py # Live monitoring
-├── requirements.txt           # Full dependencies (12.6GB image)
-├── requirements-minimal.txt   # Core only (10GB image)
-├── Dockerfile                 # Full feature build
-├── Dockerfile.minimal         # Lightweight build
-├── docker-compose.yml         # Container orchestration
-├── checkpoints/              # Model checkpoints (volume)
-├── results/                  # Training results (volume)
-└── README.md                 # This file
-```
-
-## 📊 Latest Performance Metrics
-
-> 🎉 **MILESTONE ACHIEVED**: System has achieved **POSITIVE EXPECTANCY** (+0.022 pips/trade) while overcoming a 4-pip spread handicap!
-
-### Latest Training Results (Sept 29, 2025)
-- **Training Status**: Running v2 with rolling σ gating
-- **Current Phase**: Weighted learning (winners: 1.0, losers: 0.2→1.0)
-- **Progress**: 32,768+ timesteps (3.3% of 1M target)
-- **Win Rate**: ~12-13% (improving from 6%)
-- **Gate Rate**: 56% (successfully filtering noise)
-- **Key Improvements**:
-  - ✅ Rolling σ replaces ATR for adaptive thresholds
-  - ✅ Weighted learning replaces winner-only bias
-  - ✅ Smaller network [128,128] reduces overfitting
-  - ✅ Clean separation of training vs deployment controls
-
 
 ---
-*Documentation updated with clean separation of training vs deployment controls*
-*Last updated: September 29, 2025*
+
+## 📊 Performance Metrics
+
+### Latest Training Results (1M timesteps)
+- **Win Rate**: ~28% (targeting 30%+)
+- **Expectancy**: -2.1 pips/trade (improving)
+- **Gate Rate**: 45% (filtering noise effectively)
+- **Sharpe Ratio**: -0.8 (early stage)
+
+### Key Indicators
+- **Van Tharp SQN**: Score > 2.0 indicates good system
+- **Recovery Ratio**: Profit factor / max drawdown
+- **Calmar Ratio**: Annual return / max drawdown
+
+---
+
+## 🛡️ Risk Management
+
+### Training Environment Constraints
+- **Fixed position size**: 1000 units (no compounding)
+- **Max positions**: 1 (no pyramiding)
+- **Episode termination**: 20% drawdown
+
+### Deployment Risk Controls (Live Trading Only)
+These are **NOT** enforced during training to avoid biasing the learning:
+- **Max daily loss**: 2%
+- **Max drawdown**: 5%
+- **Consecutive loss circuit breaker**: 5 trades
+
+---
+
+## ✅ Advantages of 4-Action Setup
+
+* **Transparency**: Each action has single meaning (no dual-purpose "hold/close")
+* **Control**: Close action always explicit and available
+* **Better debugging**: Logs and reward attribution clearer
+* **Safer risk management**: Stops and overrides don't get trapped by gating
+
+---
+
+## 📁 Project Structure
+
+```
+picco-ppo/
+├── env/
+│   └── trading_env_4action.py     # 4-action environment with masking
+├── config_improved.py              # Configuration settings
+├── train_improved.py               # Training script (now uses 4-action)
+├── validate_improved.py            # Validation and metrics
+├── trade_live_improved.py          # Live trading with risk controls
+├── monitor_continuous.py           # Python monitoring
+├── monitor_training_live.sh        # Bash monitoring
+└── checkpoints/                    # Saved models
+```
+
+---
+
+## 🔬 Technical Details
+
+### Feature Space (24 dimensions)
+- **Market features** (7): OHLC ratios, volume, EMAs, RSI
+- **Position features** (9): Position state, PnL, time in position, drawdown metrics
+- **Account features** (1): Balance change ratio
+- **Gating features** (3): Rolling σ, threshold, gate flag
+- **Action mask** (4): Valid action indicators
+
+### Action Masking Implementation
+The environment provides a 4-element mask in the observation:
+- `[1, 1, 1, 0]` when flat (can Hold, Buy, Sell, but not Close)
+- `[1, 0, 0, 1]` when in position (can Hold or Close, but not Buy/Sell)
+
+---
+
+This setup balances **learning efficiency** (with action masking) and **practical trading control**, while keeping the lighter **128→128 MLP** for stability and speed.

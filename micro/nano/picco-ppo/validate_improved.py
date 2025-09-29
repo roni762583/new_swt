@@ -15,7 +15,7 @@ import json
 from typing import Dict, List, Tuple
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from env.trading_env_improved import ImprovedTradingEnv
+from env.trading_env_4action import TradingEnv4Action
 from config_improved import *
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -154,7 +154,7 @@ def validate_model(
         return {}
 
     # Create environment
-    env = ImprovedTradingEnv(
+    env = TradingEnv4Action(
         db_path="precomputed_features.duckdb",
         episode_length=TRAINING["episode_length"],
         initial_balance=TRAINING["initial_balance"],
