@@ -50,7 +50,7 @@ Tables found: 1
 TABLE: master
 ============================================================
 Row count: 1,333,912
-Column count: 20
+Column count: 21
 
 Full column listing:
 ------------------------------------------------------------
@@ -74,6 +74,7 @@ Full column listing:
   18. last_swing_low_idx_h1     BIGINT       Bar index of last H1 swing low
   19. last_swing_low_price_h1   DOUBLE       Price of last H1 swing low
   20. h1_swing_range_position   DOUBLE       (close - last_h1_swing_low) / (last_h1_swing_high - last_h1_swing_low)
+  21. h1_swing_range_position_zsarctan DOUBLE  arctan((h1_swing_range_position - rolling_mean_500) / fixed_std_training) * 2/π
 
 Data range: 2022-01-02 17:05:00 to 2025-08-06 19:59:00
 Price range: 149.048 to 208.112 (GBPJPY)
@@ -89,6 +90,11 @@ Swing Statistics:
 Enhanced Features:
 - Last swing tracking: Enables dynamic SL/TP calculation
 - H1 swing range position: Price location within H1 swing range (0.0 = at low, 1.0 = at high)
+- H1 swing z-score (arctan): Regime-aware deviation using fixed std (detects TRUE breakouts)
+  * Fixed std: 3.423038 (from 70% training data)
+  * Window: 500-bar rolling mean
+  * Bounded to [-1, 1] via arctan transformation
+  * Config: feature_zscore_config.json
 
 ✅ Status: Production-ready with enhanced swing detection and tracking
 
@@ -107,7 +113,9 @@ RECENT CHANGES (2025-09-29 to 2025-09-30):
 7. ✅ Moved master.duckdb to picco-ppo directory for consolidation
 8. ✅ Added last swing tracking (indices + prices) for M1 and H1 timeframes
 9. ✅ Added h1_swing_range_position column for price location within H1 range
-10. ✅ Database now in clean state with enhanced swing detection and tracking
+10. ✅ Added h1_swing_range_position_zsarctan column (regime-aware z-score with fixed std)
+11. ✅ Created feature_zscore_config.json for fixed std management
+12. ✅ Database now in clean state with enhanced swing detection and regime analysis
 
 Current working databases (both in /home/aharon/projects/new_swt/micro/nano/picco-ppo/):
 - precomputed_features.duckdb: Contains m5_features table (15 MB)

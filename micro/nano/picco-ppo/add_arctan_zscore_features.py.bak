@@ -1,0 +1,355 @@
+#!/usr/bin/env python3
+"""
+Add arctan-transformed z-score features to master table using FIXED STD approach.
+
+Key Innovation: Uses rolling mean with FIXED std from training data to detect
+true regime changes and avoid false extremes during consolidation.
+
+Functions:
+- calculate_training_std(): Calculate fixed std from first 70% of data
+- calculate_fixed_std_zscore(): Rolling mean with fixed std (regime-aware)
+- calculate_arctan_transform(): Arctan transformation bounded to [-1, 1]
+- add_arctan_zscore_h1_swing(): Main function to add feature to master table
+"""
+
+import numpy as np
+import pandas as pd
+import duckdb
+import logging
+from pathlib import Path
+from typing import Tuple
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Database configuration
+DB_PATH = Path("/home/aharon/projects/new_swt/micro/nano/picco-ppo/master.duckdb")
+
+
+def calculate_training_std(data: np.ndarray, train_fraction: float = 0.7) -> float:
+    """
+    Calculate standard deviation from training portion of data.
+
+    Args:
+        data: Full dataset
+        train_fraction: Fraction to use as training (default: 0.7)
+
+    Returns:
+        Standard deviation from training data (fixed baseline)
+
+    Purpose:
+        Provides consistent volatility baseline across all regimes.
+        Prevents false extremes during consolidation periods.
+    """
+    # Remove NaNs
+    clean_data = data[~np.isnan(data)]
+
+    # Split into training portion
+    train_size = int(len(clean_data) * train_fraction)
+    train_data = clean_data[:train_size]
+
+    # Calculate std
+    train_std = np.std(train_data)
+
+    logger.info(f"Training data statistics:")
+    logger.info(f"  Total data points: {len(clean_data):,}")
+    logger.info(f"  Training size: {train_size:,} ({train_fraction*100:.0f}%)")
+    logger.info(f"  Training std: {train_std:.6f}")
+    logger.info(f"  Training mean: {np.mean(train_data):.6f}")
+
+    return train_std
+
+
+def calculate_fixed_std_zscore(
+    data: np.ndarray,
+    fixed_std: float,
+    window: int = 500
+) -> np.ndarray:
+    """
+    Calculate z-score using rolling mean with FIXED std from training.
+
+    Args:
+        data: Input array of values
+        fixed_std: Fixed standard deviation from training data
+        window: Rolling window size for mean (default: 500)
+
+    Returns:
+        Array of z-scores (same length as input, first window-1 values are NaN)
+
+    Formula:
+        z[i] = (x[i] - rolling_mean(x, window)) / fixed_std_training
+
+    Benefits:
+        - Adapts to recent price levels (rolling mean)
+        - Consistent volatility baseline (fixed std)
+        - Detects TRUE regime changes (breakouts from consolidation)
+        - Avoids false extremes during low volatility periods
+    """
+    n = len(data)
+    zscores = np.full(n, np.nan)
+
+    # Calculate rolling mean
+    series = pd.Series(data)
+    rolling_mean = series.rolling(window=window, min_periods=window).mean()
+
+    # Calculate z-score with fixed std
+    valid_mask = ~rolling_mean.isna()
+    zscores[valid_mask] = (data[valid_mask] - rolling_mean[valid_mask]) / fixed_std
+
+    return zscores
+
+
+def calculate_arctan_transform(data: np.ndarray) -> np.ndarray:
+    """
+    Apply arctan transformation to bound data to [-1, 1].
+
+    Args:
+        data: Input array (typically z-scores)
+
+    Returns:
+        Transformed array bounded to [-1, 1]
+
+    Formula:
+        y = arctan(x) * 2 / π
+
+    Properties:
+        - Smooth, differentiable
+        - Maps (-∞, +∞) → (-1, +1)
+        - Preserves sign and order
+        - Zero stays at zero
+    """
+    return np.arctan(data) * 2 / np.pi
+
+
+def add_arctan_zscore_h1_swing(conn: duckdb.DuckDBPyConnection) -> Tuple[int, float]:
+    """
+    Add arctan(zscore(h1_swing_range_position)) column to master table.
+    Uses FIXED std from training data for regime-aware detection.
+
+    Args:
+        conn: DuckDB connection
+
+    Returns:
+        Tuple of (number of valid values, fixed std used)
+
+    Column added:
+        h1_swing_zscore_arctan: Arctan-transformed z-score with fixed std
+                                from training data, bounded to [-1, 1]
+    """
+    # Get total rows
+    total_rows = conn.execute("SELECT COUNT(*) FROM master").fetchone()[0]
+    logger.info(f"Total rows to process: {total_rows:,}")
+
+    # Add new column
+    logger.info("Adding h1_swing_zscore_arctan column to master table...")
+    try:
+        conn.execute("ALTER TABLE master ADD COLUMN h1_swing_zscore_arctan DOUBLE")
+        logger.info("  ✅ Added column: h1_swing_zscore_arctan (DOUBLE)")
+    except Exception as e:
+        if "already exists" in str(e).lower():
+            logger.info("  ⚠️  Column h1_swing_zscore_arctan already exists, will update")
+            conn.execute("UPDATE master SET h1_swing_zscore_arctan = NULL")
+        else:
+            raise
+
+    # Fetch data ordered by bar_index
+    logger.info("Fetching h1_swing_range_position data...")
+    df = conn.execute("""
+        SELECT
+            bar_index,
+            h1_swing_range_position
+        FROM master
+        ORDER BY bar_index
+    """).fetch_df()
+
+    logger.info(f"Loaded {len(df):,} rows")
+
+    # Calculate fixed std from training data
+    logger.info("\n" + "="*70)
+    logger.info("CALCULATING FIXED STD FROM TRAINING DATA")
+    logger.info("="*70)
+    h1_swing_data = df['h1_swing_range_position'].values
+    fixed_std = calculate_training_std(h1_swing_data, train_fraction=0.7)
+
+    # Calculate z-score with fixed std
+    logger.info("\n" + "="*70)
+    logger.info("CALCULATING Z-SCORE (rolling mean, fixed std)")
+    logger.info("="*70)
+    logger.info(f"Using fixed std: {fixed_std:.6f}")
+    logger.info("Rolling window: 500 bars")
+
+    zscores = calculate_fixed_std_zscore(h1_swing_data, fixed_std, window=500)
+
+    # Apply arctan transformation
+    logger.info("Applying arctan transformation...")
+    arctan_zscores = calculate_arctan_transform(zscores)
+
+    # Add to dataframe
+    df['h1_swing_zscore_arctan'] = arctan_zscores
+
+    # Calculate statistics
+    valid_values = ~np.isnan(arctan_zscores)
+    valid_count = np.sum(valid_values)
+
+    if valid_count > 0:
+        valid_data = arctan_zscores[valid_values]
+        logger.info("\n📊 Arctan Z-Score Statistics (Fixed Std):")
+        logger.info(f"  Valid values: {valid_count:,} ({valid_count/len(df)*100:.1f}%)")
+        logger.info(f"  Min:          {np.min(valid_data):.4f}")
+        logger.info(f"  P01:          {np.percentile(valid_data, 1):.4f}")
+        logger.info(f"  Q25:          {np.percentile(valid_data, 25):.4f}")
+        logger.info(f"  Median:       {np.median(valid_data):.4f}")
+        logger.info(f"  Q75:          {np.percentile(valid_data, 75):.4f}")
+        logger.info(f"  P99:          {np.percentile(valid_data, 99):.4f}")
+        logger.info(f"  Max:          {np.max(valid_data):.4f}")
+        logger.info(f"  Mean:         {np.mean(valid_data):.4f}")
+        logger.info(f"  Std:          {np.std(valid_data):.4f}")
+
+        # Distribution analysis
+        logger.info(f"\n📈 Distribution Ranges:")
+        logger.info(f"  < -0.8 (extreme low):    {np.sum(valid_data < -0.8):,} ({np.sum(valid_data < -0.8)/valid_count*100:.2f}%)")
+        logger.info(f"  -0.8 to -0.4:            {np.sum((valid_data >= -0.8) & (valid_data < -0.4)):,} ({np.sum((valid_data >= -0.8) & (valid_data < -0.4))/valid_count*100:.2f}%)")
+        logger.info(f"  -0.4 to +0.4 (normal):   {np.sum((valid_data >= -0.4) & (valid_data <= 0.4)):,} ({np.sum((valid_data >= -0.4) & (valid_data <= 0.4))/valid_count*100:.2f}%)")
+        logger.info(f"  +0.4 to +0.8:            {np.sum((valid_data > 0.4) & (valid_data <= 0.8)):,} ({np.sum((valid_data > 0.4) & (valid_data <= 0.8))/valid_count*100:.2f}%)")
+        logger.info(f"  > +0.8 (extreme high):   {np.sum(valid_data > 0.8):,} ({np.sum(valid_data > 0.8)/valid_count*100:.2f}%)")
+
+        # Raw z-score analysis (before arctan)
+        raw_zscores = zscores[~np.isnan(zscores)]
+        logger.info(f"\n📉 Raw Z-Score Distribution (before arctan):")
+        logger.info(f"  |z| > 3 (extreme):       {np.sum(np.abs(raw_zscores) > 3):,} ({np.sum(np.abs(raw_zscores) > 3)/len(raw_zscores)*100:.2f}%)")
+        logger.info(f"  |z| > 2 (very high):     {np.sum(np.abs(raw_zscores) > 2):,} ({np.sum(np.abs(raw_zscores) > 2)/len(raw_zscores)*100:.2f}%)")
+        logger.info(f"  |z| < 1 (normal):        {np.sum(np.abs(raw_zscores) < 1):,} ({np.sum(np.abs(raw_zscores) < 1)/len(raw_zscores)*100:.2f}%)")
+
+    # Update database
+    logger.info("\nUpdating database...")
+    conn.register('arctan_zscore_data', df[['bar_index', 'h1_swing_zscore_arctan']])
+
+    conn.execute("""
+        UPDATE master
+        SET h1_swing_zscore_arctan = arctan_zscore_data.h1_swing_zscore_arctan
+        FROM arctan_zscore_data
+        WHERE master.bar_index = arctan_zscore_data.bar_index
+    """)
+
+    logger.info("✅ Database updated successfully")
+
+    return valid_count, fixed_std
+
+
+def verify_arctan_zscore(conn: duckdb.DuckDBPyConnection):
+    """Verify the arctan z-score calculations with sample data."""
+    logger.info("\n" + "="*70)
+    logger.info("VERIFICATION OF ARCTAN Z-SCORE FEATURE")
+    logger.info("="*70)
+
+    # Get overall statistics
+    stats = conn.execute("""
+        SELECT
+            COUNT(*) as total_rows,
+            COUNT(h1_swing_zscore_arctan) as valid_values,
+            MIN(h1_swing_zscore_arctan) as min_val,
+            PERCENTILE_CONT(0.01) WITHIN GROUP (ORDER BY h1_swing_zscore_arctan) as p01,
+            PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY h1_swing_zscore_arctan) as q25,
+            PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY h1_swing_zscore_arctan) as median,
+            PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY h1_swing_zscore_arctan) as q75,
+            PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY h1_swing_zscore_arctan) as p99,
+            MAX(h1_swing_zscore_arctan) as max_val,
+            AVG(h1_swing_zscore_arctan) as mean_val,
+            STDDEV(h1_swing_zscore_arctan) as std_val
+        FROM master
+        WHERE h1_swing_zscore_arctan IS NOT NULL
+    """).fetchone()
+
+    logger.info(f"Total rows: {stats[0]:,}")
+    logger.info(f"Valid values: {stats[1]:,} ({stats[1]/stats[0]*100:.1f}%)")
+    logger.info(f"\n📊 Distribution Statistics:")
+    logger.info(f"  Min:    {stats[2]:.4f}")
+    logger.info(f"  P01:    {stats[3]:.4f}")
+    logger.info(f"  Q25:    {stats[4]:.4f}")
+    logger.info(f"  Median: {stats[5]:.4f}")
+    logger.info(f"  Mean:   {stats[9]:.4f}")
+    logger.info(f"  Q75:    {stats[6]:.4f}")
+    logger.info(f"  P99:    {stats[7]:.4f}")
+    logger.info(f"  Max:    {stats[8]:.4f}")
+    logger.info(f"  Std:    {stats[10]:.4f}")
+
+    # Show recent sample
+    logger.info("\n" + "-"*70)
+    logger.info("RECENT SAMPLE DATA")
+
+    sample = conn.execute("""
+        SELECT
+            bar_index,
+            timestamp,
+            ROUND(h1_swing_range_position, 4) as swing_pos,
+            ROUND(h1_swing_zscore_arctan, 4) as zscore_arctan,
+            CASE
+                WHEN h1_swing_zscore_arctan < -0.8 THEN 'EXTREME LOW'
+                WHEN h1_swing_zscore_arctan < -0.4 THEN 'LOW'
+                WHEN h1_swing_zscore_arctan <= 0.4 THEN 'NORMAL'
+                WHEN h1_swing_zscore_arctan <= 0.8 THEN 'HIGH'
+                ELSE 'EXTREME HIGH'
+            END as zone
+        FROM master
+        WHERE h1_swing_zscore_arctan IS NOT NULL
+        ORDER BY bar_index DESC
+        LIMIT 20
+    """).fetch_df()
+
+    if len(sample) > 0:
+        print(sample.to_string(index=False))
+
+
+def main():
+    """Main entry point."""
+    logger.info("="*70)
+    logger.info("Adding Arctan Z-Score Feature with Fixed Std")
+    logger.info("="*70)
+    logger.info("\n💡 Using FIXED STD from training data (70%)")
+    logger.info("   → Detects TRUE regime changes")
+    logger.info("   → Avoids false extremes during consolidation")
+    logger.info("   → Consistent baseline across all market conditions\n")
+
+    if not DB_PATH.exists():
+        logger.error(f"Database not found: {DB_PATH}")
+        return 1
+
+    # Connect to database
+    conn = duckdb.connect(str(DB_PATH))
+
+    try:
+        # Calculate and add feature
+        valid_count, fixed_std = add_arctan_zscore_h1_swing(conn)
+
+        logger.info(f"\n✅ Successfully added h1_swing_zscore_arctan column")
+        logger.info(f"📊 Calculated {valid_count:,} valid values")
+        logger.info(f"📏 Fixed std used: {fixed_std:.6f}")
+
+        # Verify results
+        verify_arctan_zscore(conn)
+
+    except Exception as e:
+        logger.error(f"Error processing feature: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+    finally:
+        conn.close()
+
+    logger.info("\n✅ Feature calculation complete!")
+    logger.info("📊 Column added: h1_swing_zscore_arctan")
+    logger.info("💡 Interpretation (using fixed std baseline):")
+    logger.info("  -1.0 to -0.8: EXTREME regime divergence (far below historical)")
+    logger.info("  -0.8 to -0.4: Significant divergence (potential mean reversion)")
+    logger.info("  -0.4 to +0.4: Normal variation (within historical range)")
+    logger.info("  +0.4 to +0.8: Significant divergence (potential mean reversion)")
+    logger.info("  +0.8 to +1.0: EXTREME regime divergence (far above historical)")
+    logger.info("\n🎯 Key Benefit: Detects TRUE breakouts from consolidation")
+    logger.info("   (not false alarms from adaptive rolling std)")
+
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())
