@@ -468,7 +468,7 @@ class TradingEnv4Action(Env):
         self.global_timesteps += 1
 
         # Check if episode is done
-        terminated = self.equity <= self.initial_balance * 0.8  # 20% loss limit
+        terminated = False  # No DD termination - let episodes run full length
         truncated = self.current_step >= self.episode_length
 
         # Get next observation
