@@ -367,9 +367,12 @@ def generate_zscore_features(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
     arctan_range = np.arctan(z_range) * 2 / np.pi
     df['swing_point_range_zsarctan'] = arctan_range
 
-    # combo_multiply (interaction feature)
-    logger.info("\nCalculating combo_multiply interaction feature...")
-    df['combo_multiply'] = df['swing_point_range_zsarctan'] * df['h1_swing_range_position_zsarctan_w20']
+    # combo_geometric (interaction feature using geometric mean)
+    logger.info("\nCalculating combo_geometric interaction feature...")
+    prod = df['swing_point_range_zsarctan'] * df['h1_swing_range_position_zsarctan_w20']
+    df['combo_geometric'] = np.sign(prod) * np.sqrt(
+        np.abs(df['swing_point_range_zsarctan']) * np.abs(df['h1_swing_range_position_zsarctan_w20'])
+    )
 
     # Statistics
     logger.info("\n📊 h1_swing_range_position_zsarctan_w20:")
@@ -388,24 +391,25 @@ def generate_zscore_features(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
     logger.info(f"  Range: [{np.min(valid):.4f}, {np.max(valid):.4f}]")
     logger.info(f"  Extremes (|z|>0.8): {np.sum(np.abs(valid) > 0.8):,} ({np.sum(np.abs(valid) > 0.8)/len(valid)*100:.2f}%)")
 
-    logger.info("\n📊 combo_multiply (interaction):")
-    combo_valid = df['combo_multiply'].values[~np.isnan(df['combo_multiply'].values)]
+    logger.info("\n📊 combo_geometric (interaction via geometric mean):")
+    combo_valid = df['combo_geometric'].values[~np.isnan(df['combo_geometric'].values)]
     logger.info(f"  Valid: {len(combo_valid):,} ({len(combo_valid)/len(df)*100:.1f}%)")
     logger.info(f"  Mean: {np.mean(combo_valid):.6f}")
     logger.info(f"  Std: {np.std(combo_valid):.6f}")
     logger.info(f"  Range: [{np.min(combo_valid):.4f}, {np.max(combo_valid):.4f}]")
-    logger.info(f"  Strong signals (|z|>0.4): {np.sum(np.abs(combo_valid) > 0.4):,} ({np.sum(np.abs(combo_valid) > 0.4)/len(combo_valid)*100:.2f}%)")
+    logger.info(f"  Strong signals (|z|>0.5): {np.sum(np.abs(combo_valid) > 0.5):,} ({np.sum(np.abs(combo_valid) > 0.5)/len(combo_valid)*100:.2f}%)")
+    logger.info(f"  Very strong (|z|>0.6): {np.sum(np.abs(combo_valid) > 0.6):,} ({np.sum(np.abs(combo_valid) > 0.6)/len(combo_valid)*100:.2f}%)")
 
     # Update database
     logger.info("\nUpdating database...")
     conn.register('zscore_data', df[['bar_index', 'h1_swing_range_position_zsarctan_w20',
-                                     'swing_point_range_zsarctan', 'combo_multiply']])
+                                     'swing_point_range_zsarctan', 'combo_geometric']])
     conn.execute("""
         UPDATE master
         SET
             h1_swing_range_position_zsarctan_w20 = zscore_data.h1_swing_range_position_zsarctan_w20,
             swing_point_range_zsarctan = zscore_data.swing_point_range_zsarctan,
-            combo_multiply = zscore_data.combo_multiply
+            combo_geometric = zscore_data.combo_geometric
         FROM zscore_data
         WHERE master.bar_index = zscore_data.bar_index
     """)
@@ -491,7 +495,7 @@ def main():
         logger.info("     last_swing_low_idx_h1, last_swing_low_price_h1")
         logger.info("  3. h1_swing_range_position")
         logger.info("  4. swing_point_range")
-        logger.info("  5. h1_swing_range_position_zsarctan_w20, swing_point_range_zsarctan, combo_multiply")
+        logger.info("  5. h1_swing_range_position_zsarctan_w20, swing_point_range_zsarctan, combo_geometric")
         logger.info(f"\nConfig saved: {CONFIG_PATH}")
 
     except Exception as e:

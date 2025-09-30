@@ -228,6 +228,15 @@ picco-ppo/
   - Detects when H1 range itself is extreme (tight/wide)
   - Fixed std=0.221478 (933K training rows)
   - Extremes (|z|>0.8): 3,237 events (0.24%)
+- **combo_geometric** (Interaction Feature):
+  - Formula: `sign(r×p) × sqrt(|range_z| × |position_z|)`
+  - Geometric mean: penalizes imbalance (small×big < medium×medium)
+  - **69% better** than arithmetic multiply (0.077 vs 0.046 avg correlation)
+  - Strong signals (|z|>0.5): 7,828 events (0.60%)
+  - Quadrant-specific predictive power:
+    - Q2 (big range, centered): **+0.184** correlation (strongest!)
+    - Q1 (both big): +0.104 correlation
+    - Q3 (consolidation extreme): -0.062 (reversal signal)
 
 ### Extreme Event Analysis Results
 
@@ -262,8 +271,15 @@ Regenerates all features in correct dependency order:
 3. H1 swing range position
 4. Swing point range
 5. Z-score features with Window=20
+6. combo_geometric interaction feature
 
 Runtime: ~7.5 minutes for 1.3M bars
+
+**Interaction Feature Development**:
+- Tested 7 combination methods (multiply, ratio, weighted, conditional, etc.)
+- Geometric mean emerged as **best predictor** (69% improvement)
+- Differentiates market regimes: wide range vs consolidation breakouts
+- Test script: `test_feature_combinations.py`
 
 ---
 
