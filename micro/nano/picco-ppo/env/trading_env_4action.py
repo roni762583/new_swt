@@ -3,7 +3,7 @@
 import numpy as np
 import pandas as pd
 import duckdb
-from gym import spaces, Env
+from gymnasium import spaces, Env
 from typing import Tuple, Dict, Optional
 import logging
 
@@ -83,7 +83,7 @@ class TradingEnv4Action(Env):
 
         # Get available data count
         total_rows = self.conn.execute(
-            f"SELECT COUNT(*) FROM features WHERE instrument = '{instrument}'"
+            "SELECT COUNT(*) FROM m5_features"
         ).fetchone()[0]
 
         if total_rows < episode_length:
@@ -179,8 +179,7 @@ class TradingEnv4Action(Env):
         # Load episode data
         query = f"""
         SELECT *
-        FROM features
-        WHERE instrument = '{self.instrument}'
+        FROM m5_features
         ORDER BY timestamp
         LIMIT {self.episode_length}
         OFFSET {start_index}
@@ -267,8 +266,8 @@ class TradingEnv4Action(Env):
             row['high'] / row['close'] - 1,         # 1: High ratio
             row['low'] / row['close'] - 1,          # 2: Low ratio
             row['volume'] / 1000,                   # 3: Volume (scaled)
-            row['ema_fast'] / row['close'] - 1,     # 4: Fast EMA ratio
-            row['ema_slow'] / row['close'] - 1,     # 5: Slow EMA ratio
+            row['reactive'] / row['close'] - 1,     # 4: Fast EMA ratio
+            row['lessreactive'] / row['close'] - 1,  # 5: Slow EMA ratio
             (row['rsi'] - 50) / 50,                 # 6: RSI (centered)
         ])
 
