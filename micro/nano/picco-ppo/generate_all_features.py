@@ -430,6 +430,14 @@ def generate_zscore_features(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
     logger.info("STEP 5: Z-SCORE FEATURES (WINDOW=20) + INTERACTION")
     logger.info("="*80)
 
+    # Add z-score columns to database if they don't exist
+    for col in ['high_swing_slope_h1_zsarctan', 'low_swing_slope_h1_zsarctan']:
+        try:
+            conn.execute(f"ALTER TABLE master ADD COLUMN {col} DOUBLE")
+            logger.info(f"✅ Added column: {col}")
+        except:
+            logger.info(f"⚠️  Column {col} already exists, will update")
+
     # Calculate training std for both features
     train_end = int(len(df) * 0.7)
 
@@ -451,6 +459,24 @@ def generate_zscore_features(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
     logger.info(f"  Mean: {range_mean:.6f}")
     logger.info(f"  Std: {range_std:.6f}")
 
+    # high_swing_slope_h1
+    logger.info("Calculating fixed std for high_swing_slope_h1...")
+    high_slope_train_data = df['high_swing_slope_h1'].iloc[:train_end].dropna().values
+    high_slope_std = float(np.std(high_slope_train_data))
+    high_slope_mean = float(np.mean(high_slope_train_data))
+    logger.info(f"  Training rows: {len(high_slope_train_data):,}")
+    logger.info(f"  Mean: {high_slope_mean:.6f}")
+    logger.info(f"  Std: {high_slope_std:.6f}")
+
+    # low_swing_slope_h1
+    logger.info("Calculating fixed std for low_swing_slope_h1...")
+    low_slope_train_data = df['low_swing_slope_h1'].iloc[:train_end].dropna().values
+    low_slope_std = float(np.std(low_slope_train_data))
+    low_slope_mean = float(np.mean(low_slope_train_data))
+    logger.info(f"  Training rows: {len(low_slope_train_data):,}")
+    logger.info(f"  Mean: {low_slope_mean:.6f}")
+    logger.info(f"  Std: {low_slope_std:.6f}")
+
     # Calculate z-scores
     logger.info("\nCalculating z-scores with Window=20...")
 
@@ -463,6 +489,16 @@ def generate_zscore_features(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
     z_range = calculate_fixed_std_zscore(df['swing_point_range'].values, range_std, window=20)
     arctan_range = np.arctan(z_range) * 2 / np.pi
     df['swing_point_range_zsarctan'] = arctan_range
+
+    # high_swing_slope_h1_zsarctan
+    z_high_slope = calculate_fixed_std_zscore(df['high_swing_slope_h1'].values, high_slope_std, window=20)
+    arctan_high_slope = np.arctan(z_high_slope) * 2 / np.pi
+    df['high_swing_slope_h1_zsarctan'] = arctan_high_slope
+
+    # low_swing_slope_h1_zsarctan
+    z_low_slope = calculate_fixed_std_zscore(df['low_swing_slope_h1'].values, low_slope_std, window=20)
+    arctan_low_slope = np.arctan(z_low_slope) * 2 / np.pi
+    df['low_swing_slope_h1_zsarctan'] = arctan_low_slope
 
     # combo_geometric (interaction feature using geometric mean)
     logger.info("\nCalculating combo_geometric interaction feature...")
@@ -488,6 +524,22 @@ def generate_zscore_features(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
     logger.info(f"  Range: [{np.min(valid):.4f}, {np.max(valid):.4f}]")
     logger.info(f"  Extremes (|z|>0.8): {np.sum(np.abs(valid) > 0.8):,} ({np.sum(np.abs(valid) > 0.8)/len(valid)*100:.2f}%)")
 
+    logger.info("\n📊 high_swing_slope_h1_zsarctan:")
+    valid = arctan_high_slope[~np.isnan(arctan_high_slope)]
+    logger.info(f"  Valid: {len(valid):,} ({len(valid)/len(df)*100:.1f}%)")
+    logger.info(f"  Mean: {np.mean(valid):.4f}")
+    logger.info(f"  Std: {np.std(valid):.4f}")
+    logger.info(f"  Range: [{np.min(valid):.4f}, {np.max(valid):.4f}]")
+    logger.info(f"  Extremes (|z|>0.8): {np.sum(np.abs(valid) > 0.8):,} ({np.sum(np.abs(valid) > 0.8)/len(valid)*100:.2f}%)")
+
+    logger.info("\n📊 low_swing_slope_h1_zsarctan:")
+    valid = arctan_low_slope[~np.isnan(arctan_low_slope)]
+    logger.info(f"  Valid: {len(valid):,} ({len(valid)/len(df)*100:.1f}%)")
+    logger.info(f"  Mean: {np.mean(valid):.4f}")
+    logger.info(f"  Std: {np.std(valid):.4f}")
+    logger.info(f"  Range: [{np.min(valid):.4f}, {np.max(valid):.4f}]")
+    logger.info(f"  Extremes (|z|>0.8): {np.sum(np.abs(valid) > 0.8):,} ({np.sum(np.abs(valid) > 0.8)/len(valid)*100:.2f}%)")
+
     logger.info("\n📊 combo_geometric (interaction via geometric mean):")
     combo_valid = df['combo_geometric'].values[~np.isnan(df['combo_geometric'].values)]
     logger.info(f"  Valid: {len(combo_valid):,} ({len(combo_valid)/len(df)*100:.1f}%)")
@@ -500,12 +552,15 @@ def generate_zscore_features(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
     # Update database
     logger.info("\nUpdating database...")
     conn.register('zscore_data', df[['bar_index', 'h1_swing_range_position_zsarctan_w20',
-                                     'swing_point_range_zsarctan', 'combo_geometric']])
+                                     'swing_point_range_zsarctan', 'high_swing_slope_h1_zsarctan',
+                                     'low_swing_slope_h1_zsarctan', 'combo_geometric']])
     conn.execute("""
         UPDATE master
         SET
             h1_swing_range_position_zsarctan_w20 = zscore_data.h1_swing_range_position_zsarctan_w20,
             swing_point_range_zsarctan = zscore_data.swing_point_range_zsarctan,
+            high_swing_slope_h1_zsarctan = zscore_data.high_swing_slope_h1_zsarctan,
+            low_swing_slope_h1_zsarctan = zscore_data.low_swing_slope_h1_zsarctan,
             combo_geometric = zscore_data.combo_geometric
         FROM zscore_data
         WHERE master.bar_index = zscore_data.bar_index
@@ -533,6 +588,22 @@ def generate_zscore_features(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
                 'training_mean': range_mean,
                 'description': 'H1 swing range magnitude (swing_high - swing_low)',
                 'zscore_column': 'swing_point_range_zsarctan',
+                'window': 20
+            },
+            'high_swing_slope_h1': {
+                'fixed_std': high_slope_std,
+                'training_rows': len(high_slope_train_data),
+                'training_mean': high_slope_mean,
+                'description': 'Rate of change between consecutive H1 swing highs (pips/bar)',
+                'zscore_column': 'high_swing_slope_h1_zsarctan',
+                'window': 20
+            },
+            'low_swing_slope_h1': {
+                'fixed_std': low_slope_std,
+                'training_rows': len(low_slope_train_data),
+                'training_mean': low_slope_mean,
+                'description': 'Rate of change between consecutive H1 swing lows (pips/bar)',
+                'zscore_column': 'low_swing_slope_h1_zsarctan',
                 'window': 20
             }
         },
@@ -594,7 +665,8 @@ def main():
         logger.info("  3. h1_swing_range_position")
         logger.info("  4. swing_point_range")
         logger.info("  5. high_swing_slope_h1, low_swing_slope_h1")
-        logger.info("  6. h1_swing_range_position_zsarctan_w20, swing_point_range_zsarctan, combo_geometric")
+        logger.info("  6. h1_swing_range_position_zsarctan_w20, swing_point_range_zsarctan")
+        logger.info("     high_swing_slope_h1_zsarctan, low_swing_slope_h1_zsarctan, combo_geometric")
         logger.info(f"\nConfig saved: {CONFIG_PATH}")
 
     except Exception as e:

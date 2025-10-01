@@ -236,6 +236,14 @@ picco-ppo/
   - Detects when H1 range itself is extreme (tight/wide)
   - Fixed std=0.221478 (933K training rows)
   - Extremes (|z|>0.8): 3,237 events (0.24%)
+- **high_swing_slope_h1_zsarctan**:
+  - Detects extreme uptrends/downtrends in swing highs
+  - Fixed std=0.619729 (933K training rows)
+  - Extremes (|z|>0.8): 3,782 events (0.28%)
+- **low_swing_slope_h1_zsarctan**:
+  - Detects extreme uptrends/downtrends in swing lows
+  - Fixed std=1.341183 (933K training rows)
+  - Extremes (|z|>0.8): 1,053 events (0.08%)
 - **combo_geometric** (Interaction Feature):
   - Formula: `sign(r×p) × sqrt(|range_z| × |position_z|)`
   - Geometric mean: penalizes imbalance (small×big < medium×medium)
