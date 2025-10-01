@@ -50,7 +50,7 @@ Tables found: 1
 TABLE: master
 ============================================================
 Row count: 1,333,912
-Column count: 26
+Column count: 28
 
 Full column listing with formulas:
 ------------------------------------------------------------
@@ -83,7 +83,15 @@ Full column listing with formulas:
   23. swing_point_range_zsarctan DOUBLE       arctan((swing_point_range - rolling_mean_20) / fixed_std) * 2/π
                                               Window=20, Fixed std=0.221478 (933,724 training rows)
                                               Detects when H1 range itself is extreme (tight/wide)
-  24. combo_geometric           DOUBLE       sign(r×p) × sqrt(|range_z| × |position_z|)
+  24. high_swing_slope_h1       DOUBLE       (current_h1_swing_high - previous_h1_swing_high) / (time_diff_bars)
+                                              Rate of change between consecutive H1 swing highs (pips/bar)
+                                              Forward-filled from each swing high until next
+                                              Mean: -0.012 pips/bar, Range: [-11.68, +63.00]
+  25. low_swing_slope_h1        DOUBLE       (current_h1_swing_low - previous_h1_swing_low) / (time_diff_bars)
+                                              Rate of change between consecutive H1 swing lows (pips/bar)
+                                              Forward-filled from each swing low until next
+                                              Mean: +0.019 pips/bar, Range: [-91.50, +23.93]
+  26. combo_geometric           DOUBLE       sign(r×p) × sqrt(|range_z| × |position_z|)
                                               Geometric mean interaction: penalizes imbalance, favors balanced extremes
                                               Superior to arithmetic multiply: Avg |corr|=0.077 vs 0.046 (+69%)
                                               Formula: GM = sign(r×p) × sqrt(|r| × |p|) where r=range_z, p=position_z
@@ -92,8 +100,8 @@ Full column listing with formulas:
                                                 Q2 (big range, small pos): Corr=+0.184 (strongest!)
                                                 Q1 (both big): Corr=+0.104
                                                 Q3 (small range, big pos): Corr=-0.062 (reversal signal)
-  25. h1_swing_zscore_arctan    DOUBLE       DEPRECATED - Legacy column, use #22 instead
-  26. h1_swing_range_position_zsarctan DOUBLE DEPRECATED - Legacy column, use #22 instead
+  27. h1_swing_zscore_arctan    DOUBLE       DEPRECATED - Legacy column, use #22 instead
+  28. h1_swing_range_position_zsarctan DOUBLE DEPRECATED - Legacy column, use #22 instead
 
 Data range: 2022-01-02 17:05:00 to 2025-08-06 19:59:00
 Price range: 149.048 to 208.112 (GBPJPY)
@@ -110,6 +118,7 @@ Enhanced Features:
 - Last swing tracking: Enables dynamic SL/TP calculation (M1 and H1 prices now populated)
 - H1 swing range position: Price location within H1 swing range (0.0 = at low, 1.0 = at high)
 - Swing point range: H1 range magnitude (detects consolidation vs expansion)
+- H1 swing slopes: Rate of change between consecutive swing highs/lows (pips/bar)
 - Z-score features (Window=20, Fixed std):
   * h1_swing_range_position_zsarctan_w20: Detects extreme price positions within H1 range
     - Fixed std: 3.421357 (923,116 training rows)
@@ -135,6 +144,11 @@ File size: 168 MB
 ================================================================================
 RECENT CHANGES (2025-09-29 to 2025-09-30):
 ================================================================================
+13. ✅ Added H1 swing slope features (columns 24-25):
+    - high_swing_slope_h1: Rate of change between consecutive H1 swing highs
+    - low_swing_slope_h1: Rate of change between consecutive H1 swing lows
+    - Forward-filled from each swing point until next swing
+    - 100% populated (1,333,879 and 1,333,827 rows respectively)
 1. ✅ Deleted 323 redundant columns (c_* and wst_*) from original master
 2. ✅ Restored master table with proper OHLCV data including 'close' column
 3. ✅ Created and tested HalfTrend indicator implementation

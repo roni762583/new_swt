@@ -312,7 +312,104 @@ def generate_swing_point_range(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame
 
 
 # ============================================================================
-# STEP 5: Z-SCORE FEATURES (WINDOW=20)
+# STEP 5: SWING SLOPES
+# ============================================================================
+
+def generate_swing_slopes(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
+    """Step 5: Calculate swing slope features (rate of change between swings)."""
+    logger.info("\n" + "="*80)
+    logger.info("STEP 5: SWING SLOPES")
+    logger.info("="*80)
+
+    # Add columns to database if they don't exist
+    for col in ['high_swing_slope_h1', 'low_swing_slope_h1']:
+        try:
+            conn.execute(f"ALTER TABLE master ADD COLUMN {col} DOUBLE")
+            logger.info(f"✅ Added column: {col}")
+        except:
+            logger.info(f"⚠️  Column {col} already exists, will update")
+
+    n = len(df)
+
+    # Initialize slope arrays
+    high_swing_slope_h1 = np.full(n, np.nan)
+    low_swing_slope_h1 = np.full(n, np.nan)
+
+    logger.info("Calculating H1 swing slopes...")
+
+    # H1 High Swing Slope (vectorized)
+    h1_high_mask = df['swing_high_h1'].fillna(False).astype(bool)
+    h1_high_indices = np.where(h1_high_mask)[0]
+
+    for i in range(1, len(h1_high_indices)):
+        curr_idx_pos = h1_high_indices[i]
+        prev_idx_pos = h1_high_indices[i-1]
+
+        curr_idx = df.iloc[curr_idx_pos]['bar_index']
+        prev_idx = df.iloc[prev_idx_pos]['bar_index']
+        curr_price = df.iloc[curr_idx_pos]['high']
+        prev_price = df.iloc[prev_idx_pos]['high']
+
+        time_diff = curr_idx - prev_idx
+        price_diff = (curr_price - prev_price) / 0.01  # Pips
+
+        if time_diff > 0:
+            slope = price_diff / time_diff
+            high_swing_slope_h1[curr_idx_pos:] = slope
+
+    # H1 Low Swing Slope (vectorized)
+    h1_low_mask = df['swing_low_h1'].fillna(False).astype(bool)
+    h1_low_indices = np.where(h1_low_mask)[0]
+
+    for i in range(1, len(h1_low_indices)):
+        curr_idx_pos = h1_low_indices[i]
+        prev_idx_pos = h1_low_indices[i-1]
+
+        curr_idx = df.iloc[curr_idx_pos]['bar_index']
+        prev_idx = df.iloc[prev_idx_pos]['bar_index']
+        curr_price = df.iloc[curr_idx_pos]['low']
+        prev_price = df.iloc[prev_idx_pos]['low']
+
+        time_diff = curr_idx - prev_idx
+        price_diff = (curr_price - prev_price) / 0.01
+
+        if time_diff > 0:
+            slope = price_diff / time_diff
+            low_swing_slope_h1[curr_idx_pos:] = slope
+
+    # Add to dataframe
+    df['high_swing_slope_h1'] = high_swing_slope_h1
+    df['low_swing_slope_h1'] = low_swing_slope_h1
+
+    # Statistics
+    for col in ['high_swing_slope_h1', 'low_swing_slope_h1']:
+        valid = df[col].dropna()
+        if len(valid) > 0:
+            logger.info(f"\n📊 {col}:")
+            logger.info(f"  Valid: {len(valid):,} ({len(valid)/len(df)*100:.1f}%)")
+            logger.info(f"  Mean: {valid.mean():+.6f} pips/bar")
+            logger.info(f"  Median: {valid.median():+.6f} pips/bar")
+            logger.info(f"  Std: {valid.std():.6f}")
+            logger.info(f"  Range: [{valid.min():+.4f}, {valid.max():+.4f}]")
+
+    # Update database
+    logger.info("\nUpdating database...")
+    conn.register('slope_data', df[['bar_index', 'high_swing_slope_h1', 'low_swing_slope_h1']])
+    conn.execute("""
+        UPDATE master
+        SET
+            high_swing_slope_h1 = slope_data.high_swing_slope_h1,
+            low_swing_slope_h1 = slope_data.low_swing_slope_h1
+        FROM slope_data
+        WHERE master.bar_index = slope_data.bar_index
+    """)
+    logger.info("✅ Swing slopes updated")
+
+    return df
+
+
+# ============================================================================
+# STEP 6: Z-SCORE FEATURES (WINDOW=20)
 # ============================================================================
 
 def calculate_fixed_std_zscore(data: np.ndarray, fixed_std: float, window: int = 20) -> np.ndarray:
@@ -482,6 +579,7 @@ def main():
         df = generate_last_swing_tracking(conn, df)
         df = generate_h1_swing_range_position(conn, df)
         df = generate_swing_point_range(conn, df)
+        df = generate_swing_slopes(conn, df)
         df = generate_zscore_features(conn, df)
 
         logger.info("\n" + "="*80)
@@ -495,7 +593,8 @@ def main():
         logger.info("     last_swing_low_idx_h1, last_swing_low_price_h1")
         logger.info("  3. h1_swing_range_position")
         logger.info("  4. swing_point_range")
-        logger.info("  5. h1_swing_range_position_zsarctan_w20, swing_point_range_zsarctan, combo_geometric")
+        logger.info("  5. high_swing_slope_h1, low_swing_slope_h1")
+        logger.info("  6. h1_swing_range_position_zsarctan_w20, swing_point_range_zsarctan, combo_geometric")
         logger.info(f"\nConfig saved: {CONFIG_PATH}")
 
     except Exception as e:

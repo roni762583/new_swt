@@ -219,6 +219,14 @@ picco-ppo/
 - **h1_swing_range_position**: Price location within H1 range [0, 1]
 - **swing_point_range**: H1 range magnitude (consolidation detector)
 
+#### Swing Slope Features
+- **high_swing_slope_h1**: Rate of change between consecutive H1 swing highs (pips/bar)
+  - Mean: -0.012 pips/bar, Range: [-11.68, +63.00]
+  - Forward-filled from each swing high until next
+- **low_swing_slope_h1**: Rate of change between consecutive H1 swing lows (pips/bar)
+  - Mean: +0.019 pips/bar, Range: [-91.50, +23.93]
+  - Forward-filled from each swing low until next
+
 #### Z-Score Features (Window=20, Fixed Std)
 - **h1_swing_range_position_zsarctan_w20**:
   - Detects extreme price positions within H1 range
@@ -270,8 +278,9 @@ Regenerates all features in correct dependency order:
 2. Last swing tracking (indices + prices)
 3. H1 swing range position
 4. Swing point range
-5. Z-score features with Window=20
-6. combo_geometric interaction feature
+5. H1 swing slopes (high and low)
+6. Z-score features with Window=20
+7. combo_geometric interaction feature
 
 Runtime: ~7.5 minutes for 1.3M bars
 
