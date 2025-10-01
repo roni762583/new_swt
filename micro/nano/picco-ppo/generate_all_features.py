@@ -131,102 +131,166 @@ def generate_swing_points(conn: duckdb.DuckDBPyConnection):
 # ============================================================================
 
 def generate_last_swing_tracking(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
-    """Step 2: Generate last swing tracking (indices + prices)."""
+    """Step 2: Generate last AND prev swing tracking (indices + values for 16 columns total)."""
     logger.info("\n" + "="*80)
-    logger.info("STEP 2: LAST SWING TRACKING")
+    logger.info("STEP 2: LAST & PREV SWING TRACKING (16 columns)")
     logger.info("="*80)
 
     n = len(df)
 
-    # Initialize tracking arrays
-    last_swing_high_idx_m1 = np.full(n, -1, dtype=np.int64)
-    last_swing_high_price_m1 = np.full(n, np.nan)
-    last_swing_low_idx_m1 = np.full(n, -1, dtype=np.int64)
-    last_swing_low_price_m1 = np.full(n, np.nan)
+    # Initialize tracking arrays (last = most recent, prev = previous to last)
+    last_m1_hsp_idx = np.full(n, -1, dtype=np.int64)
+    last_m1_hsp_val = np.full(n, np.nan)
+    prev_m1_hsp_idx = np.full(n, -1, dtype=np.int64)
+    prev_m1_hsp_val = np.full(n, np.nan)
 
-    last_swing_high_idx_h1 = np.full(n, -1, dtype=np.int64)
-    last_swing_high_price_h1 = np.full(n, np.nan)
-    last_swing_low_idx_h1 = np.full(n, -1, dtype=np.int64)
-    last_swing_low_price_h1 = np.full(n, np.nan)
+    last_m1_lsp_idx = np.full(n, -1, dtype=np.int64)
+    last_m1_lsp_val = np.full(n, np.nan)
+    prev_m1_lsp_idx = np.full(n, -1, dtype=np.int64)
+    prev_m1_lsp_val = np.full(n, np.nan)
 
-    # Track M1 swings
-    logger.info("Tracking M1 swings...")
+    last_h1_hsp_idx = np.full(n, -1, dtype=np.int64)
+    last_h1_hsp_val = np.full(n, np.nan)
+    prev_h1_hsp_idx = np.full(n, -1, dtype=np.int64)
+    prev_h1_hsp_val = np.full(n, np.nan)
+
+    last_h1_lsp_idx = np.full(n, -1, dtype=np.int64)
+    last_h1_lsp_val = np.full(n, np.nan)
+    prev_h1_lsp_idx = np.full(n, -1, dtype=np.int64)
+    prev_h1_lsp_val = np.full(n, np.nan)
+
+    # Track M1 swings (last and prev)
+    logger.info("Tracking M1 swings (last and prev)...")
     last_high_idx = -1
     last_high_price = np.nan
+    prev_high_idx = -1
+    prev_high_price = np.nan
+
     last_low_idx = -1
     last_low_price = np.nan
+    prev_low_idx = -1
+    prev_low_price = np.nan
 
     for i in range(n):
         if df.iloc[i]['swing_high_m1']:
+            # New high swing: prev becomes last, last becomes new
+            prev_high_idx = last_high_idx
+            prev_high_price = last_high_price
             last_high_idx = df.iloc[i]['bar_index']
             last_high_price = df.iloc[i]['high']
 
         if df.iloc[i]['swing_low_m1']:
+            # New low swing: prev becomes last, last becomes new
+            prev_low_idx = last_low_idx
+            prev_low_price = last_low_price
             last_low_idx = df.iloc[i]['bar_index']
             last_low_price = df.iloc[i]['low']
 
-        last_swing_high_idx_m1[i] = last_high_idx
-        last_swing_high_price_m1[i] = last_high_price
-        last_swing_low_idx_m1[i] = last_low_idx
-        last_swing_low_price_m1[i] = last_low_price
+        last_m1_hsp_idx[i] = last_high_idx
+        last_m1_hsp_val[i] = last_high_price
+        prev_m1_hsp_idx[i] = prev_high_idx
+        prev_m1_hsp_val[i] = prev_high_price
+
+        last_m1_lsp_idx[i] = last_low_idx
+        last_m1_lsp_val[i] = last_low_price
+        prev_m1_lsp_idx[i] = prev_low_idx
+        prev_m1_lsp_val[i] = prev_low_price
 
         if (i + 1) % 100000 == 0:
-            logger.info(f"  Processed {i+1:,}/{n:,} rows")
+            logger.info(f"  M1: Processed {i+1:,}/{n:,} rows")
 
-    # Track H1 swings
-    logger.info("Tracking H1 swings...")
+    # Track H1 swings (last and prev)
+    logger.info("Tracking H1 swings (last and prev)...")
     last_high_idx = -1
     last_high_price = np.nan
+    prev_high_idx = -1
+    prev_high_price = np.nan
+
     last_low_idx = -1
     last_low_price = np.nan
+    prev_low_idx = -1
+    prev_low_price = np.nan
 
     for i in range(n):
         if df.iloc[i]['swing_high_h1']:
+            # New high swing: prev becomes last, last becomes new
+            prev_high_idx = last_high_idx
+            prev_high_price = last_high_price
             last_high_idx = df.iloc[i]['bar_index']
             last_high_price = df.iloc[i]['high']
 
         if df.iloc[i]['swing_low_h1']:
+            # New low swing: prev becomes last, last becomes new
+            prev_low_idx = last_low_idx
+            prev_low_price = last_low_price
             last_low_idx = df.iloc[i]['bar_index']
             last_low_price = df.iloc[i]['low']
 
-        last_swing_high_idx_h1[i] = last_high_idx
-        last_swing_high_price_h1[i] = last_high_price
-        last_swing_low_idx_h1[i] = last_low_idx
-        last_swing_low_price_h1[i] = last_low_price
+        last_h1_hsp_idx[i] = last_high_idx
+        last_h1_hsp_val[i] = last_high_price
+        prev_h1_hsp_idx[i] = prev_high_idx
+        prev_h1_hsp_val[i] = prev_high_price
+
+        last_h1_lsp_idx[i] = last_low_idx
+        last_h1_lsp_val[i] = last_low_price
+        prev_h1_lsp_idx[i] = prev_low_idx
+        prev_h1_lsp_val[i] = prev_low_price
 
         if (i + 1) % 100000 == 0:
-            logger.info(f"  Processed {i+1:,}/{n:,} rows")
+            logger.info(f"  H1: Processed {i+1:,}/{n:,} rows")
 
-    # Add to dataframe
-    df['last_swing_high_idx_m1'] = last_swing_high_idx_m1
-    df['last_swing_high_price_m1'] = last_swing_high_price_m1
-    df['last_swing_low_idx_m1'] = last_swing_low_idx_m1
-    df['last_swing_low_price_m1'] = last_swing_low_price_m1
+    # Add to dataframe (16 columns total)
+    df['last_m1_hsp_idx'] = last_m1_hsp_idx
+    df['last_m1_hsp_val'] = last_m1_hsp_val
+    df['prev_m1_hsp_idx'] = prev_m1_hsp_idx
+    df['prev_m1_hsp_val'] = prev_m1_hsp_val
 
-    df['last_swing_high_idx_h1'] = last_swing_high_idx_h1
-    df['last_swing_high_price_h1'] = last_swing_high_price_h1
-    df['last_swing_low_idx_h1'] = last_swing_low_idx_h1
-    df['last_swing_low_price_h1'] = last_swing_low_price_h1
+    df['last_m1_lsp_idx'] = last_m1_lsp_idx
+    df['last_m1_lsp_val'] = last_m1_lsp_val
+    df['prev_m1_lsp_idx'] = prev_m1_lsp_idx
+    df['prev_m1_lsp_val'] = prev_m1_lsp_val
 
-    # Update database
-    logger.info("Updating database...")
+    df['last_h1_hsp_idx'] = last_h1_hsp_idx
+    df['last_h1_hsp_val'] = last_h1_hsp_val
+    df['prev_h1_hsp_idx'] = prev_h1_hsp_idx
+    df['prev_h1_hsp_val'] = prev_h1_hsp_val
+
+    df['last_h1_lsp_idx'] = last_h1_lsp_idx
+    df['last_h1_lsp_val'] = last_h1_lsp_val
+    df['prev_h1_lsp_idx'] = prev_h1_lsp_idx
+    df['prev_h1_lsp_val'] = prev_h1_lsp_val
+
+    # Update database (all 16 columns)
+    logger.info("Updating database with 16 swing tracking columns...")
     conn.register('tracking_data', df[['bar_index',
-                                       'last_swing_high_idx_m1', 'last_swing_high_price_m1',
-                                       'last_swing_low_idx_m1', 'last_swing_low_price_m1',
-                                       'last_swing_high_idx_h1', 'last_swing_high_price_h1',
-                                       'last_swing_low_idx_h1', 'last_swing_low_price_h1']])
+                                       'last_m1_hsp_idx', 'last_m1_hsp_val',
+                                       'prev_m1_hsp_idx', 'prev_m1_hsp_val',
+                                       'last_m1_lsp_idx', 'last_m1_lsp_val',
+                                       'prev_m1_lsp_idx', 'prev_m1_lsp_val',
+                                       'last_h1_hsp_idx', 'last_h1_hsp_val',
+                                       'prev_h1_hsp_idx', 'prev_h1_hsp_val',
+                                       'last_h1_lsp_idx', 'last_h1_lsp_val',
+                                       'prev_h1_lsp_idx', 'prev_h1_lsp_val']])
 
     conn.execute("""
         UPDATE master
         SET
-            last_swing_high_idx_m1 = tracking_data.last_swing_high_idx_m1,
-            last_swing_high_price_m1 = tracking_data.last_swing_high_price_m1,
-            last_swing_low_idx_m1 = tracking_data.last_swing_low_idx_m1,
-            last_swing_low_price_m1 = tracking_data.last_swing_low_price_m1,
-            last_swing_high_idx_h1 = tracking_data.last_swing_high_idx_h1,
-            last_swing_high_price_h1 = tracking_data.last_swing_high_price_h1,
-            last_swing_low_idx_h1 = tracking_data.last_swing_low_idx_h1,
-            last_swing_low_price_h1 = tracking_data.last_swing_low_price_h1
+            last_m1_hsp_idx = tracking_data.last_m1_hsp_idx,
+            last_m1_hsp_val = tracking_data.last_m1_hsp_val,
+            prev_m1_hsp_idx = tracking_data.prev_m1_hsp_idx,
+            prev_m1_hsp_val = tracking_data.prev_m1_hsp_val,
+            last_m1_lsp_idx = tracking_data.last_m1_lsp_idx,
+            last_m1_lsp_val = tracking_data.last_m1_lsp_val,
+            prev_m1_lsp_idx = tracking_data.prev_m1_lsp_idx,
+            prev_m1_lsp_val = tracking_data.prev_m1_lsp_val,
+            last_h1_hsp_idx = tracking_data.last_h1_hsp_idx,
+            last_h1_hsp_val = tracking_data.last_h1_hsp_val,
+            prev_h1_hsp_idx = tracking_data.prev_h1_hsp_idx,
+            prev_h1_hsp_val = tracking_data.prev_h1_hsp_val,
+            last_h1_lsp_idx = tracking_data.last_h1_lsp_idx,
+            last_h1_lsp_val = tracking_data.last_h1_lsp_val,
+            prev_h1_lsp_idx = tracking_data.prev_h1_lsp_idx,
+            prev_h1_lsp_val = tracking_data.prev_h1_lsp_val
         FROM tracking_data
         WHERE master.bar_index = tracking_data.bar_index
     """)
@@ -248,12 +312,12 @@ def generate_h1_swing_range_position(conn: duckdb.DuckDBPyConnection, df: pd.Dat
     logger.info("Calculating position within H1 swing range...")
 
     # Calculate: (close - last_h1_low) / (last_h1_high - last_h1_low)
-    swing_range = df['last_swing_high_price_h1'] - df['last_swing_low_price_h1']
+    swing_range = df['last_h1_hsp_val'] - df['last_h1_lsp_val']
     valid_range = swing_range > 0
 
     h1_swing_range_position = np.full(len(df), np.nan)
     h1_swing_range_position[valid_range] = (
-        (df['close'].values[valid_range] - df['last_swing_low_price_h1'].values[valid_range]) /
+        (df['close'].values[valid_range] - df['last_h1_lsp_val'].values[valid_range]) /
         swing_range[valid_range]
     )
 
@@ -290,7 +354,7 @@ def generate_swing_point_range(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame
 
     logger.info("Calculating swing point range...")
 
-    df['swing_point_range'] = df['last_swing_high_price_h1'] - df['last_swing_low_price_h1']
+    df['swing_point_range'] = df['last_h1_hsp_val'] - df['last_h1_lsp_val']
 
     valid_count = np.sum(~np.isnan(df['swing_point_range']))
     logger.info(f"  Valid ranges: {valid_count:,} ({valid_count/len(df)*100:.1f}%)")
@@ -316,13 +380,13 @@ def generate_swing_point_range(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame
 # ============================================================================
 
 def generate_swing_slopes(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
-    """Step 5: Calculate swing slope features (rate of change between swings)."""
+    """Step 5: Calculate swing slope features (rate of change between swings) for M1 and H1."""
     logger.info("\n" + "="*80)
-    logger.info("STEP 5: SWING SLOPES")
+    logger.info("STEP 5: SWING SLOPES (M1 and H1)")
     logger.info("="*80)
 
     # Add columns to database if they don't exist
-    for col in ['high_swing_slope_h1', 'low_swing_slope_h1']:
+    for col in ['high_swing_slope_m1', 'low_swing_slope_m1', 'high_swing_slope_h1', 'low_swing_slope_h1']:
         try:
             conn.execute(f"ALTER TABLE master ADD COLUMN {col} DOUBLE")
             logger.info(f"✅ Added column: {col}")
@@ -332,8 +396,53 @@ def generate_swing_slopes(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
     n = len(df)
 
     # Initialize slope arrays
+    high_swing_slope_m1 = np.full(n, np.nan)
+    low_swing_slope_m1 = np.full(n, np.nan)
     high_swing_slope_h1 = np.full(n, np.nan)
     low_swing_slope_h1 = np.full(n, np.nan)
+
+    # Calculate M1 swing slopes
+    logger.info("Calculating M1 swing slopes...")
+
+    # M1 High Swing Slope
+    m1_high_mask = df['swing_high_m1'].fillna(False).astype(bool)
+    m1_high_indices = np.where(m1_high_mask)[0]
+
+    for i in range(1, len(m1_high_indices)):
+        curr_idx_pos = m1_high_indices[i]
+        prev_idx_pos = m1_high_indices[i-1]
+
+        curr_idx = df.iloc[curr_idx_pos]['bar_index']
+        prev_idx = df.iloc[prev_idx_pos]['bar_index']
+        curr_price = df.iloc[curr_idx_pos]['high']
+        prev_price = df.iloc[prev_idx_pos]['high']
+
+        time_diff = curr_idx - prev_idx
+        price_diff = (curr_price - prev_price) / 0.01  # Pips
+
+        if time_diff > 0:
+            slope = price_diff / time_diff
+            high_swing_slope_m1[curr_idx_pos:] = slope
+
+    # M1 Low Swing Slope
+    m1_low_mask = df['swing_low_m1'].fillna(False).astype(bool)
+    m1_low_indices = np.where(m1_low_mask)[0]
+
+    for i in range(1, len(m1_low_indices)):
+        curr_idx_pos = m1_low_indices[i]
+        prev_idx_pos = m1_low_indices[i-1]
+
+        curr_idx = df.iloc[curr_idx_pos]['bar_index']
+        prev_idx = df.iloc[prev_idx_pos]['bar_index']
+        curr_price = df.iloc[curr_idx_pos]['low']
+        prev_price = df.iloc[prev_idx_pos]['low']
+
+        time_diff = curr_idx - prev_idx
+        price_diff = (curr_price - prev_price) / 0.01
+
+        if time_diff > 0:
+            slope = price_diff / time_diff
+            low_swing_slope_m1[curr_idx_pos:] = slope
 
     logger.info("Calculating H1 swing slopes...")
 
@@ -378,11 +487,13 @@ def generate_swing_slopes(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
             low_swing_slope_h1[curr_idx_pos:] = slope
 
     # Add to dataframe
+    df['high_swing_slope_m1'] = high_swing_slope_m1
+    df['low_swing_slope_m1'] = low_swing_slope_m1
     df['high_swing_slope_h1'] = high_swing_slope_h1
     df['low_swing_slope_h1'] = low_swing_slope_h1
 
     # Statistics
-    for col in ['high_swing_slope_h1', 'low_swing_slope_h1']:
+    for col in ['high_swing_slope_m1', 'low_swing_slope_m1', 'high_swing_slope_h1', 'low_swing_slope_h1']:
         valid = df[col].dropna()
         if len(valid) > 0:
             logger.info(f"\n📊 {col}:")
@@ -394,16 +505,19 @@ def generate_swing_slopes(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
 
     # Update database
     logger.info("\nUpdating database...")
-    conn.register('slope_data', df[['bar_index', 'high_swing_slope_h1', 'low_swing_slope_h1']])
+    conn.register('slope_data', df[['bar_index', 'high_swing_slope_m1', 'low_swing_slope_m1',
+                                     'high_swing_slope_h1', 'low_swing_slope_h1']])
     conn.execute("""
         UPDATE master
         SET
+            high_swing_slope_m1 = slope_data.high_swing_slope_m1,
+            low_swing_slope_m1 = slope_data.low_swing_slope_m1,
             high_swing_slope_h1 = slope_data.high_swing_slope_h1,
             low_swing_slope_h1 = slope_data.low_swing_slope_h1
         FROM slope_data
         WHERE master.bar_index = slope_data.bar_index
     """)
-    logger.info("✅ Swing slopes updated")
+    logger.info("✅ Swing slopes (M1 and H1) updated")
 
     return df
 
@@ -485,10 +599,10 @@ def generate_zscore_features(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
     arctan_position = np.arctan(z_position) * 2 / np.pi
     df['h1_swing_range_position_zsarctan_w20'] = arctan_position
 
-    # swing_point_range_zsarctan
+    # swing_point_range_zsarctan_w20
     z_range = calculate_fixed_std_zscore(df['swing_point_range'].values, range_std, window=20)
     arctan_range = np.arctan(z_range) * 2 / np.pi
-    df['swing_point_range_zsarctan'] = arctan_range
+    df['swing_point_range_zsarctan_w20'] = arctan_range
 
     # high_swing_slope_h1_zsarctan
     z_high_slope = calculate_fixed_std_zscore(df['high_swing_slope_h1'].values, high_slope_std, window=20)
@@ -502,9 +616,9 @@ def generate_zscore_features(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
 
     # combo_geometric (interaction feature using geometric mean)
     logger.info("\nCalculating combo_geometric interaction feature...")
-    prod = df['swing_point_range_zsarctan'] * df['h1_swing_range_position_zsarctan_w20']
+    prod = df['swing_point_range_zsarctan_w20'] * df['h1_swing_range_position_zsarctan_w20']
     df['combo_geometric'] = np.sign(prod) * np.sqrt(
-        np.abs(df['swing_point_range_zsarctan']) * np.abs(df['h1_swing_range_position_zsarctan_w20'])
+        np.abs(df['swing_point_range_zsarctan_w20']) * np.abs(df['h1_swing_range_position_zsarctan_w20'])
     )
 
     # Statistics
@@ -516,7 +630,7 @@ def generate_zscore_features(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
     logger.info(f"  Range: [{np.min(valid):.4f}, {np.max(valid):.4f}]")
     logger.info(f"  Extremes (|z|>0.8): {np.sum(np.abs(valid) > 0.8):,} ({np.sum(np.abs(valid) > 0.8)/len(valid)*100:.2f}%)")
 
-    logger.info("\n📊 swing_point_range_zsarctan:")
+    logger.info("\n📊 swing_point_range_zsarctan_w20:")
     valid = arctan_range[~np.isnan(arctan_range)]
     logger.info(f"  Valid: {len(valid):,} ({len(valid)/len(df)*100:.1f}%)")
     logger.info(f"  Mean: {np.mean(valid):.4f}")
@@ -552,13 +666,13 @@ def generate_zscore_features(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
     # Update database
     logger.info("\nUpdating database...")
     conn.register('zscore_data', df[['bar_index', 'h1_swing_range_position_zsarctan_w20',
-                                     'swing_point_range_zsarctan', 'high_swing_slope_h1_zsarctan',
+                                     'swing_point_range_zsarctan_w20', 'high_swing_slope_h1_zsarctan',
                                      'low_swing_slope_h1_zsarctan', 'combo_geometric']])
     conn.execute("""
         UPDATE master
         SET
             h1_swing_range_position_zsarctan_w20 = zscore_data.h1_swing_range_position_zsarctan_w20,
-            swing_point_range_zsarctan = zscore_data.swing_point_range_zsarctan,
+            swing_point_range_zsarctan_w20 = zscore_data.swing_point_range_zsarctan_w20,
             high_swing_slope_h1_zsarctan = zscore_data.high_swing_slope_h1_zsarctan,
             low_swing_slope_h1_zsarctan = zscore_data.low_swing_slope_h1_zsarctan,
             combo_geometric = zscore_data.combo_geometric
@@ -587,7 +701,7 @@ def generate_zscore_features(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
                 'training_rows': len(range_train_data),
                 'training_mean': range_mean,
                 'description': 'H1 swing range magnitude (swing_high - swing_low)',
-                'zscore_column': 'swing_point_range_zsarctan',
+                'zscore_column': 'swing_point_range_zsarctan_w20',
                 'window': 20
             },
             'high_swing_slope_h1': {
@@ -623,6 +737,178 @@ def generate_zscore_features(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
 
 
 # ============================================================================
+# STEP 7: H1 TREND SLOPE (Market Structure Based)
+# ============================================================================
+
+def generate_h1_trend_slope(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
+    """Step 7: Generate h1_trend_slope based on market structure (HHHL, LHLL, divergence)."""
+    logger.info("\n" + "="*80)
+    logger.info("STEP 7: H1 TREND SLOPE (Market Structure Based)")
+    logger.info("="*80)
+
+    # Add column if doesn't exist
+    try:
+        conn.execute("ALTER TABLE master ADD COLUMN h1_trend_slope DOUBLE")
+        logger.info("✅ Added column: h1_trend_slope")
+    except:
+        logger.info("⚠️  Column h1_trend_slope already exists, will update")
+
+    logger.info("Calculating h1_trend_slope based on market structure...")
+
+    # Get current and previous swing values
+    last_hsp = df['last_h1_hsp_val'].values
+    prev_hsp = df['prev_h1_hsp_val'].values
+    last_lsp = df['last_h1_lsp_val'].values
+    prev_lsp = df['prev_h1_lsp_val'].values
+
+    # Get slope z-scores
+    high_slope_z = df['high_swing_slope_h1_zsarctan'].values
+    low_slope_z = df['low_swing_slope_h1_zsarctan'].values
+
+    # Initialize output
+    h1_trend_slope = np.full(len(df), np.nan)
+
+    # Classify market structure
+    higher_highs = last_hsp > prev_hsp
+    higher_lows = last_lsp > prev_lsp
+    lower_highs = last_hsp < prev_hsp
+    lower_lows = last_lsp < prev_lsp
+
+    # HHHL: Higher Highs and Higher Lows (uptrend) -> use low_swing_slope
+    hhhl_mask = higher_highs & higher_lows
+    h1_trend_slope[hhhl_mask] = low_slope_z[hhhl_mask]
+
+    # LHLL: Lower Highs and Lower Lows (downtrend) -> use high_swing_slope
+    lhll_mask = lower_highs & lower_lows
+    h1_trend_slope[lhll_mask] = high_slope_z[lhll_mask]
+
+    # Divergence (HHLL or LHHL) -> use average
+    hhll_mask = higher_highs & lower_lows
+    lhhl_mask = lower_highs & higher_lows
+    divergence_mask = hhll_mask | lhhl_mask
+    h1_trend_slope[divergence_mask] = (high_slope_z[divergence_mask] + low_slope_z[divergence_mask]) / 2.0
+
+    df['h1_trend_slope'] = h1_trend_slope
+
+    # Statistics
+    valid = h1_trend_slope[~np.isnan(h1_trend_slope)]
+    hhhl_count = np.sum(hhhl_mask)
+    lhll_count = np.sum(lhll_mask)
+    divergence_count = np.sum(divergence_mask)
+
+    logger.info(f"\n📊 Market Structure Distribution:")
+    logger.info(f"  HHHL (uptrend): {hhhl_count:,} ({hhhl_count/len(df)*100:.1f}%)")
+    logger.info(f"  LHLL (downtrend): {lhll_count:,} ({lhll_count/len(df)*100:.1f}%)")
+    logger.info(f"  Divergence (HHLL/LHHL): {divergence_count:,} ({divergence_count/len(df)*100:.1f}%)")
+
+    logger.info(f"\n📊 h1_trend_slope:")
+    logger.info(f"  Valid: {len(valid):,} ({len(valid)/len(df)*100:.1f}%)")
+    logger.info(f"  Mean: {np.mean(valid):.6f}")
+    logger.info(f"  Std: {np.std(valid):.6f}")
+    logger.info(f"  Range: [{np.min(valid):.4f}, {np.max(valid):.4f}]")
+    logger.info(f"  Extremes (|z|>0.5): {np.sum(np.abs(valid) > 0.5):,} ({np.sum(np.abs(valid) > 0.5)/len(valid)*100:.2f}%)")
+
+    # Update database
+    logger.info("\nUpdating database...")
+    conn.register('trend_slope_data', df[['bar_index', 'h1_trend_slope']])
+    conn.execute("""
+        UPDATE master
+        SET h1_trend_slope = trend_slope_data.h1_trend_slope
+        FROM trend_slope_data
+        WHERE master.bar_index = trend_slope_data.bar_index
+    """)
+    logger.info("✅ h1_trend_slope updated")
+
+    return df
+
+
+# ============================================================================
+# STEP 8: M1 TREND SLOPE (Market Structure Based)
+# ============================================================================
+
+def generate_m1_trend_slope(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
+    """Step 8: Generate m1_trend_slope based on market structure (HHHL, LHLL, divergence)."""
+    logger.info("\n" + "="*80)
+    logger.info("STEP 8: M1 TREND SLOPE (Market Structure Based)")
+    logger.info("="*80)
+
+    # Add column if doesn't exist
+    try:
+        conn.execute("ALTER TABLE master ADD COLUMN m1_trend_slope DOUBLE")
+        logger.info("✅ Added column: m1_trend_slope")
+    except:
+        logger.info("⚠️  Column m1_trend_slope already exists, will update")
+
+    logger.info("Calculating m1_trend_slope based on market structure...")
+
+    # Get current and previous swing values
+    last_hsp = df['last_m1_hsp_val'].values
+    prev_hsp = df['prev_m1_hsp_val'].values
+    last_lsp = df['last_m1_lsp_val'].values
+    prev_lsp = df['prev_m1_lsp_val'].values
+
+    # Get slope values (raw, not z-scores since M1 slopes don't have z-scores yet)
+    high_slope = df['high_swing_slope_m1'].values
+    low_slope = df['low_swing_slope_m1'].values
+
+    # Initialize output
+    m1_trend_slope = np.full(len(df), np.nan)
+
+    # Classify market structure
+    higher_highs = last_hsp > prev_hsp
+    higher_lows = last_lsp > prev_lsp
+    lower_highs = last_hsp < prev_hsp
+    lower_lows = last_lsp < prev_lsp
+
+    # HHHL: Higher Highs and Higher Lows (uptrend) -> use low_swing_slope
+    hhhl_mask = higher_highs & higher_lows
+    m1_trend_slope[hhhl_mask] = low_slope[hhhl_mask]
+
+    # LHLL: Lower Highs and Lower Lows (downtrend) -> use high_swing_slope
+    lhll_mask = lower_highs & lower_lows
+    m1_trend_slope[lhll_mask] = high_slope[lhll_mask]
+
+    # Divergence (HHLL or LHHL) -> use average
+    hhll_mask = higher_highs & lower_lows
+    lhhl_mask = lower_highs & higher_lows
+    divergence_mask = hhll_mask | lhhl_mask
+    m1_trend_slope[divergence_mask] = (high_slope[divergence_mask] + low_slope[divergence_mask]) / 2.0
+
+    df['m1_trend_slope'] = m1_trend_slope
+
+    # Statistics
+    valid = m1_trend_slope[~np.isnan(m1_trend_slope)]
+    hhhl_count = np.sum(hhhl_mask)
+    lhll_count = np.sum(lhll_mask)
+    divergence_count = np.sum(divergence_mask)
+
+    logger.info(f"\n📊 M1 Market Structure Distribution:")
+    logger.info(f"  HHHL (uptrend): {hhhl_count:,} ({hhhl_count/len(df)*100:.1f}%)")
+    logger.info(f"  LHLL (downtrend): {lhll_count:,} ({lhll_count/len(df)*100:.1f}%)")
+    logger.info(f"  Divergence (HHLL/LHHL): {divergence_count:,} ({divergence_count/len(df)*100:.1f}%)")
+
+    logger.info(f"\n📊 m1_trend_slope:")
+    logger.info(f"  Valid: {len(valid):,} ({len(valid)/len(df)*100:.1f}%)")
+    logger.info(f"  Mean: {np.mean(valid):.6f} pips/bar")
+    logger.info(f"  Std: {np.std(valid):.6f}")
+    logger.info(f"  Range: [{np.min(valid):.4f}, {np.max(valid):.4f}]")
+    logger.info(f"  Extremes (|slope|>0.5): {np.sum(np.abs(valid) > 0.5):,} ({np.sum(np.abs(valid) > 0.5)/len(valid)*100:.2f}%)")
+
+    # Update database
+    logger.info("\nUpdating database...")
+    conn.register('m1_trend_slope_data', df[['bar_index', 'm1_trend_slope']])
+    conn.execute("""
+        UPDATE master
+        SET m1_trend_slope = m1_trend_slope_data.m1_trend_slope
+        FROM m1_trend_slope_data
+        WHERE master.bar_index = m1_trend_slope_data.bar_index
+    """)
+    logger.info("✅ m1_trend_slope updated")
+
+    return df
+
+
+# ============================================================================
 # MAIN
 # ============================================================================
 
@@ -652,21 +938,27 @@ def main():
         df = generate_swing_point_range(conn, df)
         df = generate_swing_slopes(conn, df)
         df = generate_zscore_features(conn, df)
+        df = generate_h1_trend_slope(conn, df)
+        df = generate_m1_trend_slope(conn, df)
 
         logger.info("\n" + "="*80)
         logger.info("✅ ALL FEATURES GENERATED SUCCESSFULLY")
         logger.info("="*80)
         logger.info("\nGenerated columns:")
         logger.info("  1. swing_high_m1, swing_low_m1, swing_high_h1, swing_low_h1")
-        logger.info("  2. last_swing_high_idx_m1, last_swing_high_price_m1")
-        logger.info("     last_swing_low_idx_m1, last_swing_low_price_m1")
-        logger.info("     last_swing_high_idx_h1, last_swing_high_price_h1")
-        logger.info("     last_swing_low_idx_h1, last_swing_low_price_h1")
-        logger.info("  3. h1_swing_range_position")
-        logger.info("  4. swing_point_range")
-        logger.info("  5. high_swing_slope_h1, low_swing_slope_h1")
-        logger.info("  6. h1_swing_range_position_zsarctan_w20, swing_point_range_zsarctan")
+        logger.info("  2. M1 Swing Points (8 columns):")
+        logger.info("     last_m1_hsp_idx, last_m1_hsp_val, prev_m1_hsp_idx, prev_m1_hsp_val")
+        logger.info("     last_m1_lsp_idx, last_m1_lsp_val, prev_m1_lsp_idx, prev_m1_lsp_val")
+        logger.info("  3. H1 Swing Points (8 columns):")
+        logger.info("     last_h1_hsp_idx, last_h1_hsp_val, prev_h1_hsp_idx, prev_h1_hsp_val")
+        logger.info("     last_h1_lsp_idx, last_h1_lsp_val, prev_h1_lsp_idx, prev_h1_lsp_val")
+        logger.info("  4. h1_swing_range_position")
+        logger.info("  5. swing_point_range")
+        logger.info("  6. high_swing_slope_m1, low_swing_slope_m1, high_swing_slope_h1, low_swing_slope_h1")
+        logger.info("  7. h1_swing_range_position_zsarctan_w20, swing_point_range_zsarctan_w20")
         logger.info("     high_swing_slope_h1_zsarctan, low_swing_slope_h1_zsarctan, combo_geometric")
+        logger.info("  8. h1_trend_slope (H1 market structure based: HHHL/LHLL/divergence)")
+        logger.info("  9. m1_trend_slope (M1 market structure based: HHHL/LHLL/divergence)")
         logger.info(f"\nConfig saved: {CONFIG_PATH}")
 
     except Exception as e:
