@@ -4,11 +4,18 @@ MASTER FEATURE GENERATION SCRIPT
 Consolidates all feature generation for master.duckdb table.
 
 Execution order:
-1. Swing point detection (M1 and H1)
-2. Last swing tracking (indices + prices)
-3. H1 swing range position
-4. Swing point range (H1 high - H1 low)
-5. Z-score features with Window=20
+1. ZigZag indicator (30 pips minimum)
+2. Swing point detection (M1 and H1)
+3. Last swing tracking (indices + prices)
+4. H1 swing range position
+5. Swing point range (H1 high - H1 low)
+6. Swing slopes (M1 and H1)
+7. Z-score features with Window=20
+8. H1 trend slope
+9. Pretrain action labels (from ZigZag)
+10. M1 trend slope
+11. RSI extreme
+12. BB position
 
 All features generated from OHLCV data in correct dependency order.
 """
@@ -28,6 +35,162 @@ logger = logging.getLogger(__name__)
 # Paths
 DB_PATH = Path("/home/aharon/projects/new_swt/micro/nano/picco-ppo/master.duckdb")
 CONFIG_PATH = Path("/home/aharon/projects/new_swt/micro/nano/picco-ppo/feature_zscore_config.json")
+
+# Constants
+MIN_ZIGZAG_SWING = 0.30  # 30 pips for GBPJPY
+
+
+# ============================================================================
+# STEP 0: ZIGZAG INDICATOR
+# ============================================================================
+
+def calculate_zigzag(highs: np.ndarray, lows: np.ndarray, min_swing: float):
+    """
+    Calculate ZigZag indicator with minimum swing threshold.
+
+    Args:
+        highs: Array of high prices
+        lows: Array of low prices
+        min_swing: Minimum swing size in price units (0.30 = 30 pips for GBPJPY)
+
+    Returns:
+        pivots: Array of pivot prices (NaN for non-pivots)
+        directions: Array of trend direction (+1 up, -1 down, 0 undefined)
+        is_pivot: Boolean array marking pivot points
+    """
+    n = len(highs)
+    pivots = np.full(n, np.nan)
+    directions = np.zeros(n, dtype=np.int8)
+    is_pivot = np.zeros(n, dtype=bool)
+
+    # Find first pivot
+    last_pivot_idx = 0
+    last_pivot_price = highs[0]
+    last_pivot_type = 1  # 1=high, -1=low
+
+    i = 1
+    while i < n:
+        current_high = highs[i]
+        current_low = lows[i]
+
+        if last_pivot_type == 1:  # Last pivot was a high, looking for low
+            potential_swing = last_pivot_price - current_low
+            if potential_swing >= min_swing:
+                # Found significant low
+                pivots[i] = current_low
+                is_pivot[i] = True
+                directions[last_pivot_idx:i+1] = -1  # Downtrend
+                last_pivot_idx = i
+                last_pivot_price = current_low
+                last_pivot_type = -1
+
+        else:  # Last pivot was a low, looking for high
+            potential_swing = current_high - last_pivot_price
+            if potential_swing >= min_swing:
+                # Found significant high
+                pivots[i] = current_high
+                is_pivot[i] = True
+                directions[last_pivot_idx:i+1] = 1  # Uptrend
+                last_pivot_idx = i
+                last_pivot_price = current_high
+                last_pivot_type = 1
+
+        i += 1
+        if i % 100000 == 0:
+            logger.info(f"  Processed {i:,}/{n:,} bars")
+
+    return pivots, directions, is_pivot
+
+
+def calculate_rsi(prices: np.ndarray, period: int = 14) -> np.ndarray:
+    """Calculate RSI indicator."""
+    deltas = np.diff(prices)
+    seed = deltas[:period]
+    up = seed[seed >= 0].sum() / period
+    down = -seed[seed < 0].sum() / period
+    rs = up / down if down != 0 else 0
+    rsi = np.zeros_like(prices)
+    rsi[:period] = 100. - 100. / (1. + rs)
+
+    for i in range(period, len(prices)):
+        delta = deltas[i-1]
+        upval = delta if delta > 0 else 0.
+        downval = -delta if delta < 0 else 0.
+        up = (up * (period - 1) + upval) / period
+        down = (down * (period - 1) + downval) / period
+        rs = up / down if down != 0 else 0
+        rsi[i] = 100. - 100. / (1. + rs)
+
+    return rsi
+
+
+def generate_zigzag(conn: duckdb.DuckDBPyConnection):
+    """Step 0: Generate ZigZag indicator with 30 pip minimum swing."""
+    logger.info("\n" + "="*80)
+    logger.info(f"STEP 0: ZIGZAG INDICATOR (MIN_SWING = {MIN_ZIGZAG_SWING} = 30 pips)")
+    logger.info("="*80)
+
+    # Add columns if needed
+    for col in ['zigzag_price', 'zigzag_direction', 'is_zigzag_pivot']:
+        try:
+            col_type = 'DOUBLE' if col == 'zigzag_price' else ('TINYINT' if col == 'zigzag_direction' else 'BOOLEAN')
+            conn.execute(f"ALTER TABLE master ADD COLUMN {col} {col_type}")
+            logger.info(f"✅ Added column: {col}")
+        except:
+            logger.info(f"⚠️  Column {col} exists, will update")
+
+    # Fetch data
+    logger.info("Fetching OHLC data...")
+    df = conn.execute("""
+        SELECT bar_index, high, low
+        FROM master
+        ORDER BY bar_index
+    """).fetch_df()
+    logger.info(f"Loaded {len(df):,} rows")
+
+    # Calculate ZigZag
+    logger.info(f"Calculating ZigZag...")
+    zigzag_price, zigzag_direction, is_zigzag_pivot = calculate_zigzag(
+        df['high'].values,
+        df['low'].values,
+        MIN_ZIGZAG_SWING
+    )
+
+    df['zigzag_price'] = zigzag_price
+    df['zigzag_direction'] = zigzag_direction
+    df['is_zigzag_pivot'] = is_zigzag_pivot
+
+    # Statistics
+    pivot_count = np.sum(is_zigzag_pivot)
+    pivot_prices = zigzag_price[~np.isnan(zigzag_price)]
+    if len(pivot_prices) > 1:
+        swings = np.abs(np.diff(pivot_prices)) / 0.01
+        avg_swing = np.mean(swings)
+        swing_range = [np.min(swings), np.max(swings)]
+    else:
+        avg_swing = 0
+        swing_range = [0, 0]
+
+    logger.info(f"\n📊 ZigZag Statistics:")
+    logger.info(f"  Pivots: {pivot_count:,} ({pivot_count/len(df)*100:.2f}%)")
+    logger.info(f"  Avg swing: {avg_swing:.1f} pips")
+    logger.info(f"  Range: [{swing_range[0]:.1f}, {swing_range[1]:.1f}] pips")
+
+    # Update database
+    logger.info("Updating database...")
+    conn.register('zigzag_data', df[['bar_index', 'zigzag_price', 'zigzag_direction', 'is_zigzag_pivot']])
+    conn.execute("""
+        UPDATE master
+        SET
+            zigzag_price = zigzag_data.zigzag_price,
+            zigzag_direction = zigzag_data.zigzag_direction,
+            is_zigzag_pivot = zigzag_data.is_zigzag_pivot
+        FROM zigzag_data
+        WHERE master.bar_index = zigzag_data.bar_index
+    """)
+    logger.info("✅ ZigZag updated")
+
+    return df
 
 
 # ============================================================================
@@ -159,85 +322,83 @@ def generate_last_swing_tracking(conn: duckdb.DuckDBPyConnection, df: pd.DataFra
     prev_h1_lsp_idx = np.full(n, -1, dtype=np.int64)
     prev_h1_lsp_val = np.full(n, np.nan)
 
-    # Track M1 swings (last and prev)
+    # Track M1 swings (last and prev) - Vectorized
     logger.info("Tracking M1 swings (last and prev)...")
+
+    # Pre-extract values for speed
+    swing_high_m1 = df['swing_high_m1'].values
+    swing_low_m1 = df['swing_low_m1'].values
+    bar_indices = df['bar_index'].values
+    highs = df['high'].values
+    lows = df['low'].values
+
     last_high_idx = -1
     last_high_price = np.nan
     prev_high_idx = -1
     prev_high_price = np.nan
-
     last_low_idx = -1
     last_low_price = np.nan
     prev_low_idx = -1
     prev_low_price = np.nan
 
     for i in range(n):
-        if df.iloc[i]['swing_high_m1']:
-            # New high swing: prev becomes last, last becomes new
+        if swing_high_m1[i]:
             prev_high_idx = last_high_idx
             prev_high_price = last_high_price
-            last_high_idx = df.iloc[i]['bar_index']
-            last_high_price = df.iloc[i]['high']
+            last_high_idx = bar_indices[i]
+            last_high_price = highs[i]
 
-        if df.iloc[i]['swing_low_m1']:
-            # New low swing: prev becomes last, last becomes new
+        if swing_low_m1[i]:
             prev_low_idx = last_low_idx
             prev_low_price = last_low_price
-            last_low_idx = df.iloc[i]['bar_index']
-            last_low_price = df.iloc[i]['low']
+            last_low_idx = bar_indices[i]
+            last_low_price = lows[i]
 
         last_m1_hsp_idx[i] = last_high_idx
         last_m1_hsp_val[i] = last_high_price
         prev_m1_hsp_idx[i] = prev_high_idx
         prev_m1_hsp_val[i] = prev_high_price
-
         last_m1_lsp_idx[i] = last_low_idx
         last_m1_lsp_val[i] = last_low_price
         prev_m1_lsp_idx[i] = prev_low_idx
         prev_m1_lsp_val[i] = prev_low_price
 
-        if (i + 1) % 100000 == 0:
-            logger.info(f"  M1: Processed {i+1:,}/{n:,} rows")
-
-    # Track H1 swings (last and prev)
+    # Track H1 swings (last and prev) - Vectorized
     logger.info("Tracking H1 swings (last and prev)...")
+
+    swing_high_h1 = df['swing_high_h1'].values
+    swing_low_h1 = df['swing_low_h1'].values
+
     last_high_idx = -1
     last_high_price = np.nan
     prev_high_idx = -1
     prev_high_price = np.nan
-
     last_low_idx = -1
     last_low_price = np.nan
     prev_low_idx = -1
     prev_low_price = np.nan
 
     for i in range(n):
-        if df.iloc[i]['swing_high_h1']:
-            # New high swing: prev becomes last, last becomes new
+        if swing_high_h1[i]:
             prev_high_idx = last_high_idx
             prev_high_price = last_high_price
-            last_high_idx = df.iloc[i]['bar_index']
-            last_high_price = df.iloc[i]['high']
+            last_high_idx = bar_indices[i]
+            last_high_price = highs[i]
 
-        if df.iloc[i]['swing_low_h1']:
-            # New low swing: prev becomes last, last becomes new
+        if swing_low_h1[i]:
             prev_low_idx = last_low_idx
             prev_low_price = last_low_price
-            last_low_idx = df.iloc[i]['bar_index']
-            last_low_price = df.iloc[i]['low']
+            last_low_idx = bar_indices[i]
+            last_low_price = lows[i]
 
         last_h1_hsp_idx[i] = last_high_idx
         last_h1_hsp_val[i] = last_high_price
         prev_h1_hsp_idx[i] = prev_high_idx
         prev_h1_hsp_val[i] = prev_high_price
-
         last_h1_lsp_idx[i] = last_low_idx
         last_h1_lsp_val[i] = last_low_price
         prev_h1_lsp_idx[i] = prev_low_idx
         prev_h1_lsp_val[i] = prev_low_price
-
-        if (i + 1) % 100000 == 0:
-            logger.info(f"  H1: Processed {i+1:,}/{n:,} rows")
 
     # Add to dataframe (16 columns total)
     df['last_m1_hsp_idx'] = last_m1_hsp_idx
@@ -401,90 +562,60 @@ def generate_swing_slopes(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
     high_swing_slope_h1 = np.full(n, np.nan)
     low_swing_slope_h1 = np.full(n, np.nan)
 
-    # Calculate M1 swing slopes
+    # Calculate M1 swing slopes - Optimized
     logger.info("Calculating M1 swing slopes...")
 
+    # Pre-extract arrays
+    bar_idx_arr = df['bar_index'].values
+    high_arr = df['high'].values
+    low_arr = df['low'].values
+    swing_high_m1_arr = df['swing_high_m1'].fillna(False).astype(bool).values
+    swing_low_m1_arr = df['swing_low_m1'].fillna(False).astype(bool).values
+
     # M1 High Swing Slope
-    m1_high_mask = df['swing_high_m1'].fillna(False).astype(bool)
-    m1_high_indices = np.where(m1_high_mask)[0]
-
+    m1_high_indices = np.where(swing_high_m1_arr)[0]
     for i in range(1, len(m1_high_indices)):
-        curr_idx_pos = m1_high_indices[i]
-        prev_idx_pos = m1_high_indices[i-1]
-
-        curr_idx = df.iloc[curr_idx_pos]['bar_index']
-        prev_idx = df.iloc[prev_idx_pos]['bar_index']
-        curr_price = df.iloc[curr_idx_pos]['high']
-        prev_price = df.iloc[prev_idx_pos]['high']
-
-        time_diff = curr_idx - prev_idx
-        price_diff = (curr_price - prev_price) / 0.01  # Pips
-
+        curr_pos = m1_high_indices[i]
+        prev_pos = m1_high_indices[i-1]
+        time_diff = bar_idx_arr[curr_pos] - bar_idx_arr[prev_pos]
         if time_diff > 0:
-            slope = price_diff / time_diff
-            high_swing_slope_m1[curr_idx_pos:] = slope
+            price_diff = (high_arr[curr_pos] - high_arr[prev_pos]) / 0.01
+            high_swing_slope_m1[curr_pos:] = price_diff / time_diff
 
     # M1 Low Swing Slope
-    m1_low_mask = df['swing_low_m1'].fillna(False).astype(bool)
-    m1_low_indices = np.where(m1_low_mask)[0]
-
+    m1_low_indices = np.where(swing_low_m1_arr)[0]
     for i in range(1, len(m1_low_indices)):
-        curr_idx_pos = m1_low_indices[i]
-        prev_idx_pos = m1_low_indices[i-1]
-
-        curr_idx = df.iloc[curr_idx_pos]['bar_index']
-        prev_idx = df.iloc[prev_idx_pos]['bar_index']
-        curr_price = df.iloc[curr_idx_pos]['low']
-        prev_price = df.iloc[prev_idx_pos]['low']
-
-        time_diff = curr_idx - prev_idx
-        price_diff = (curr_price - prev_price) / 0.01
-
+        curr_pos = m1_low_indices[i]
+        prev_pos = m1_low_indices[i-1]
+        time_diff = bar_idx_arr[curr_pos] - bar_idx_arr[prev_pos]
         if time_diff > 0:
-            slope = price_diff / time_diff
-            low_swing_slope_m1[curr_idx_pos:] = slope
+            price_diff = (low_arr[curr_pos] - low_arr[prev_pos]) / 0.01
+            low_swing_slope_m1[curr_pos:] = price_diff / time_diff
 
     logger.info("Calculating H1 swing slopes...")
 
-    # H1 High Swing Slope (vectorized)
-    h1_high_mask = df['swing_high_h1'].fillna(False).astype(bool)
-    h1_high_indices = np.where(h1_high_mask)[0]
+    swing_high_h1_arr = df['swing_high_h1'].fillna(False).astype(bool).values
+    swing_low_h1_arr = df['swing_low_h1'].fillna(False).astype(bool).values
 
+    # H1 High Swing Slope
+    h1_high_indices = np.where(swing_high_h1_arr)[0]
     for i in range(1, len(h1_high_indices)):
-        curr_idx_pos = h1_high_indices[i]
-        prev_idx_pos = h1_high_indices[i-1]
-
-        curr_idx = df.iloc[curr_idx_pos]['bar_index']
-        prev_idx = df.iloc[prev_idx_pos]['bar_index']
-        curr_price = df.iloc[curr_idx_pos]['high']
-        prev_price = df.iloc[prev_idx_pos]['high']
-
-        time_diff = curr_idx - prev_idx
-        price_diff = (curr_price - prev_price) / 0.01  # Pips
-
+        curr_pos = h1_high_indices[i]
+        prev_pos = h1_high_indices[i-1]
+        time_diff = bar_idx_arr[curr_pos] - bar_idx_arr[prev_pos]
         if time_diff > 0:
-            slope = price_diff / time_diff
-            high_swing_slope_h1[curr_idx_pos:] = slope
+            price_diff = (high_arr[curr_pos] - high_arr[prev_pos]) / 0.01
+            high_swing_slope_h1[curr_pos:] = price_diff / time_diff
 
-    # H1 Low Swing Slope (vectorized)
-    h1_low_mask = df['swing_low_h1'].fillna(False).astype(bool)
-    h1_low_indices = np.where(h1_low_mask)[0]
-
+    # H1 Low Swing Slope
+    h1_low_indices = np.where(swing_low_h1_arr)[0]
     for i in range(1, len(h1_low_indices)):
-        curr_idx_pos = h1_low_indices[i]
-        prev_idx_pos = h1_low_indices[i-1]
-
-        curr_idx = df.iloc[curr_idx_pos]['bar_index']
-        prev_idx = df.iloc[prev_idx_pos]['bar_index']
-        curr_price = df.iloc[curr_idx_pos]['low']
-        prev_price = df.iloc[prev_idx_pos]['low']
-
-        time_diff = curr_idx - prev_idx
-        price_diff = (curr_price - prev_price) / 0.01
-
+        curr_pos = h1_low_indices[i]
+        prev_pos = h1_low_indices[i-1]
+        time_diff = bar_idx_arr[curr_pos] - bar_idx_arr[prev_pos]
         if time_diff > 0:
-            slope = price_diff / time_diff
-            low_swing_slope_h1[curr_idx_pos:] = slope
+            price_diff = (low_arr[curr_pos] - low_arr[prev_pos]) / 0.01
+            low_swing_slope_h1[curr_pos:] = price_diff / time_diff
 
     # Add to dataframe
     df['high_swing_slope_m1'] = high_swing_slope_m1
@@ -823,13 +954,204 @@ def generate_h1_trend_slope(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
 
 
 # ============================================================================
-# STEP 8: M1 TREND SLOPE (Market Structure Based)
+# STEP 8: PRETRAIN ACTION LABELS (ZigZag Based)
+# ============================================================================
+
+def generate_pretrain_action(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
+    """Step 8: Generate pretrain_action labels from ZigZag pivots.
+
+    Logic:
+    - Enter 2 bars after pivot confirmed (pivot index + 2)
+    - Direction: BUY if zigzag going up, SELL if going down
+    - Exit: Bar before next pivot
+    - Actions: 0=hold, 1=buy, 2=sell, 3=close
+    """
+    logger.info("\n" + "="*80)
+    logger.info("STEP 8: PRETRAIN ACTION LABELS (ZigZag Based)")
+    logger.info("="*80)
+
+    # Add column if doesn't exist
+    try:
+        conn.execute("ALTER TABLE master ADD COLUMN pretrain_action TINYINT")
+        logger.info("✅ Added column: pretrain_action")
+    except:
+        logger.info("⚠️  Column pretrain_action already exists, will update")
+
+    # Fetch ZigZag data
+    logger.info("Fetching ZigZag data...")
+    zigzag_df = conn.execute("""
+        SELECT bar_index, is_zigzag_pivot, zigzag_direction
+        FROM master
+        ORDER BY bar_index
+    """).fetch_df()
+
+    logger.info("Generating pretrain action labels from ZigZag pivots...")
+
+    # Initialize actions (0 = hold)
+    n = len(zigzag_df)
+    pretrain_action = np.zeros(n, dtype=np.int8)
+
+    # Find all pivot indices
+    pivot_indices = np.where(zigzag_df['is_zigzag_pivot'].fillna(False).astype(bool))[0]
+    logger.info(f"  Found {len(pivot_indices):,} pivot points")
+
+    # Generate entry/exit signals
+    for i in range(len(pivot_indices)):
+        pivot_idx = pivot_indices[i]
+
+        # Entry: 2 bars after pivot confirmation
+        entry_idx = pivot_idx + 2
+        if entry_idx >= n:
+            continue
+
+        # Get direction at entry
+        direction = zigzag_df.iloc[entry_idx]['zigzag_direction']
+
+        # Set entry action (1=buy if uptrend, 2=sell if downtrend)
+        if direction == 1:
+            pretrain_action[entry_idx] = 1  # BUY
+        elif direction == -1:
+            pretrain_action[entry_idx] = 2  # SELL
+
+        # Exit: bar before next pivot (if there is one)
+        if i + 1 < len(pivot_indices):
+            next_pivot_idx = pivot_indices[i + 1]
+            exit_idx = next_pivot_idx - 1
+
+            if exit_idx > entry_idx and exit_idx < n:
+                pretrain_action[exit_idx] = 3  # CLOSE
+
+    zigzag_df['pretrain_action'] = pretrain_action
+
+    # Statistics
+    action_counts = {
+        0: np.sum(pretrain_action == 0),
+        1: np.sum(pretrain_action == 1),
+        2: np.sum(pretrain_action == 2),
+        3: np.sum(pretrain_action == 3),
+    }
+
+    logger.info(f"\n📊 Pretrain Action Distribution:")
+    logger.info(f"  0 (HOLD):  {action_counts[0]:,} ({action_counts[0]/n*100:.2f}%)")
+    logger.info(f"  1 (BUY):   {action_counts[1]:,} ({action_counts[1]/n*100:.2f}%)")
+    logger.info(f"  2 (SELL):  {action_counts[2]:,} ({action_counts[2]/n*100:.2f}%)")
+    logger.info(f"  3 (CLOSE): {action_counts[3]:,} ({action_counts[3]/n*100:.2f}%)")
+
+    total_trades = action_counts[1] + action_counts[2]
+    logger.info(f"\n  Total trades: {total_trades:,}")
+    logger.info(f"  Buy/Sell ratio: {action_counts[1]/action_counts[2]:.2f}" if action_counts[2] > 0 else "  Buy/Sell ratio: N/A")
+
+    # Update database
+    logger.info("\nUpdating database...")
+    conn.register('pretrain_data', zigzag_df[['bar_index', 'pretrain_action']])
+    conn.execute("""
+        UPDATE master
+        SET pretrain_action = pretrain_data.pretrain_action
+        FROM pretrain_data
+        WHERE master.bar_index = pretrain_data.bar_index
+    """)
+    logger.info("✅ pretrain_action updated")
+
+    return df
+
+
+# ============================================================================
+# STEP 9: RSI EXTREME
+# ============================================================================
+
+def generate_rsi_extreme(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
+    """Step 9: Generate RSI extreme: (RSI14 - 50) / 50, bounded [-1, 1]."""
+    logger.info("\n" + "="*80)
+    logger.info("STEP 9: RSI EXTREME")
+    logger.info("="*80)
+
+    try:
+        conn.execute("ALTER TABLE master ADD COLUMN rsi_extreme DOUBLE")
+        logger.info("✅ Added column: rsi_extreme")
+    except:
+        logger.info("⚠️  Column exists, will update")
+
+    logger.info("Calculating RSI14...")
+    rsi = calculate_rsi(df['close'].values, period=14)
+    rsi_extreme = np.clip((rsi - 50) / 50, -1, 1)
+    df['rsi_extreme'] = rsi_extreme
+
+    valid = rsi_extreme[~np.isnan(rsi_extreme)]
+    logger.info(f"\n📊 RSI Extreme:")
+    logger.info(f"  Valid: {len(valid):,} ({len(valid)/len(df)*100:.1f}%)")
+    logger.info(f"  Mean: {np.mean(valid):.4f}")
+    logger.info(f"  Range: [{np.min(valid):.4f}, {np.max(valid):.4f}]")
+    logger.info(f"  Extremes (|x|>0.8): {np.sum(np.abs(valid) > 0.8):,}")
+
+    logger.info("Updating database...")
+    conn.register('rsi_data', df[['bar_index', 'rsi_extreme']])
+    conn.execute("""
+        UPDATE master
+        SET rsi_extreme = rsi_data.rsi_extreme
+        FROM rsi_data
+        WHERE master.bar_index = rsi_data.bar_index
+    """)
+    logger.info("✅ rsi_extreme updated")
+
+    return df
+
+
+# ============================================================================
+# STEP 10: BB POSITION
+# ============================================================================
+
+def generate_bb_position(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
+    """Step 10: Generate BB position: (close - sma20) / (2 * std20), clipped [-2, 2]."""
+    logger.info("\n" + "="*80)
+    logger.info("STEP 10: BB POSITION")
+    logger.info("="*80)
+
+    try:
+        conn.execute("ALTER TABLE master ADD COLUMN bb_position DOUBLE")
+        logger.info("✅ Added column: bb_position")
+    except:
+        logger.info("⚠️  Column exists, will update")
+
+    logger.info("Calculating BB position...")
+    sma20 = df['close'].rolling(window=20, min_periods=20).mean()
+    std20 = df['close'].rolling(window=20, min_periods=20).std()
+    bb_position = np.clip((df['close'] - sma20) / (2 * std20), -2.0, 2.0)
+    df['bb_position'] = bb_position
+
+    valid = bb_position.dropna().values
+    above_1 = np.sum(valid > 1.0)
+    below_minus1 = np.sum(valid < -1.0)
+    in_range = len(valid) - above_1 - below_minus1
+
+    logger.info(f"\n📊 BB Position:")
+    logger.info(f"  Valid: {len(valid):,} ({len(valid)/len(df)*100:.1f}%)")
+    logger.info(f"  Mean: {np.mean(valid):.4f}")
+    logger.info(f"  Range: [{np.min(valid):.4f}, {np.max(valid):.4f}]")
+    logger.info(f"  >+1.0: {above_1:,} ({above_1/len(valid)*100:.2f}%)")
+    logger.info(f"  -1 to +1: {in_range:,} ({in_range/len(valid)*100:.2f}%)")
+    logger.info(f"  <-1.0: {below_minus1:,} ({below_minus1/len(valid)*100:.2f}%)")
+
+    logger.info("Updating database...")
+    conn.register('bb_data', df[['bar_index', 'bb_position']])
+    conn.execute("""
+        UPDATE master
+        SET bb_position = bb_data.bb_position
+        FROM bb_data
+        WHERE master.bar_index = bb_data.bar_index
+    """)
+    logger.info("✅ bb_position updated")
+
+    return df
+
+
+# ============================================================================
+# STEP 11: M1 TREND SLOPE (Market Structure Based)
 # ============================================================================
 
 def generate_m1_trend_slope(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
-    """Step 8: Generate m1_trend_slope based on market structure (HHHL, LHLL, divergence)."""
+    """Step 11: Generate m1_trend_slope based on market structure (HHHL, LHLL, divergence)."""
     logger.info("\n" + "="*80)
-    logger.info("STEP 8: M1 TREND SLOPE (Market Structure Based)")
+    logger.info("STEP 11: M1 TREND SLOPE (Market Structure Based)")
     logger.info("="*80)
 
     # Add column if doesn't exist
@@ -932,14 +1254,18 @@ def main():
         logger.info(f"\nTotal rows in master table: {total_rows:,}")
 
         # Execute all steps in order
-        df = generate_swing_points(conn)
-        df = generate_last_swing_tracking(conn, df)
-        df = generate_h1_swing_range_position(conn, df)
-        df = generate_swing_point_range(conn, df)
-        df = generate_swing_slopes(conn, df)
-        df = generate_zscore_features(conn, df)
-        df = generate_h1_trend_slope(conn, df)
-        df = generate_m1_trend_slope(conn, df)
+        df = generate_zigzag(conn)  # Step 0: ZigZag (30 pips)
+        df = generate_swing_points(conn)  # Step 1
+        df = generate_last_swing_tracking(conn, df)  # Step 2
+        df = generate_h1_swing_range_position(conn, df)  # Step 3
+        df = generate_swing_point_range(conn, df)  # Step 4
+        df = generate_swing_slopes(conn, df)  # Step 5
+        df = generate_zscore_features(conn, df)  # Step 6
+        df = generate_h1_trend_slope(conn, df)  # Step 7
+        df = generate_pretrain_action(conn, df)  # Step 8
+        df = generate_rsi_extreme(conn, df)  # Step 9
+        df = generate_bb_position(conn, df)  # Step 10
+        df = generate_m1_trend_slope(conn, df)  # Step 11
 
         logger.info("\n" + "="*80)
         logger.info("✅ ALL FEATURES GENERATED SUCCESSFULLY")
@@ -958,7 +1284,8 @@ def main():
         logger.info("  7. h1_swing_range_position_zsarctan_w20, swing_point_range_zsarctan_w20")
         logger.info("     high_swing_slope_h1_zsarctan, low_swing_slope_h1_zsarctan, combo_geometric")
         logger.info("  8. h1_trend_slope (H1 market structure based: HHHL/LHLL/divergence)")
-        logger.info("  9. m1_trend_slope (M1 market structure based: HHHL/LHLL/divergence)")
+        logger.info("  9. pretrain_action (ZigZag labels: 0=hold, 1=buy, 2=sell, 3=close)")
+        logger.info(" 10. m1_trend_slope (M1 market structure based: HHHL/LHLL/divergence)")
         logger.info(f"\nConfig saved: {CONFIG_PATH}")
 
     except Exception as e:

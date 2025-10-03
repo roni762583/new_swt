@@ -1,44 +1,5 @@
 DATABASE STATE REPORT - COMPLETE SCHEMA WITH FORMULAS
-Generated on: 2025-09-29 (Final clean state)
-
-
-================================================================================
-DATABASE: /home/aharon/projects/new_swt/micro/nano/picco-ppo/precomputed_features.duckdb
-================================================================================
-Tables found: 1
-
-============================================================
-TABLE: m5_features
-============================================================
-Row count: 99,950
-Column count: 22
-
-Full column listing with exact formulas:
-------------------------------------------------------------
-   1. open                      DOUBLE       Raw M5 bar open price
-   2. high                      DOUBLE       Raw M5 bar high price
-   3. low                       DOUBLE       Raw M5 bar low price
-   4. close                     DOUBLE       Raw M5 bar close price
-   5. volume                    BIGINT       Raw M5 bar volume
-   6. bar_index                 BIGINT       Sequential bar number
-   7. timestamp                 TIMESTAMP_NS Bar timestamp
-   8. sma20                     DOUBLE       close.rolling(20).mean()
-   9. sma200                    DOUBLE       close.rolling(200).mean()
-  10. tr                        DOUBLE       max(high-low, abs(high-prev_close), abs(low-prev_close))
-  11. atr                       DOUBLE       tr.rolling(14).mean()
-  12. reactive                  DOUBLE       close - sma200
-  13. lessreactive              DOUBLE       sma20 - sma200
-  14. react_ratio               DOUBLE       reactive / (lessreactive + 0.0001), clipped to [-5, 5]
-  15. efficiency_ratio          DOUBLE       abs(close - close.shift(10)) / close.diff().abs().rolling(10).sum()
-  16. bb_position               DOUBLE       (close - sma20) / (2 * close.rolling(20).std()), clipped to [-1, 1]
-  17. rsi                       DOUBLE       100 - (100 / (1 + RS)), where RS = avg_gain/avg_loss over 14 periods
-  18. rsi_extreme               DOUBLE       (rsi - 50) / 50
-  19. atr_ratio                 DOUBLE       atr / (sma20 + 0.0001)
-  20. h1_trend                  BIGINT       1 if close > h1_sma20*1.001, -1 if close < h1_sma20*0.999, else 0
-  21. h1_momentum               DOUBLE       H1 close.pct_change(5) mapped to M5 bars
-  22. use_mean_reversion        DOUBLE       1.0 if (h1_trend == 0 AND efficiency_ratio < 0.3), else 0.0
-
-File size: 14.51 MB
+Generated on: 2025-10-03 16:52 (Updated - Added 3 columns: pretrain_action, rsi_extreme, bb_position)
 
 
 ================================================================================
@@ -50,7 +11,7 @@ Tables found: 1
 TABLE: master
 ============================================================
 Row count: 1,333,912
-Column count: 63
+Column count: 66
 
 Full column listing with formulas:
 ------------------------------------------------------------
@@ -237,3 +198,44 @@ Full column listing with formulas:
   63. dow_cos                   DOUBLE       cos(2π × day_of_week / 5)
                                               5-day trading week timecycle (orthogonal to dow_sin)
                                               Mean: -0.001256, Range: [-0.809, +1.0]
+  64. pretrain_action           TINYINT      ZigZag-based pretraining labels
+                                              0=HOLD (92.06%), 1=BUY (2.11%), 2=SELL (2.07%), 3=CLOSE (3.76%)
+                                              Entry: 2 bars after pivot confirmation
+                                              Exit: Bar before next pivot
+                                              Total trades: 55,807
+  65. rsi_extreme               DOUBLE       (RSI14 - 50) / 50, bounded [-1, 1]
+                                              Normalized RSI oscillator for overbought/oversold detection
+                                              Mean: 0.0072, Range: [-0.936, +0.940]
+                                              Extremes (|x|>0.8): 262 (0.02%)
+  66. bb_position               DOUBLE       (close - sma20) / (2 * std20), clipped [-2, 2]
+                                              Bollinger Band position indicator
+                                              Mean: 0.0142, Range: [-2.0, +2.0]
+                                              Distribution: >+1.0: 5.20%, -1 to +1: 89.64%, <-1.0: 5.16%
+
+File size: 335.54 MB (last modified: 2025-10-03 16:51)
+
+
+
+● ✅ Merged all feature generation into generate_all_features.py:
+
+  Added to the script:
+  - Step 0: ZigZag indicator (30 pips minimum)
+  - Step 9: RSI extreme
+  - Step 10: BB position
+  - Deleted add_pretrain_and_indicators.py and update_zigzag_30pips.py
+
+  Consolidated feature generation order:
+  1. ZigZag (30 pips)
+  2. Swing points (M1/H1)
+  3. Last swing tracking
+  4. H1 swing range position
+  5. Swing point range
+  6. Swing slopes
+  7. Z-score features
+  8. H1 trend slope
+  9. Pretrain action
+  10. RSI extreme
+  11. BB position
+  12. M1 trend slope
+
+  All in one script as per CLAUDE.md guidelines.
