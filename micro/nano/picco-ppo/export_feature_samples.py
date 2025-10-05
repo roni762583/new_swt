@@ -50,7 +50,7 @@ METADATA = ['bar_index', 'timestamp']
 
 
 def export_feature_samples():
-    """Export first and last 20 rows as separate features and labels files."""
+    """Export sample with one complete trade cycle."""
     print("=" * 80)
     print("EXPORT FEATURE SAMPLES FOR VERSION CONTROL")
     print("=" * 80)
@@ -78,22 +78,31 @@ def export_feature_samples():
     df = conn.execute(query).fetch_df()
     print(f"Total rows with labels: {len(df):,}")
 
-    # Extract first 20 and last 20 rows
-    first_20 = df.head(20).copy()
-    last_20 = df.tail(20).copy()
+    # Find first SELL (bar 174) and its CLOSE (bar 378)
+    # Use compact window: 3 before SELL to 3 after CLOSE
+    # SELL at 174, CLOSE at 378
+    # Window: 171-381 = 211 bars (too long)
+    # Use: 171-180 (around SELL) + 375-381 (around CLOSE) = 17 bars total
 
-    # Combine into 40-row sample
-    combined = pd.concat([first_20, last_20], ignore_index=True)
+    sell_start = 171
+    sell_end = 180
+    close_start = 375
+    close_end = 381
 
-    print(f"\n📊 Combined sample (40 rows):")
-    print(f"  First 20 bar index: {first_20['bar_index'].min()} - {first_20['bar_index'].max()}")
-    print(f"  First 20 date range: {first_20['timestamp'].min()} to {first_20['timestamp'].max()}")
-    print(f"  Last 20 bar index: {last_20['bar_index'].min()} - {last_20['bar_index'].max()}")
-    print(f"  Last 20 date range: {last_20['timestamp'].min()} to {last_20['timestamp'].max()}")
+    window1 = df[(df['bar_index'] >= sell_start) & (df['bar_index'] <= sell_end)].copy()
+    window2 = df[(df['bar_index'] >= close_start) & (df['bar_index'] <= close_end)].copy()
+
+    combined = pd.concat([window1, window2], ignore_index=True)
+
+    print(f"\n📊 Trade cycle sample ({len(combined)} rows):")
+    print(f"  Window 1 (SELL): bars {sell_start}-{sell_end}")
+    print(f"    Date: {window1['timestamp'].min()} to {window1['timestamp'].max()}")
+    print(f"  Window 2 (CLOSE): bars {close_start}-{close_end}")
+    print(f"    Date: {window2['timestamp'].min()} to {window2['timestamp'].max()}")
 
     # Action distribution for combined
     action_counts = combined['pretrain_action'].value_counts().sort_index()
-    print(f"\n  Action distribution (40 rows total):")
+    print(f"\n  Action distribution ({len(combined)} rows total):")
     for action, count in action_counts.items():
         action_name = ['HOLD', 'BUY', 'SELL', 'CLOSE'][int(action)]
         print(f"    {action_name} ({action}): {count}")
@@ -142,8 +151,11 @@ def export_feature_samples():
     print("✅ EXPORT COMPLETE")
     print("=" * 80)
     print("\nGenerated files:")
-    print("  - sample_features.csv  (40 rows: first 20 + last 20, with metadata + 30 features)")
-    print("  - sample_labels.csv    (40 rows: first 20 + last 20, with metadata + pretrain_action)")
+    print(f"  - sample_features.csv  ({len(combined)} rows: SELL context + CLOSE context)")
+    print(f"  - sample_labels.csv    ({len(combined)} rows: corresponding labels)")
+    print("\nTrade cycle captured:")
+    print("  - Bars 171-180: Context around SELL action (bar 174)")
+    print("  - Bars 375-381: Context around CLOSE action (bar 378)")
     print("\nThese CSV files should be committed to Git for documentation.")
 
 
