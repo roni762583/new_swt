@@ -142,6 +142,48 @@ services:
     networks:
       - ppo-network
 
+  # ======= LIVE TRADING SERVICE =======
+  ppo-live:
+    image: picco-ppo:latest
+    container_name: ppo-live
+    hostname: ppo-live
+
+    # Resource limits (production)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+
+    # Volumes
+    volumes:
+      - ./checkpoints:/app/checkpoints:ro
+      - ./results:/app/results
+      - ../../../data:/app/data:ro
+      - ./env:/app/env
+
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=America/New_York
+      - LIVE_TRADING=1
+
+    # Command - live trading with best checkpoint
+    command: >
+      python -u trade_live.py
+      --checkpoint checkpoints/best_checkpoint.pth
+      --paper-trading
+
+    depends_on:
+      - ppo-training
+
+    restart: unless-stopped
+
+    networks:
+      - ppo-network
+
   # ======= TENSORBOARD SERVICE (Optional - adds 1GB) =======
   # Uncomment if you want monitoring dashboard
   # ppo-tensorboard:
@@ -166,17 +208,25 @@ volumes:
     driver: local
 
 # ======= USAGE =======
-# Build with caching:
-#   DOCKER_BUILDKIT=1 docker compose -f docker-compose.unified.yml build
+# Build and start all 4 containers:
+#   docker compose up -d --build
 #
-# Start training:
-#   docker compose -f docker-compose.unified.yml up -d ppo-training
+# Start specific service:
+#   docker compose up -d ppo-training
+#   docker compose up -d ppo-monitor
+#   docker compose up -d ppo-validation
+#   docker compose up -d ppo-live
 #
-# Monitor progress:
-#   docker compose -f docker-compose.unified.yml up -d ppo-monitor
+# Check status:
+#   docker compose ps
 #
 # Watch logs:
-#   docker compose -f docker-compose.unified.yml logs -f ppo-training
+#   docker compose logs -f ppo-training
+#   docker compose logs -f ppo-live
+#   docker compose logs -f  # All containers
 #
 # Stop all:
-#   docker compose -f docker-compose.unified.yml down
+#   docker compose down
+#
+# Stop and remove volumes:
+#   docker compose down -v
