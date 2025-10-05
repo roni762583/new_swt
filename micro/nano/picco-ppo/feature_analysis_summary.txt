@@ -1,0 +1,211 @@
+================================================================================
+FEATURE ANALYSIS SUMMARY - 33 Selected Features
+================================================================================
+Generated: 2025-10-05
+
+================================================================================
+1. FEATURE NORMALIZATION STATUS
+================================================================================
+
+✅ ML-READY FEATURES (29/33) - Range [-1, 1] or close:
+------------------------------------------------------------
+MOMENTUM (4):
+  ✅ log_return_1m: [-0.0177, +0.0107]
+  ✅ log_return_5m: [-0.0311, +0.0169]
+  ✅ log_return_60m: [-0.0391, +0.0232]
+  ✅ efficiency_ratio_h1: [0.0000, +0.7837]
+
+MOMENTUM EXTENDED (1):
+  ✅ momentum_strength_10_zsarctan_w20: [-0.9858, +0.9840]
+
+VOLATILITY (6):
+  ✅ atr_14: [0.0015, +0.9719]
+  ✅ atr_14_zsarctan_w20: [-0.9565, +0.9729]
+  ✅ atr_60_zsarctan_w20: [-0.8938, +0.9061]
+  ✅ vol_ratio_deviation: [-0.9150, +0.7538]
+  ✅ realized_vol_20_zsarctan_w20: [-0.9765, +0.9808]
+  ✅ realized_vol_60_zsarctan_w20: [-0.9574, +0.9678]
+
+Z-SCORES (7):
+  ✅ h1_trend_slope_zsarctan: [-0.9765, +0.9904]
+  ✅ h1_swing_range_position_zsarctan_w20: [-0.9916, +0.9949]
+  ✅ swing_point_range_zsarctan_w20: [-0.9700, +0.9722]
+  ✅ high_swing_slope_h1_zsarctan: [-0.9936, +0.9934]
+  ✅ low_swing_slope_h1_zsarctan: [-0.9901, +0.9904]
+  ✅ high_swing_slope_m1_zsarctan_w20: [-0.9832, +0.9863]
+  ✅ low_swing_slope_m1_zsarctan_w20: [-0.9887, +0.9888]
+  ✅ combo_geometric: [-0.9203, +0.8971]
+
+INDICATORS (2):
+  ✅ rsi_extreme: [-0.9357, +0.9399]
+  ✅ bb_position: [-1.0000, +1.0000]
+
+TIME (4):
+  ✅ hour_sin: [-1.0000, +1.0000]
+  ✅ hour_cos: [-1.0000, +1.0000]
+  ✅ dow_sin: [-1.0000, +1.0000]
+  ✅ dow_cos: [-1.0000, +1.0000]
+
+⚠️  RAW FEATURES (4/33) - Need normalization or use for reference only:
+------------------------------------------------------------
+CORE (4):
+  ⚠️  close: [149.0480, 208.1120] - Use for position sizing, not ML input
+  ⚠️  high: [149.3970, 208.1200] - Use for stop loss calc, not ML input
+  ⚠️  low: [149.0480, 208.0930] - Use for stop loss calc, not ML input
+  ⚠️  volume: [1.0000, 3101.0000] - Consider log transform if using
+
+SWING STRUCTURE (Raw versions - use z-score versions instead):
+  ⚠️  h1_swing_range_position: [-551.0000, +387.0000] - Outliers present
+  ⚠️  swing_point_range: [-0.9820, +6.1380] - Skewed distribution
+  ⚠️  high_swing_slope_h1: [-11.6833, +63.0000] - Use z-score version
+  ⚠️  low_swing_slope_h1: [-91.5000, +23.9333] - Use z-score version
+
+================================================================================
+2. CORRELATION ANALYSIS (29 Normalized Features)
+================================================================================
+
+🔴 HIGH CORRELATION (|r| > 0.7) - POTENTIAL MULTICOLLINEARITY:
+------------------------------------------------------------
+1. rsi_extreme ↔ bb_position: +0.891
+   → ISSUE: Both measure overbought/oversold
+   → RECOMMENDATION: Keep both (different methodologies), monitor in training
+
+2. atr_60_zsarctan_w20 ↔ realized_vol_60_zsarctan_w20: +0.847
+   → ISSUE: Both measure hourly volatility
+   → RECOMMENDATION: Consider dropping one (realized_vol_60_zsarctan_w20)
+
+3. atr_14_zsarctan_w20 ↔ realized_vol_20_zsarctan_w20: +0.722
+   → ISSUE: Both measure short-term volatility
+   → RECOMMENDATION: Consider dropping one (realized_vol_20_zsarctan_w20)
+
+🟡 MODERATE CORRELATION (0.5 < |r| ≤ 0.7) - ACCEPTABLE:
+------------------------------------------------------------
+1. vol_ratio_deviation ↔ realized_vol_20_zsarctan_w20: +0.691
+2. h1_trend_slope_zsarctan ↔ high_swing_slope_h1_zsarctan: +0.667
+3. log_return_5m ↔ bb_position: +0.642
+4. log_return_5m ↔ rsi_extreme: +0.597
+5. momentum_strength_10_zsarctan_w20 ↔ bb_position: +0.592
+6. log_return_5m ↔ momentum_strength_10_zsarctan_w20: +0.575
+7. log_return_60m ↔ rsi_extreme: +0.535
+
+✅ OVERALL ASSESSMENT:
+  - Only 3 pairs have high correlation (>0.7)
+  - Most features are independent
+  - Good feature diversity
+
+================================================================================
+3. FEATURE VARIANCE ANALYSIS
+================================================================================
+
+📊 HIGHEST VARIANCE (Signal-rich features):
+------------------------------------------------------------
+1. hour_cos: 0.502282
+2. dow_sin: 0.500987
+3. dow_cos: 0.499009
+4. hour_sin: 0.497664
+   → Time features have high variance (expected for cyclical [-1,1] range)
+
+5. high_swing_slope_m1_zsarctan_w20: 0.131405
+6. momentum_strength_10_zsarctan_w20: 0.129310
+7. low_swing_slope_m1_zsarctan_w20: 0.124356
+   → M1 slopes and momentum have good signal variation
+
+8. bb_position: 0.103148
+9. rsi_extreme: 0.051169
+   → Indicators have moderate variance
+
+📊 LOWEST VARIANCE (Low signal but potentially important):
+------------------------------------------------------------
+1. log_return_1m: 0.000000 (mean: 0.0000, std: 0.0002)
+2. log_return_5m: 0.000000 (mean: 0.0000, std: 0.0004)
+3. log_return_60m: 0.000002 (mean: 0.0000, std: 0.0014)
+   → Returns have very low variance (expected for forex)
+
+4. atr_14: 0.000609
+   → Raw ATR has low variance in pip units
+
+5. atr_60_zsarctan_w20: 0.007382
+6. efficiency_ratio_h1: 0.008282
+7. low_swing_slope_h1_zsarctan: 0.008681
+   → Some z-scores have lower variance (regime detection)
+
+================================================================================
+4. RECOMMENDATIONS
+================================================================================
+
+✅ FEATURES TO KEEP (27-29):
+------------------------------------------------------------
+CORE (0): Exclude from ML, use for position sizing/stops
+MOMENTUM (5): All - diverse timeframes
+VOLATILITY (4-6): Keep atr_14, atr_14_zsarctan_w20, vol_ratio_deviation
+  OPTIONAL: atr_60_zsarctan_w20, realized_vol_20/60_zsarctan_w20
+Z-SCORES (7): All - comprehensive regime detection
+INDICATORS (2): Both - despite high correlation, different methodologies
+TIME (4): All - session patterns important
+SWING STRUCTURE (5): Use z-score versions only
+
+🔴 CONSIDER REMOVING (2-4 features) to reduce multicollinearity:
+------------------------------------------------------------
+1. realized_vol_60_zsarctan_w20 (r=0.847 with atr_60_zsarctan_w20)
+2. realized_vol_20_zsarctan_w20 (r=0.722 with atr_14_zsarctan_w20)
+3. OPTIONAL: Either rsi_extreme OR bb_position (r=0.891)
+4. OPTIONAL: Either h1_trend_slope_zsarctan OR high_swing_slope_h1_zsarctan (r=0.667)
+
+🟢 FINAL RECOMMENDATION:
+------------------------------------------------------------
+USE 27 FEATURES FOR PRETRAIN:
+  - Exclude: close, high, low, volume (use separately for position sizing)
+  - Exclude: realized_vol_20_zsarctan_w20, realized_vol_60_zsarctan_w20 (redundant)
+  - Include: All 25 remaining normalized features
+  - Total: 29 features (or 27 if excluding realized_vol z-scores)
+
+ALTERNATIVELY, USE FULL 29 NORMALIZED FEATURES:
+  - Let the model handle multicollinearity (modern ML is robust)
+  - Monitor feature importance during training
+  - Use L1/L2 regularization to reduce impact
+
+================================================================================
+5. DATA QUALITY
+================================================================================
+
+✅ COVERAGE:
+  - Total rows: 1,333,912
+  - Rows with all 29 features: 1,296,410 (97.2%)
+  - Missing data: 2.8% (acceptable)
+
+✅ NORMALIZATION:
+  - 29/33 features in ML-friendly range [-1, 1]
+  - All z-scores properly bounded via arctan
+  - Time features properly cyclical
+
+⚠️  OUTLIERS (in raw features):
+  - h1_swing_range_position: [-551, +387] - extreme outliers
+  - swing_point_range: max 6.1380 (vs mean 0.27)
+  → Use z-score versions instead
+
+================================================================================
+6. FILES GENERATED
+================================================================================
+
+1. correlation_heatmap_29features.png - Visual correlation matrix
+2. correlation_matrix_29features.csv - Full correlation values
+3. feature_variance_29features.png - Variance distribution plot
+
+================================================================================
+CONCLUSION
+================================================================================
+
+The feature set is well-designed with:
+  ✅ 88% of features in ML-friendly range [-1, 1]
+  ✅ Low multicollinearity (only 3 high-correlation pairs)
+  ✅ Good variance distribution
+  ✅ Multi-timeframe coverage (M1, M5, H1)
+  ✅ Diverse feature types (momentum, volatility, structure, indicators, time)
+
+Recommended action:
+  → Use 27-29 normalized features for pretrain
+  → Monitor feature importance during training
+  → Consider L1 regularization to handle any remaining multicollinearity
+  → Use raw OHLC separately for position sizing and risk management
+
+Ready for pretrain implementation!
