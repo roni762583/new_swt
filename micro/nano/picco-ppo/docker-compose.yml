@@ -11,6 +11,7 @@ services:
       dockerfile: Dockerfile
       target: production
       cache_from:
+        - picco-ppo:latest
         - python:3.11-slim
       args:
         BUILDKIT_INLINE_CACHE: 1

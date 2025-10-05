@@ -19,11 +19,11 @@ WORKDIR /app
 # ======= STAGE 1: Dependencies =======
 FROM base as deps
 
-# Copy and install requirements with caching
+# Copy and install requirements with BuildKit cache
 COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip==25.2 && \
-    pip install --no-cache-dir -r requirements.txt && \
+    pip install -r requirements.txt && \
     pip list
 
 # ======= STAGE 2: Application =======
