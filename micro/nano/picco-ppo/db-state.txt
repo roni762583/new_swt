@@ -1,5 +1,5 @@
 DATABASE STATE REPORT - COMPLETE SCHEMA WITH FORMULAS
-Generated on: 2025-10-03 16:52 (Updated - Added 3 columns: pretrain_action, rsi_extreme, bb_position)
+Generated on: 2025-10-05 (MAJOR UPDATE - Added M1 slope z-scores, 69 total columns)
 
 
 ================================================================================
@@ -11,7 +11,7 @@ Tables found: 1
 TABLE: master
 ============================================================
 Row count: 1,333,912
-Column count: 66
+Column count: 67 (66 active + 1 deprecated)
 
 Full column listing with formulas:
 ------------------------------------------------------------
@@ -80,12 +80,23 @@ Full column listing with formulas:
                                                 Q1 (both big): Corr=+0.104
                                                 Q3 (small range, big pos): Corr=-0.062 (reversal signal)
   37. high_swing_slope_m1       DOUBLE       M1 high swing slope (rate of change, pips/bar)
+                                              Mean: 0.024, Std: 1.36, Range: [-51.03, +63.00]
+                                              Distribution: 48.8% down, 2.0% neutral, 49.2% up
   38. low_swing_slope_m1        DOUBLE       M1 low swing slope (rate of change, pips/bar)
-  39. h1_trend_slope            DOUBLE       H1 market structure based slope selection:
-                                              HHHL (Higher Highs, Higher Lows) = low_swing_slope_h1_zsarctan
-                                              LHLL (Lower Highs, Lower Lows) = high_swing_slope_h1_zsarctan
-                                              Divergence (HHLL or LHHL) = average of both slopes
-                                              Intelligently selects relevant slope based on current trend structure
+                                              Mean: -0.019, Std: 1.47, Range: [-91.50, +73.85]
+                                              Distribution: 47.8% down, 2.0% neutral, 50.1% up
+  39. h1_trend_slope            DOUBLE       DEPRECATED - Use h1_trend_slope_zsarctan instead
+                                              (Set to NULL, kept for compatibility)
+  68. high_swing_slope_m1_zsarctan_w20 DOUBLE arctan((high_swing_slope_m1 - rolling_mean_20) / fixed_std) * 2/π
+                                              Window=20, Fixed std=1.279701 (933,729 training rows)
+                                              Detects extreme M1 granular uptrends/downtrends
+                                              Mean: -0.0015, Std: 0.3630, Range: [-0.9832, +0.9863]
+                                              Extremes (|z|>0.8): 17,812 (1.34%)
+  69. low_swing_slope_m1_zsarctan_w20 DOUBLE  arctan((low_swing_slope_m1 - rolling_mean_20) / fixed_std) * 2/π
+                                              Window=20, Fixed std=1.382908 (933,735 training rows)
+                                              Detects extreme M1 granular uptrends/downtrends
+                                              Mean: 0.0007, Std: 0.3530, Range: [-0.9887, +0.9888]
+                                              Extremes (|z|>0.8): 16,762 (1.26%)
   40. log_return_1m             DOUBLE       LN(close / close_1bar_ago)
                                               1-minute log return for momentum detection
                                               Valid: 1,333,911 (100.0%), Range: [-0.018, +0.011]
@@ -100,17 +111,19 @@ Full column listing with formulas:
                                               Range [0, 1]: 0=choppy (random walk), 1=trending (straight line)
                                               Valid: 1,333,852 (100.0%), Mean: 0.124, Range: [0.000, 0.784]
   44. zigzag_price              DOUBLE       ZigZag indicator swing points (NaN elsewhere)
-                                              Min swing: 10 pips (0.10 price units for GBPJPY)
-                                              Pivots: 55,807 (4.18% of bars)
-                                              Avg swing: 24.4 pips, Range: [10.0, 513.4] pips
+                                              Min swing: 30 pips (0.30 price units for GBPJPY)
+                                              Pivots: 13,486 (1.01% of bars)
+                                              Avg swing: 61.4 pips, Range: [30.0, 520.6] pips
+                                              Price range: [149.048, 208.120]
                                               For pretraining labels and major turning point detection
   45. zigzag_direction          TINYINT      ZigZag trend direction at each bar
                                               +1 = uptrend, -1 = downtrend, 0 = undefined
-                                              Uptrend: 699,832 bars (52.46%)
-                                              Downtrend: 634,066 bars (47.53%)
-                                              Trend reversals: 10,348 events
+                                              Uptrend: 235,470 bars (17.65%)
+                                              Downtrend: 251,531 bars (18.86%)
+                                              Undefined: 846,911 bars (63.49%)
   46. is_zigzag_pivot           BOOLEAN      True at ZigZag swing points, False elsewhere
-                                              Marks major market turning points (55,807 pivots)
+                                              Marks major market turning points (13,486 pivots)
+                                              Fixed: Now tracks new extremes in current trend
                                               Use for supervised learning labels
   47. atr_60                    DOUBLE       Average True Range (60 M1 bars = 1 hour volatility context)
                                               TR = max(high-low, |high-prev_close|, |low-prev_close|)
@@ -191,28 +204,41 @@ Full column listing with formulas:
   61. hour_cos                  DOUBLE       cos(2π × hour / 24)
                                               24-hour timecycle encoding (orthogonal to hour_sin)
                                               Mean: 0.001893, Range: [-1.0, +1.0]
-  62. dow_sin                   DOUBLE       sin(2π × day_of_week / 5)
-                                              5-day trading week timecycle (Mon-Fri)
-                                              Mean: 0.108712, Range: [-0.951, +0.951]
-                                              Captures weekly patterns
-  63. dow_cos                   DOUBLE       cos(2π × day_of_week / 5)
-                                              5-day trading week timecycle (orthogonal to dow_sin)
-                                              Mean: -0.001256, Range: [-0.809, +1.0]
+  62. dow_sin                   DOUBLE       sin(2π × hours_since_sun_5pm / 120)
+                                              120-hour forex trading week cycle (Sun 5pm EST - Fri 5pm EST)
+                                              Sunday 5pm = 0 hours (sin=0, cos=1), Friday 5pm = 120 hours (wraps to 0)
+                                              Mean: -0.000534, Range: [-1.0, +1.0]
+                                              Captures forex session patterns (Asian/European/US overlap)
+  63. dow_cos                   DOUBLE       cos(2π × hours_since_sun_5pm / 120)
+                                              120-hour forex trading week cycle (orthogonal to dow_sin)
+                                              Mean: -0.001889, Range: [-1.0, +1.0]
+                                              Key times: Mon 9am=(16h, 0.74, 0.67), Wed noon=(67h, -0.36, -0.93)
   64. pretrain_action           TINYINT      ZigZag-based pretraining labels
-                                              0=HOLD (92.06%), 1=BUY (2.11%), 2=SELL (2.07%), 3=CLOSE (3.76%)
-                                              Entry: 2 bars after pivot confirmation
-                                              Exit: Bar before next pivot
-                                              Total trades: 55,807
+                                              1=BUY (34 signals, 0.0025%), -1=SELL (0 signals), 0=HOLD (99.99%)
+                                              Entry: At ZigZag swing low (buy signal only in current data)
+                                              Total trade signals: 34 (from 13,486 pivots, 13,485 swings)
+                                              Note: Pretrain labels need regeneration to use new ZigZag data
   65. rsi_extreme               DOUBLE       (RSI14 - 50) / 50, bounded [-1, 1]
                                               Normalized RSI oscillator for overbought/oversold detection
                                               Mean: 0.0072, Range: [-0.936, +0.940]
                                               Extremes (|x|>0.8): 262 (0.02%)
-  66. bb_position               DOUBLE       (close - sma20) / (2 * std20), clipped [-2, 2]
-                                              Bollinger Band position indicator
-                                              Mean: 0.0142, Range: [-2.0, +2.0]
-                                              Distribution: >+1.0: 5.20%, -1 to +1: 89.64%, <-1.0: 5.16%
+  66. bb_position               DOUBLE       (close - sma20) / (4 * std20), clipped [-1, 1]
+                                              Bollinger Band position indicator (RESCALED for ML)
+                                              Formula: Divide by 4× std instead of 2× for [-1, 1] range
+                                              Mean: 0.0071, Std: 0.321, Range: [-1.0, +1.0]
+                                              Distribution: >+0.5: 5.18%, -0.5 to +0.5: 89.68%, <-0.5: 5.14%
+                                              Matches other ML feature scales (rsi_extreme, z-scores)
+  67. h1_trend_slope_zsarctan   DOUBLE       H1 market structure based slope selection (Z-SCORE)
+                                              HHHL (Higher Highs, Higher Lows) = low_swing_slope_h1_zsarctan
+                                              LHLL (Lower Highs, Lower Lows) = high_swing_slope_h1_zsarctan
+                                              Divergence (HHLL or LHHL) = average of both slopes
+                                              Intelligently selects relevant slope based on current trend structure
+                                              Mean: -0.0039, Std: 0.103, Range: [-0.976, +0.990]
+                                              Distribution: 0.55% extreme down, 3.01% moderate down, 93.77% neutral,
+                                                            2.38% moderate up, 0.29% extreme up
+                                              Window=20, uses same fixed std as underlying H1 slope z-scores
 
-File size: 335.54 MB (last modified: 2025-10-03 16:51)
+File size: 347.76 MB (last modified: 2025-10-03 16:51)
 
 
 

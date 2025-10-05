@@ -47,6 +47,7 @@ MIN_ZIGZAG_SWING = 0.30  # 30 pips for GBPJPY
 def calculate_zigzag(highs: np.ndarray, lows: np.ndarray, min_swing: float):
     """
     Calculate ZigZag indicator with minimum swing threshold.
+    Updated to track new extremes in the current trend direction.
 
     Args:
         highs: Array of high prices
@@ -74,30 +75,55 @@ def calculate_zigzag(highs: np.ndarray, lows: np.ndarray, min_swing: float):
         current_low = lows[i]
 
         if last_pivot_type == 1:  # Last pivot was a high, looking for low
-            potential_swing = last_pivot_price - current_low
-            if potential_swing >= min_swing:
-                # Found significant low
-                pivots[i] = current_low
-                is_pivot[i] = True
-                directions[last_pivot_idx:i+1] = -1  # Downtrend
-                last_pivot_idx = i
-                last_pivot_price = current_low
-                last_pivot_type = -1
-
-        else:  # Last pivot was a low, looking for high
-            potential_swing = current_high - last_pivot_price
-            if potential_swing >= min_swing:
-                # Found significant high
-                pivots[i] = current_high
-                is_pivot[i] = True
-                directions[last_pivot_idx:i+1] = 1  # Uptrend
+            # Check if we have a new higher high (update pivot)
+            if current_high > last_pivot_price:
+                # Remove old pivot, move to new high
+                is_pivot[last_pivot_idx] = False
+                pivots[last_pivot_idx] = np.nan
                 last_pivot_idx = i
                 last_pivot_price = current_high
-                last_pivot_type = 1
+                pivots[i] = current_high
+                is_pivot[i] = True
+            else:
+                # Check for significant low
+                potential_swing = last_pivot_price - current_low
+                if potential_swing >= min_swing:
+                    # Found significant low
+                    pivots[i] = current_low
+                    is_pivot[i] = True
+                    directions[last_pivot_idx:i+1] = -1  # Downtrend
+                    last_pivot_idx = i
+                    last_pivot_price = current_low
+                    last_pivot_type = -1
+
+        else:  # Last pivot was a low, looking for high
+            # Check if we have a new lower low (update pivot)
+            if current_low < last_pivot_price:
+                # Remove old pivot, move to new low
+                is_pivot[last_pivot_idx] = False
+                pivots[last_pivot_idx] = np.nan
+                last_pivot_idx = i
+                last_pivot_price = current_low
+                pivots[i] = current_low
+                is_pivot[i] = True
+            else:
+                # Check for significant high
+                potential_swing = current_high - last_pivot_price
+                if potential_swing >= min_swing:
+                    # Found significant high
+                    pivots[i] = current_high
+                    is_pivot[i] = True
+                    directions[last_pivot_idx:i+1] = 1  # Uptrend
+                    last_pivot_idx = i
+                    last_pivot_price = current_high
+                    last_pivot_type = 1
 
         i += 1
         if i % 100000 == 0:
             logger.info(f"  Processed {i:,}/{n:,} bars")
+
+    # Fill remaining direction from last pivot
+    directions[last_pivot_idx:] = 1 if last_pivot_type == 1 else -1
 
     return pivots, directions, is_pivot
 
@@ -676,7 +702,8 @@ def generate_zscore_features(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
     logger.info("="*80)
 
     # Add z-score columns to database if they don't exist
-    for col in ['high_swing_slope_h1_zsarctan', 'low_swing_slope_h1_zsarctan']:
+    for col in ['high_swing_slope_h1_zsarctan', 'low_swing_slope_h1_zsarctan',
+                'high_swing_slope_m1_zsarctan_w20', 'low_swing_slope_m1_zsarctan_w20']:
         try:
             conn.execute(f"ALTER TABLE master ADD COLUMN {col} DOUBLE")
             logger.info(f"✅ Added column: {col}")
@@ -722,6 +749,24 @@ def generate_zscore_features(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
     logger.info(f"  Mean: {low_slope_mean:.6f}")
     logger.info(f"  Std: {low_slope_std:.6f}")
 
+    # high_swing_slope_m1
+    logger.info("Calculating fixed std for high_swing_slope_m1...")
+    high_slope_m1_train_data = df['high_swing_slope_m1'].iloc[:train_end].dropna().values
+    high_slope_m1_std = float(np.std(high_slope_m1_train_data))
+    high_slope_m1_mean = float(np.mean(high_slope_m1_train_data))
+    logger.info(f"  Training rows: {len(high_slope_m1_train_data):,}")
+    logger.info(f"  Mean: {high_slope_m1_mean:.6f}")
+    logger.info(f"  Std: {high_slope_m1_std:.6f}")
+
+    # low_swing_slope_m1
+    logger.info("Calculating fixed std for low_swing_slope_m1...")
+    low_slope_m1_train_data = df['low_swing_slope_m1'].iloc[:train_end].dropna().values
+    low_slope_m1_std = float(np.std(low_slope_m1_train_data))
+    low_slope_m1_mean = float(np.mean(low_slope_m1_train_data))
+    logger.info(f"  Training rows: {len(low_slope_m1_train_data):,}")
+    logger.info(f"  Mean: {low_slope_m1_mean:.6f}")
+    logger.info(f"  Std: {low_slope_m1_std:.6f}")
+
     # Calculate z-scores
     logger.info("\nCalculating z-scores with Window=20...")
 
@@ -744,6 +789,16 @@ def generate_zscore_features(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
     z_low_slope = calculate_fixed_std_zscore(df['low_swing_slope_h1'].values, low_slope_std, window=20)
     arctan_low_slope = np.arctan(z_low_slope) * 2 / np.pi
     df['low_swing_slope_h1_zsarctan'] = arctan_low_slope
+
+    # high_swing_slope_m1_zsarctan_w20
+    z_high_slope_m1 = calculate_fixed_std_zscore(df['high_swing_slope_m1'].values, high_slope_m1_std, window=20)
+    arctan_high_slope_m1 = np.arctan(z_high_slope_m1) * 2 / np.pi
+    df['high_swing_slope_m1_zsarctan_w20'] = arctan_high_slope_m1
+
+    # low_swing_slope_m1_zsarctan_w20
+    z_low_slope_m1 = calculate_fixed_std_zscore(df['low_swing_slope_m1'].values, low_slope_m1_std, window=20)
+    arctan_low_slope_m1 = np.arctan(z_low_slope_m1) * 2 / np.pi
+    df['low_swing_slope_m1_zsarctan_w20'] = arctan_low_slope_m1
 
     # combo_geometric (interaction feature using geometric mean)
     logger.info("\nCalculating combo_geometric interaction feature...")
@@ -785,6 +840,22 @@ def generate_zscore_features(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
     logger.info(f"  Range: [{np.min(valid):.4f}, {np.max(valid):.4f}]")
     logger.info(f"  Extremes (|z|>0.8): {np.sum(np.abs(valid) > 0.8):,} ({np.sum(np.abs(valid) > 0.8)/len(valid)*100:.2f}%)")
 
+    logger.info("\n📊 high_swing_slope_m1_zsarctan_w20:")
+    valid = arctan_high_slope_m1[~np.isnan(arctan_high_slope_m1)]
+    logger.info(f"  Valid: {len(valid):,} ({len(valid)/len(df)*100:.1f}%)")
+    logger.info(f"  Mean: {np.mean(valid):.4f}")
+    logger.info(f"  Std: {np.std(valid):.4f}")
+    logger.info(f"  Range: [{np.min(valid):.4f}, {np.max(valid):.4f}]")
+    logger.info(f"  Extremes (|z|>0.8): {np.sum(np.abs(valid) > 0.8):,} ({np.sum(np.abs(valid) > 0.8)/len(valid)*100:.2f}%)")
+
+    logger.info("\n📊 low_swing_slope_m1_zsarctan_w20:")
+    valid = arctan_low_slope_m1[~np.isnan(arctan_low_slope_m1)]
+    logger.info(f"  Valid: {len(valid):,} ({len(valid)/len(df)*100:.1f}%)")
+    logger.info(f"  Mean: {np.mean(valid):.4f}")
+    logger.info(f"  Std: {np.std(valid):.4f}")
+    logger.info(f"  Range: [{np.min(valid):.4f}, {np.max(valid):.4f}]")
+    logger.info(f"  Extremes (|z|>0.8): {np.sum(np.abs(valid) > 0.8):,} ({np.sum(np.abs(valid) > 0.8)/len(valid)*100:.2f}%)")
+
     logger.info("\n📊 combo_geometric (interaction via geometric mean):")
     combo_valid = df['combo_geometric'].values[~np.isnan(df['combo_geometric'].values)]
     logger.info(f"  Valid: {len(combo_valid):,} ({len(combo_valid)/len(df)*100:.1f}%)")
@@ -798,7 +869,8 @@ def generate_zscore_features(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
     logger.info("\nUpdating database...")
     conn.register('zscore_data', df[['bar_index', 'h1_swing_range_position_zsarctan_w20',
                                      'swing_point_range_zsarctan_w20', 'high_swing_slope_h1_zsarctan',
-                                     'low_swing_slope_h1_zsarctan', 'combo_geometric']])
+                                     'low_swing_slope_h1_zsarctan', 'high_swing_slope_m1_zsarctan_w20',
+                                     'low_swing_slope_m1_zsarctan_w20', 'combo_geometric']])
     conn.execute("""
         UPDATE master
         SET
@@ -806,11 +878,13 @@ def generate_zscore_features(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
             swing_point_range_zsarctan_w20 = zscore_data.swing_point_range_zsarctan_w20,
             high_swing_slope_h1_zsarctan = zscore_data.high_swing_slope_h1_zsarctan,
             low_swing_slope_h1_zsarctan = zscore_data.low_swing_slope_h1_zsarctan,
+            high_swing_slope_m1_zsarctan_w20 = zscore_data.high_swing_slope_m1_zsarctan_w20,
+            low_swing_slope_m1_zsarctan_w20 = zscore_data.low_swing_slope_m1_zsarctan_w20,
             combo_geometric = zscore_data.combo_geometric
         FROM zscore_data
         WHERE master.bar_index = zscore_data.bar_index
     """)
-    logger.info("✅ Z-score features updated")
+    logger.info("✅ Z-score features updated (including M1 slopes)")
 
     # Update config
     config = {
@@ -872,9 +946,9 @@ def generate_zscore_features(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
 # ============================================================================
 
 def generate_h1_trend_slope(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
-    """Step 7: Generate h1_trend_slope based on market structure (HHHL, LHLL, divergence)."""
+    """Step 7: Generate h1_trend_slope_zsarctan based on market structure (HHHL, LHLL, divergence)."""
     logger.info("\n" + "="*80)
-    logger.info("STEP 7: H1 TREND SLOPE (Market Structure Based)")
+    logger.info("STEP 7: H1 TREND SLOPE ZSARCTAN (Market Structure Based)")
     logger.info("="*80)
 
     # Add column if doesn't exist
@@ -944,7 +1018,7 @@ def generate_h1_trend_slope(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
     conn.register('trend_slope_data', df[['bar_index', 'h1_trend_slope']])
     conn.execute("""
         UPDATE master
-        SET h1_trend_slope = trend_slope_data.h1_trend_slope
+        SET h1_trend_slope_zsarctan = trend_slope_data.h1_trend_slope
         FROM trend_slope_data
         WHERE master.bar_index = trend_slope_data.bar_index
     """)
@@ -1115,21 +1189,22 @@ def generate_bb_position(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
     logger.info("Calculating BB position...")
     sma20 = df['close'].rolling(window=20, min_periods=20).mean()
     std20 = df['close'].rolling(window=20, min_periods=20).std()
-    bb_position = np.clip((df['close'] - sma20) / (2 * std20), -2.0, 2.0)
+    # Rescaled to [-1, 1] for ML consistency (divide by 4 instead of 2)
+    bb_position = np.clip((df['close'] - sma20) / (4 * std20), -1.0, 1.0)
     df['bb_position'] = bb_position
 
     valid = bb_position.dropna().values
-    above_1 = np.sum(valid > 1.0)
-    below_minus1 = np.sum(valid < -1.0)
-    in_range = len(valid) - above_1 - below_minus1
+    above_05 = np.sum(valid > 0.5)
+    below_minus05 = np.sum(valid < -0.5)
+    in_range = len(valid) - above_05 - below_minus05
 
-    logger.info(f"\n📊 BB Position:")
+    logger.info(f"\n📊 BB Position (rescaled to [-1, 1]):")
     logger.info(f"  Valid: {len(valid):,} ({len(valid)/len(df)*100:.1f}%)")
     logger.info(f"  Mean: {np.mean(valid):.4f}")
     logger.info(f"  Range: [{np.min(valid):.4f}, {np.max(valid):.4f}]")
-    logger.info(f"  >+1.0: {above_1:,} ({above_1/len(valid)*100:.2f}%)")
-    logger.info(f"  -1 to +1: {in_range:,} ({in_range/len(valid)*100:.2f}%)")
-    logger.info(f"  <-1.0: {below_minus1:,} ({below_minus1/len(valid)*100:.2f}%)")
+    logger.info(f"  >+0.5: {above_05:,} ({above_05/len(valid)*100:.2f}%)")
+    logger.info(f"  -0.5 to +0.5: {in_range:,} ({in_range/len(valid)*100:.2f}%)")
+    logger.info(f"  <-0.5: {below_minus05:,} ({below_minus05/len(valid)*100:.2f}%)")
 
     logger.info("Updating database...")
     conn.register('bb_data', df[['bar_index', 'bb_position']])
