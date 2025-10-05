@@ -312,18 +312,39 @@ Runtime: ~7.5 minutes for 1.3M bars
 
 ## 🔬 Technical Details
 
-### Feature Space (24 dimensions)
-- **Market features** (7): OHLC ratios, volume, EMAs, RSI
-- **Position features** (9): Position state, PnL, time in position, drawdown metrics
-- **Account features** (1): Balance change ratio
-- **Gating features** (3): Rolling σ, threshold, gate flag
-- **Action mask** (4): Valid action indicators
+### Feature Space (32 dimensions)
+- **Market features** (26): ML-ready features from database (momentum, volatility, swing, z-scores, indicators, time)
+- **Position features** (6): Position state, unrealized P&L, time in position, drawdown metrics
+
+See `db-state.txt` for complete feature formulas and `sample_features.csv` for data examples.
 
 ### Action Masking Implementation
-The environment provides a 4-element mask in the observation:
-- `[1, 1, 1, 0]` when flat (can Hold, Buy, Sell, but not Close)
-- `[1, 0, 0, 1]` when in position (can Hold or Close, but not Buy/Sell)
+Action masking prevents invalid actions (CLOSE when flat, BUY/SELL when in position):
+- Implemented in `PolicyNetwork.get_action()` by setting invalid logits to -1e8
+- Position state tracked via `position_side` feature (index 26)
 
 ---
 
-This setup balances **learning efficiency** (with action masking) and **practical trading control**, while keeping the lighter **128→128 MLP** for stability and speed.
+## 📊 Feature Analysis & Visualizations
+
+### Complete Trade Sample
+![Trade Sample Chart](trade_sample_chart.png)
+*32-bar SHORT trade example showing ZigZag pivots, entry/exit points, and +20.8 pip profit*
+
+### Feature Variance Distribution
+![Feature Variance](feature_variance_26features.png)
+*Variance analysis showing temporal features dominate variance (hour/dow cyclical patterns)*
+
+### Correlation Analysis
+![Correlation Heatmap](correlation_heatmap_26features.png)
+*Feature correlation matrix - optimized to zero high-correlation pairs (|r| > 0.7)*
+
+**Analysis Results:**
+- **26 ML features** normalized to [-1, 1] range
+- **Zero high-correlation pairs** (|r| > 0.7) after removing 3 redundant features
+- **Variance dominated** by temporal features (hour/dow cycles)
+- Run `python analyze_features_correlation.py` to regenerate analysis
+
+---
+
+This setup balances **learning efficiency** (with action masking and residual connections) and **practical trading control**, using an optimized **32→64→128→32 architecture** with ~18K parameters for stability and speed.

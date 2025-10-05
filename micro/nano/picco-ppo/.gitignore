@@ -37,9 +37,9 @@ logs/
 # Keep feature sample CSV/PNG files for documentation
 !sample_features.csv
 !sample_labels.csv
-!correlation_matrix_29features.csv
-!correlation_heatmap_29features.png
-!feature_variance_29features.png
+!correlation_matrix_26features.csv
+!correlation_heatmap_26features.png
+!feature_variance_26features.png
 !trade_sample_chart.png
 
 # Jupyter
