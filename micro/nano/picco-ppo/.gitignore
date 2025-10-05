@@ -40,6 +40,7 @@ logs/
 !correlation_matrix_29features.csv
 !correlation_heatmap_29features.png
 !feature_variance_29features.png
+!trade_sample_chart.png
 
 # Jupyter
 .ipynb_checkpoints/
