@@ -34,6 +34,13 @@ logs/
 !FEATURE_FORMULAS.md
 !README.md
 
+# Keep feature sample CSV/PNG files for documentation
+!sample_features.csv
+!sample_labels.csv
+!correlation_matrix_29features.csv
+!correlation_heatmap_29features.png
+!feature_variance_29features.png
+
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
