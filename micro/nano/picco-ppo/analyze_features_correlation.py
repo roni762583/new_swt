@@ -19,8 +19,9 @@ except ImportError:
     HAS_SEABORN = False
     print("⚠️  seaborn not available, using matplotlib for heatmap")
 
-DB_PATH = Path("/home/aharon/projects/new_swt/micro/nano/picco-ppo/master.duckdb")
-OUTPUT_DIR = Path("/home/aharon/projects/new_swt/micro/nano/picco-ppo")
+# Use relative paths (works in container and host)
+DB_PATH = Path(__file__).parent / "master.duckdb"
+OUTPUT_DIR = Path(__file__).parent
 
 # 26 ML features (current optimized set)
 FEATURES = [

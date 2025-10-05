@@ -60,3 +60,7 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# DuckDB temp files
+master.duckdb.tmp/
+*.tmp/

@@ -2,75 +2,73 @@ DATABASE STATE REPORT - COMPLETE SCHEMA WITH FORMULAS
 Generated on: 2025-10-05 (MAJOR UPDATE - Added M1 slope z-scores, 69 total columns)
 
 
-================================================================================
 DATABASE: /home/aharon/projects/new_swt/micro/nano/picco-ppo/master.duckdb
-================================================================================
+
 Tables found: 1
 
-============================================================
 TABLE: master
-============================================================
+
 Row count: 1,333,912
 Column count: 67 (66 active + 1 deprecated)
 
 Full column listing with formulas:
-------------------------------------------------------------
-   1. timestamp                 TIMESTAMP    Bar timestamp (PRIMARY KEY)
-   2. bar_index                 BIGINT       Sequential bar number
-   3. open                      DOUBLE       M1 bar open price
-   4. high                      DOUBLE       M1 bar high price
-   5. low                       DOUBLE       M1 bar low price
-   6. close                     DOUBLE       M1 bar close price
-   7. volume                    BIGINT       M1 bar volume
-   8. swing_high_m1             BOOLEAN      True if M1 swing high (h[i] > h[i-1] and h[i] > h[i+1])
-   9. swing_low_m1              BOOLEAN      True if M1 swing low (l[i] < l[i-1] and l[i] < l[i+1])
-  10. swing_high_h1             BOOLEAN      True if H1 swing high (highest M1 swing high in hour)
-  11. swing_low_h1              BOOLEAN      True if H1 swing low (lowest M1 swing low in hour)
-  12. last_m1_hsp_idx           BIGINT       Bar index of last M1 high swing point (hsp = high swing point)
-  13. last_m1_hsp_val           DOUBLE       Price value of last M1 high swing point
-  14. prev_m1_hsp_idx           BIGINT       Bar index of previous M1 high swing point
-  15. prev_m1_hsp_val           DOUBLE       Price value of previous M1 high swing point
-  16. last_m1_lsp_idx           BIGINT       Bar index of last M1 low swing point (lsp = low swing point)
-  17. last_m1_lsp_val           DOUBLE       Price value of last M1 low swing point
-  18. prev_m1_lsp_idx           BIGINT       Bar index of previous M1 low swing point
-  19. prev_m1_lsp_val           DOUBLE       Price value of previous M1 low swing point
-  20. last_h1_hsp_idx           BIGINT       Bar index of last H1 high swing point
-  21. last_h1_hsp_val           DOUBLE       Price value of last H1 high swing point
-  22. prev_h1_hsp_idx           BIGINT       Bar index of previous H1 high swing point
-  23. prev_h1_hsp_val           DOUBLE       Price value of previous H1 high swing point
-  24. last_h1_lsp_idx           BIGINT       Bar index of last H1 low swing point
-  25. last_h1_lsp_val           DOUBLE       Price value of last H1 low swing point
-  26. prev_h1_lsp_idx           BIGINT       Bar index of previous H1 low swing point
-  27. prev_h1_lsp_val           DOUBLE       Price value of previous H1 low swing point
-  28. h1_swing_range_position   DOUBLE       (close - last_h1_lsp_val) / (last_h1_hsp_val - last_h1_lsp_val)
+
+1. timestamp (TIMESTAMP) Bar timestamp (PRIMARY KEY)
+2. bar_index (BIGINT) Sequential bar number
+3. open (DOUBLE) M1 bar open price
+4. high (DOUBLE) M1 bar high price
+5. low (DOUBLE) M1 bar low price
+6. close (DOUBLE) M1 bar close price
+7. volume (BIGINT) M1 bar volume
+8. swing_high_m1 (BOOLEAN) True if M1 swing high (h[i] > h[i-1] and h[i] > h[i+1])
+9. swing_low_m1 (BOOLEAN) True if M1 swing low (l[i] < l[i-1] and l[i] < l[i+1])
+10. swing_high_h1 (BOOLEAN) True if H1 swing high (highest M1 swing high in hour)
+11. swing_low_h1 (BOOLEAN) True if H1 swing low (lowest M1 swing low in hour)
+12. last_m1_hsp_idx (BIGINT) Bar index of last M1 high swing point (hsp = high swing point)
+13. last_m1_hsp_val (DOUBLE) Price value of last M1 high swing point
+14. prev_m1_hsp_idx (BIGINT) Bar index of previous M1 high swing point
+15. prev_m1_hsp_val (DOUBLE) Price value of previous M1 high swing point
+16. last_m1_lsp_idx (BIGINT) Bar index of last M1 low swing point (lsp = low swing point)
+17. last_m1_lsp_val (DOUBLE) Price value of last M1 low swing point
+18. prev_m1_lsp_idx (BIGINT) Bar index of previous M1 low swing point
+19. prev_m1_lsp_val (DOUBLE) Price value of previous M1 low swing point
+20. last_h1_hsp_idx (BIGINT) Bar index of last H1 high swing point
+21. last_h1_hsp_val (DOUBLE) Price value of last H1 high swing point
+22. prev_h1_hsp_idx (BIGINT) Bar index of previous H1 high swing point
+23. prev_h1_hsp_val (DOUBLE) Price value of previous H1 high swing point
+24. last_h1_lsp_idx (BIGINT) Bar index of last H1 low swing point
+25. last_h1_lsp_val (DOUBLE) Price value of last H1 low swing point
+26. prev_h1_lsp_idx (BIGINT) Bar index of previous H1 low swing point
+27. prev_h1_lsp_val (DOUBLE) Price value of previous H1 low swing point
+28. h1_swing_range_position (DOUBLE) (close - last_h1_lsp_val) / (last_h1_hsp_val - last_h1_lsp_val)
                                               Range [0, 1] where 0=at swing low, 1=at swing high
-  29. swing_point_range         DOUBLE       last_h1_hsp_val - last_h1_lsp_val
+29. swing_point_range (DOUBLE) last_h1_hsp_val - last_h1_lsp_val
                                               H1 swing range magnitude in price units
-  30. h1_swing_range_position_zsarctan_w20 DOUBLE  arctan((h1_swing_range_position - rolling_mean_20) / fixed_std) * 2/π
+30. h1_swing_range_position_zsarctan_w20 (DOUBLE) arctan((h1_swing_range_position - rolling_mean_20) / fixed_std) * 2/π
                                               Window=20, Fixed std=3.421357 (923,116 training rows)
                                               Detects short-term position extremes within H1 range
-  31. swing_point_range_zsarctan_w20 DOUBLE   arctan((swing_point_range - rolling_mean_20) / fixed_std) * 2/π
+31. swing_point_range_zsarctan_w20 (DOUBLE) arctan((swing_point_range - rolling_mean_20) / fixed_std) * 2/π
                                               Window=20, Fixed std=0.221478 (933,724 training rows)
                                               Detects when H1 range itself is extreme (tight/wide)
-  32. high_swing_slope_h1       DOUBLE       (current_h1_swing_high - previous_h1_swing_high) / (time_diff_bars)
+32. high_swing_slope_h1 (DOUBLE) (current_h1_swing_high - previous_h1_swing_high) / (time_diff_bars)
                                               Rate of change between consecutive H1 swing highs (pips/bar)
                                               Forward-filled from each swing high until next
                                               Mean: -0.012 pips/bar, Range: [-11.68, +63.00]
-  33. low_swing_slope_h1        DOUBLE       (current_h1_swing_low - previous_h1_swing_low) / (time_diff_bars)
+33. low_swing_slope_h1 (DOUBLE) (current_h1_swing_low - previous_h1_swing_low) / (time_diff_bars)
                                               Rate of change between consecutive H1 swing lows (pips/bar)
                                               Forward-filled from each swing low until next
                                               Mean: +0.019 pips/bar, Range: [-91.50, +23.93]
-  34. high_swing_slope_h1_zsarctan DOUBLE    arctan((high_swing_slope_h1 - rolling_mean_20) / fixed_std) * 2/π
+34. high_swing_slope_h1_zsarctan (DOUBLE) arctan((high_swing_slope_h1 - rolling_mean_20) / fixed_std) * 2/π
                                               Window=20, Fixed std=0.619729 (933,705 training rows)
                                               Detects extreme uptrends/downtrends in swing highs
                                               Mean: +0.0016, Range: [-0.9936, +0.9934]
                                               Extremes (|z|>0.8): 3,782 (0.28%)
-  35. low_swing_slope_h1_zsarctan DOUBLE     arctan((low_swing_slope_h1 - rolling_mean_20) / fixed_std) * 2/π
+35. low_swing_slope_h1_zsarctan (DOUBLE) arctan((low_swing_slope_h1 - rolling_mean_20) / fixed_std) * 2/π
                                               Window=20, Fixed std=1.341183 (933,653 training rows)
                                               Detects extreme uptrends/downtrends in swing lows
                                               Mean: -0.0007, Range: [-0.9901, +0.9904]
                                               Extremes (|z|>0.8): 1,053 (0.08%)
-  36. combo_geometric           DOUBLE       sign(r×p) × sqrt(|range_z| × |position_z|)
+36. combo_geometric (DOUBLE) sign(r×p) × sqrt(|range_z| × |position_z|)
                                               Geometric mean interaction: penalizes imbalance, favors balanced extremes
                                               Superior to arithmetic multiply: Avg |corr|=0.077 vs 0.046 (+69%)
                                               Formula: GM = sign(r×p) × sqrt(|r| × |p|) where r=range_z, p=position_z
@@ -79,116 +77,116 @@ Full column listing with formulas:
                                                 Q2 (big range, small pos): Corr=+0.184 (strongest!)
                                                 Q1 (both big): Corr=+0.104
                                                 Q3 (small range, big pos): Corr=-0.062 (reversal signal)
-  37. high_swing_slope_m1       DOUBLE       M1 high swing slope (rate of change, pips/bar)
+37. high_swing_slope_m1 (DOUBLE) M1 high swing slope (rate of change, pips/bar)
                                               Mean: 0.024, Std: 1.36, Range: [-51.03, +63.00]
                                               Distribution: 48.8% down, 2.0% neutral, 49.2% up
-  38. low_swing_slope_m1        DOUBLE       M1 low swing slope (rate of change, pips/bar)
+38. low_swing_slope_m1 (DOUBLE) M1 low swing slope (rate of change, pips/bar)
                                               Mean: -0.019, Std: 1.47, Range: [-91.50, +73.85]
                                               Distribution: 47.8% down, 2.0% neutral, 50.1% up
-  39. h1_trend_slope            DOUBLE       DEPRECATED - Use h1_trend_slope_zsarctan instead
+39. h1_trend_slope (DOUBLE) DEPRECATED - Use h1_trend_slope_zsarctan instead
                                               (Set to NULL, kept for compatibility)
-  68. high_swing_slope_m1_zsarctan_w20 DOUBLE arctan((high_swing_slope_m1 - rolling_mean_20) / fixed_std) * 2/π
+68. high_swing_slope_m1_zsarctan_w20 (DOUBLE) arctan((high_swing_slope_m1 - rolling_mean_20) / fixed_std) * 2/π
                                               Window=20, Fixed std=1.279701 (933,729 training rows)
                                               Detects extreme M1 granular uptrends/downtrends
                                               Mean: -0.0015, Std: 0.3630, Range: [-0.9832, +0.9863]
                                               Extremes (|z|>0.8): 17,812 (1.34%)
-  69. low_swing_slope_m1_zsarctan_w20 DOUBLE  arctan((low_swing_slope_m1 - rolling_mean_20) / fixed_std) * 2/π
+69. low_swing_slope_m1_zsarctan_w20 (DOUBLE) arctan((low_swing_slope_m1 - rolling_mean_20) / fixed_std) * 2/π
                                               Window=20, Fixed std=1.382908 (933,735 training rows)
                                               Detects extreme M1 granular uptrends/downtrends
                                               Mean: 0.0007, Std: 0.3530, Range: [-0.9887, +0.9888]
                                               Extremes (|z|>0.8): 16,762 (1.26%)
-  40. log_return_1m             DOUBLE       LN(close / close_1bar_ago)
+40. log_return_1m (DOUBLE) LN(close / close_1bar_ago)
                                               1-minute log return for momentum detection
                                               Valid: 1,333,911 (100.0%), Range: [-0.018, +0.011]
-  41. log_return_5m             DOUBLE       LN(close / close_5bars_ago)
+41. log_return_5m (DOUBLE) LN(close / close_5bars_ago)
                                               5-minute log return for short-term trend
                                               Valid: 1,333,907 (100.0%), Range: [-0.031, +0.017]
-  42. log_return_60m            DOUBLE       LN(close / close_60bars_ago)
+42. log_return_60m (DOUBLE) LN(close / close_60bars_ago)
                                               H1 log return for longer-term trend alignment
                                               Valid: 1,333,852 (100.0%), Range: [-0.039, +0.023]
-  43. efficiency_ratio_h1       DOUBLE       abs(close - close.shift(60)) / close.diff().abs().rolling(60).sum()
+43. efficiency_ratio_h1 (DOUBLE) abs(close - close.shift(60)) / close.diff().abs().rolling(60).sum()
                                               H1 efficiency ratio: directional movement vs path length
                                               Range [0, 1]: 0=choppy (random walk), 1=trending (straight line)
                                               Valid: 1,333,852 (100.0%), Mean: 0.124, Range: [0.000, 0.784]
-  44. zigzag_price              DOUBLE       ZigZag indicator swing points (NaN elsewhere)
+44. zigzag_price (DOUBLE) ZigZag indicator swing points (NaN elsewhere)
                                               Min swing: 30 pips (0.30 price units for GBPJPY)
                                               Pivots: 13,486 (1.01% of bars)
                                               Avg swing: 61.4 pips, Range: [30.0, 520.6] pips
                                               Price range: [149.048, 208.120]
                                               For pretraining labels and major turning point detection
-  45. zigzag_direction          TINYINT      ZigZag trend direction at each bar
+45. zigzag_direction          TINYINT      ZigZag trend direction at each bar
                                               +1 = uptrend, -1 = downtrend, 0 = undefined
                                               Uptrend: 235,470 bars (17.65%)
                                               Downtrend: 251,531 bars (18.86%)
                                               Undefined: 846,911 bars (63.49%)
-  46. is_zigzag_pivot           BOOLEAN      True at ZigZag swing points, False elsewhere
+46. is_zigzag_pivot (BOOLEAN) True at ZigZag swing points, False elsewhere
                                               Marks major market turning points (13,486 pivots)
                                               Fixed: Now tracks new extremes in current trend
                                               Use for supervised learning labels
-  47. atr_60                    DOUBLE       Average True Range (60 M1 bars = 1 hour volatility context)
+47. atr_60 (DOUBLE) Average True Range (60 M1 bars = 1 hour volatility context)
                                               TR = max(high-low, |high-prev_close|, |low-prev_close|)
                                               ATR = TR.rolling(60).mean()
                                               Mean: 3.90 pips, Range: [0.4, 46.7] pips
                                               CRITICAL for position sizing and risk management
-  48. atr_14                    DOUBLE       Average True Range (14 M1 bars = short-term volatility)
+48. atr_14 (DOUBLE) Average True Range (14 M1 bars = short-term volatility)
                                               Mean: 3.90 pips, Range: [0.1, 97.2] pips
                                               Use for adaptive stop placement (2-3x ATR)
                                               Flash crash peak: 56.6 pips (5.0x increase from baseline)
-  49. momentum_strength_3       DOUBLE       3-bar cumulative log returns (lr_1m.rolling(3).sum())
+49. momentum_strength_3 (DOUBLE) 3-bar cumulative log returns (lr_1m.rolling(3).sum())
                                               Detects momentum acceleration/deceleration
                                               Range: [-279 pips, +127 pips] cumulative
                                               Flash crash extreme: -279 pips (massive acceleration)
                                               Extreme signals (|z|>99th percentile): 1% of bars
-  50. momentum_strength_10      DOUBLE       10-bar cumulative log returns (lr_1m.rolling(10).sum())
+50. momentum_strength_10 (DOUBLE) 10-bar cumulative log returns (lr_1m.rolling(10).sum())
                                               Detects medium-term momentum persistence
                                               Range: [-322 pips, +155 pips] cumulative
                                               Flash crash extreme: -322 pips (trend exhaustion warning)
                                               Use to avoid fighting strong trends
-  51. realized_vol_20           DOUBLE       Realized volatility (rolling std of lr_1m over 20 bars)
+51. realized_vol_20 (DOUBLE) Realized volatility (rolling std of lr_1m over 20 bars)
                                               Measures actual return dispersion (20 minutes)
                                               Mean: 0.00015, Range: [0.000009, 0.005428]
                                               Flash crash peak: 0.00429 (8.8x increase)
                                               Different from ATR: rvol = return variance, ATR = range
-  52. realized_vol_60           DOUBLE       Realized volatility (rolling std of lr_1m over 60 bars)
+52. realized_vol_60 (DOUBLE) Realized volatility (rolling std of lr_1m over 60 bars)
                                               Measures hourly return dispersion (1 hour)
                                               Mean: 0.00016, Range: [0.000021, 0.003337]
                                               Flash crash peak: 0.00259 (6.3x increase)
                                               Use for volatility regime detection
-  53. vol_ratio                 DOUBLE       Volatility ratio (realized_vol_20 / realized_vol_60)
+53. vol_ratio (DOUBLE) Volatility ratio (realized_vol_20 / realized_vol_60)
                                               Detects short-term vs long-term volatility changes
                                               Mean: 0.98, Range: [0.08, 1.75]
                                               >1.5 = volatility spike (reduce position size)
                                               <0.7 = compression (9.3% of bars, breakout potential)
                                               Normal regime (0.7-1.3): 83.4% of bars
-  54. atr_60_zsarctan_w20       DOUBLE       arctan((atr_60 - rolling_mean_20) / fixed_std) * 2/π
+54. atr_60_zsarctan_w20 (DOUBLE) arctan((atr_60 - rolling_mean_20) / fixed_std) * 2/π
                                               Window=20, Fixed std=0.020560 (933,737 training rows)
                                               Hourly ATR regime detection vs 20-bar baseline
                                               Mean: -0.000476, Range: [-0.8938, +0.9061]
                                               Extremes (|z|>0.8): 258 (0.02% of bars)
-  55. atr_14_zsarctan_w20       DOUBLE       arctan((atr_14 - rolling_mean_20) / fixed_std) * 2/π
+55. atr_14_zsarctan_w20 (DOUBLE) arctan((atr_14 - rolling_mean_20) / fixed_std) * 2/π
                                               Window=20, Fixed std=0.023129 (933,737 training rows)
                                               Short-term ATR regime detection vs 20-bar baseline
                                               Mean: -0.004305, Range: [-0.9565, +0.9729]
                                               Extremes (|z|>0.8): 2,594 (0.19% of bars)
                                               Flash crash: 6/7 bars had |z|>0.8 (extreme volatility)
-  56. momentum_strength_10_zsarctan_w20 DOUBLE arctan((momentum_strength_10 - rolling_mean_20) / fixed_std) * 2/π
+56. momentum_strength_10_zsarctan_w20 (DOUBLE) arctan((momentum_strength_10 - rolling_mean_20) / fixed_std) * 2/π
                                               Window=20, Fixed std=0.000559 (933,737 training rows)
                                               10-bar momentum extreme detection
                                               Mean: -0.000589, Range: [-0.9858, +0.9840]
                                               Extremes (|z|>0.8): 14,403 (1.08% of bars)
                                               Flash crash: 5/7 bars had |z|>0.8 (momentum persistence)
-  57. realized_vol_20_zsarctan_w20 DOUBLE    arctan((realized_vol_20 - rolling_mean_20) / fixed_std) * 2/π
+57. realized_vol_20_zsarctan_w20 (DOUBLE) arctan((realized_vol_20 - rolling_mean_20) / fixed_std) * 2/π
                                               Window=20, Fixed std=0.000106 (933,733 training rows)
                                               Short-term realized volatility regime detection
                                               Mean: -0.001875, Range: [-0.9765, +0.9808]
                                               Extremes (|z|>0.8): 3,400 (0.25% of bars)
                                               Flash crash: 6/7 bars had |z|>0.8 (volatility spike)
-  58. realized_vol_60_zsarctan_w20 DOUBLE    arctan((realized_vol_60 - rolling_mean_20) / fixed_std) * 2/π
+58. realized_vol_60_zsarctan_w20 (DOUBLE) arctan((realized_vol_60 - rolling_mean_20) / fixed_std) * 2/π
                                               Window=20, Fixed std=0.000099 (933,728 training rows)
                                               Hourly realized volatility regime detection
                                               Mean: -0.000864, Range: [-0.9574, +0.9678]
                                               Extremes (|z|>0.8): 958 (0.07% of bars)
-  59. vol_ratio_deviation       DOUBLE       vol_ratio - 1.0 (centered around 0)
+59. vol_ratio_deviation (DOUBLE) vol_ratio - 1.0 (centered around 0)
                                               Negative = compression (short-term < long-term)
                                               Positive = spike (short-term > long-term)
                                               Mean: -0.023, Range: [-0.915, +0.754]
@@ -197,38 +195,38 @@ Full column listing with formulas:
                                               >+0.5: Spike (7% of bars)
                                               Flash crash: All 7 bars had dev>0.5 (consistent spike)
                                               NO z-score applied (ratio already normalized)
-  60. hour_sin                  DOUBLE       sin(2π × hour / 24)
+60. hour_sin (DOUBLE) sin(2π × hour / 24)
                                               24-hour timecycle encoding
                                               Mean: 0.006518, Range: [-1.0, +1.0]
                                               Captures intraday patterns
-  61. hour_cos                  DOUBLE       cos(2π × hour / 24)
+61. hour_cos (DOUBLE) cos(2π × hour / 24)
                                               24-hour timecycle encoding (orthogonal to hour_sin)
                                               Mean: 0.001893, Range: [-1.0, +1.0]
-  62. dow_sin                   DOUBLE       sin(2π × hours_since_sun_5pm / 120)
+62. dow_sin (DOUBLE) sin(2π × hours_since_sun_5pm / 120)
                                               120-hour forex trading week cycle (Sun 5pm EST - Fri 5pm EST)
                                               Sunday 5pm = 0 hours (sin=0, cos=1), Friday 5pm = 120 hours (wraps to 0)
                                               Mean: -0.000534, Range: [-1.0, +1.0]
                                               Captures forex session patterns (Asian/European/US overlap)
-  63. dow_cos                   DOUBLE       cos(2π × hours_since_sun_5pm / 120)
+63. dow_cos (DOUBLE) cos(2π × hours_since_sun_5pm / 120)
                                               120-hour forex trading week cycle (orthogonal to dow_sin)
                                               Mean: -0.001889, Range: [-1.0, +1.0]
                                               Key times: Mon 9am=(16h, 0.74, 0.67), Wed noon=(67h, -0.36, -0.93)
-  64. pretrain_action           TINYINT      ZigZag-based pretraining labels
+64. pretrain_action           TINYINT      ZigZag-based pretraining labels
                                               1=BUY (34 signals, 0.0025%), -1=SELL (0 signals), 0=HOLD (99.99%)
                                               Entry: At ZigZag swing low (buy signal only in current data)
                                               Total trade signals: 34 (from 13,486 pivots, 13,485 swings)
                                               Note: Pretrain labels need regeneration to use new ZigZag data
-  65. rsi_extreme               DOUBLE       (RSI14 - 50) / 50, bounded [-1, 1]
+65. rsi_extreme (DOUBLE) (RSI14 - 50) / 50, bounded [-1, 1]
                                               Normalized RSI oscillator for overbought/oversold detection
                                               Mean: 0.0072, Range: [-0.936, +0.940]
                                               Extremes (|x|>0.8): 262 (0.02%)
-  66. bb_position               DOUBLE       (close - sma20) / (4 * std20), clipped [-1, 1]
+66. bb_position (DOUBLE) (close - sma20) / (4 * std20), clipped [-1, 1]
                                               Bollinger Band position indicator (RESCALED for ML)
                                               Formula: Divide by 4× std instead of 2× for [-1, 1] range
                                               Mean: 0.0071, Std: 0.321, Range: [-1.0, +1.0]
                                               Distribution: >+0.5: 5.18%, -0.5 to +0.5: 89.68%, <-0.5: 5.14%
                                               Matches other ML feature scales (rsi_extreme, z-scores)
-  67. h1_trend_slope_zsarctan   DOUBLE       H1 market structure based slope selection (Z-SCORE)
+67. h1_trend_slope_zsarctan (DOUBLE) H1 market structure based slope selection (Z-SCORE)
                                               HHHL (Higher Highs, Higher Lows) = low_swing_slope_h1_zsarctan
                                               LHLL (Lower Highs, Lower Lows) = high_swing_slope_h1_zsarctan
                                               Divergence (HHLL or LHHL) = average of both slopes
@@ -251,32 +249,30 @@ File size: 347.76 MB (last modified: 2025-10-03 16:51)
   - Deleted add_pretrain_and_indicators.py and update_zigzag_30pips.py
 
   Consolidated feature generation order:
-  1. ZigZag (30 pips)
-  2. Swing points (M1/H1)
-  3. Last swing tracking
-  4. H1 swing range position
-  5. Swing point range
-  6. Swing slopes
-  7. Z-score features
-  8. H1 trend slope
-  9. Pretrain action
-  10. RSI extreme
-  11. BB position
-  12. M1 trend slope
+1. ZigZag (30 pips)
+2. Swing points (M1/H1)
+3. Last swing tracking
+4. H1 swing range position
+5. Swing point range
+6. Swing slopes
+7. Z-score features
+8. H1 trend slope
+9. Pretrain action
+10. RSI extreme
+11. BB position
+12. M1 trend slope
 
   All in one script as per CLAUDE.md guidelines.
 
-================================================================================
 FEATURE SELECTION FOR ZIGZAG PRETRAIN
-================================================================================
+
 
 **Target**: Predict `pretrain_action` (0=HOLD, 1=BUY, 2=SELL, 3=CLOSE) from ZigZag pivots
 **Data**: 13,486 pivots, ~12,153 theoretical trades over 3.59 years
 **Goal**: Learn to identify market turning points and trend direction
 
---------------------------------------------------------------------------------
 PROPOSED FEATURE SET (Minimal & Effective)
---------------------------------------------------------------------------------
+
 
 ### Core Price Features (4)
 Essential for understanding current market state:
@@ -332,9 +328,8 @@ Session patterns:
 29. ✅ dow_sin - 120-hour forex week cycle
 30. ✅ dow_cos - 120-hour forex week cycle (orthogonal)
 
---------------------------------------------------------------------------------
 TOTAL FEATURES: 30
---------------------------------------------------------------------------------
+
 
 **Feature Categories**:
 - **Price/Volume**: 4 features (13%)
@@ -346,9 +341,8 @@ TOTAL FEATURES: 30
 - **Indicators**: 1 feature (3%)
 - **Time**: 4 features (13%)
 
---------------------------------------------------------------------------------
 EXCLUDED FEATURES (36)
---------------------------------------------------------------------------------
+
 
 ### Raw Swing Tracking (16) - Redundant with derived features
 - last_m1_hsp_idx, last_m1_hsp_val, prev_m1_hsp_idx, prev_m1_hsp_val
@@ -393,9 +387,8 @@ EXCLUDED FEATURES (36)
 - pretrain_action
 *Reason*: This is the target, not a feature
 
---------------------------------------------------------------------------------
 RATIONALE
---------------------------------------------------------------------------------
+
 
 **Why These 30 Features?**
 
@@ -443,9 +436,8 @@ RATIONALE
 - Balanced coverage across feature types
 - Removed 3 redundant features while maintaining diverse signal capture
 
---------------------------------------------------------------------------------
 EXPECTED PERFORMANCE
---------------------------------------------------------------------------------
+
 
 **Theoretical ZigZag Performance** (from analysis):
 - 12,153 trades
@@ -459,9 +451,8 @@ EXPECTED PERFORMANCE
 - Avg pips: +15-20 pips/trade (vs +43.87 theoretical)
 - Key: Learn to identify **high-probability** turning points
 
---------------------------------------------------------------------------------
 SQL QUERY TO EXTRACT FEATURES
---------------------------------------------------------------------------------
+
 
 ```sql
 SELECT
@@ -501,9 +492,8 @@ WHERE pretrain_action IS NOT NULL
 ORDER BY bar_index;
 ```
 
---------------------------------------------------------------------------------
 STATUS: Feature set optimized to 32 features - ready for PPO training
---------------------------------------------------------------------------------
+
 
 **Update Summary**:
 - **26 ML features** from database (all normalized to [-1, 1] range)
@@ -513,9 +503,9 @@ STATUS: Feature set optimized to 32 features - ready for PPO training
 **Database Features (26)**:
 - Reduced from 33 to 26 ML features (removed 3 highly correlated, 4 OHLCV reference-only)
 - REMOVED for multicollinearity:
-  1. rsi_extreme (r=+0.891 with bb_position)
-  2. atr_60_zsarctan_w20 (r=+0.847 with realized_vol_60_zsarctan_w20)
-  3. realized_vol_20_zsarctan_w20 (r=+0.722 with atr_14_zsarctan_w20)
+1. rsi_extreme (r=+0.891 with bb_position)
+2. atr_60_zsarctan_w20 (r=+0.847 with realized_vol_60_zsarctan_w20)
+3. realized_vol_20_zsarctan_w20 (r=+0.722 with atr_14_zsarctan_w20)
 - RESULT: Zero high-correlation pairs (|r| > 0.7)
 - Maintained diverse signal coverage across all feature types
 
@@ -523,27 +513,27 @@ STATUS: Feature set optimized to 32 features - ready for PPO training
 These features track the current trading position state and are NOT in the database.
 They are calculated by the trading environment at each step:
 
-  1. position_side = {-1.0 (short), 0.0 (flat), +1.0 (long)}
+1. position_side = {-1.0 (short), 0.0 (flat), +1.0 (long)}
      Formula: float(current_position_direction)
 
-  2. position_pips = (unrealized_pnl_in_pips) / 100.0
+2. position_pips = (unrealized_pnl_in_pips) / 100.0
      Formula:
        IF long:  ((current_price - entry_price) × 100) / 100
        IF short: ((entry_price - current_price) × 100) / 100
        IF flat:  0.0
 
-  3. bars_since_entry = (current_step - entry_step) / 100.0
+3. bars_since_entry = (current_step - entry_step) / 100.0
      Formula: number_of_bars_in_position / 100.0 (scaled for ML)
 
-  4. pips_from_peak = (peak_pips_in_position - current_position_pips) / 100.0
+4. pips_from_peak = (peak_pips_in_position - current_position_pips) / 100.0
      Formula: (max_unrealized_pnl_reached - current_unrealized_pnl) / 100.0
      Note: Tracks drawdown from the peak within current position
 
-  5. max_drawdown_pips = max_observed_drawdown_in_position / 100.0
+5. max_drawdown_pips = max_observed_drawdown_in_position / 100.0
      Formula: max(abs(negative_pnl_in_position)) / 100.0
      Note: Maximum adverse excursion within current position
 
-  6. accumulated_dd = cumulative_drawdown_in_position / 1000.0
+6. accumulated_dd = cumulative_drawdown_in_position / 1000.0
      Formula: sum_of_drawdown_increases_step_by_step / 1000.0
      Note: Step-by-step accumulation of drawdown within current position
            (NOT across trades, resets on position close)
