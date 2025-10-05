@@ -28,16 +28,26 @@ This ensures:
 
 ## 🏗️ Neural Network Architecture
 
-Policy/value function networks use a **2-layer MLP**:
+**Input: 32 features** (26 market ML features + 6 position state)
+
+Policy/value network with **residual connection**:
 
 ```
-Input → Dense(128, ReLU) → Dense(128, ReLU) → Policy / Value heads
+Input(32) ──┬──> Layer1(64) ──> Layer2(128) ──> Layer3(32) ──┬──> Concat(64) ──> Fusion(32) ──┬──> Policy(4)
+            │                                                 │                                └──> Value(1)
+            └─────────────────────────────────────────────────┘
+                                Skip Connection (direct to fusion)
 ```
 
-* **Hidden size**: [128, 128] (lighter than previous 256 setup, reduces overfitting).
-* **Activation**: ReLU.
-* **Policy head**: 4 logits (softmax for action probabilities).
-* **Value head**: scalar (state-value estimate).
+**Architecture Details:**
+* **Input**: 32 dimensions (26 market + 6 position)
+* **Hidden layers**: 32→64→128→32 with LayerNorm, ReLU, Dropout(0.1)
+* **Skip connection**: Input concatenated with Layer3 output (32+32=64)
+* **Fusion layer**: 64→32 with LayerNorm and ReLU
+* **Policy head**: 32→16→4 (action logits)
+* **Value head**: 32→16→1 (state value)
+* **Total parameters**: ~18,300
+* **Benefits**: Gradient flow, preserves raw features, faster convergence
 
 ---
 

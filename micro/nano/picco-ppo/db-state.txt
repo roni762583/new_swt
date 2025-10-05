@@ -502,15 +502,49 @@ ORDER BY bar_index;
 ```
 
 --------------------------------------------------------------------------------
-STATUS: Feature set optimized to 30 features - ready for pretrain implementation
+STATUS: Feature set optimized to 32 features - ready for PPO training
 --------------------------------------------------------------------------------
 
 **Update Summary**:
-- Reduced from 33 to 30 features (removed 3 highly correlated features)
+- **26 ML features** from database (all normalized to [-1, 1] range)
+- **6 position state features** added at runtime by trading environment
+- **Total: 32 input features** for PPO neural network
+
+**Database Features (26)**:
+- Reduced from 33 to 26 ML features (removed 3 highly correlated, 4 OHLCV reference-only)
 - REMOVED for multicollinearity:
   1. rsi_extreme (r=+0.891 with bb_position)
   2. atr_60_zsarctan_w20 (r=+0.847 with realized_vol_60_zsarctan_w20)
   3. realized_vol_20_zsarctan_w20 (r=+0.722 with atr_14_zsarctan_w20)
 - RESULT: Zero high-correlation pairs (|r| > 0.7)
 - Maintained diverse signal coverage across all feature types
-- All 26 ML features normalized to [-1, 1] range (excluding OHLCV)
+
+**Position State Features (6)** - Added at runtime:
+These features track the current trading position state and are NOT in the database.
+They are calculated by the trading environment at each step:
+
+  1. position_side = {-1.0 (short), 0.0 (flat), +1.0 (long)}
+     Formula: float(current_position_direction)
+
+  2. position_pips = (unrealized_pnl_in_pips) / 100.0
+     Formula:
+       IF long:  ((current_price - entry_price) × 100) / 100
+       IF short: ((entry_price - current_price) × 100) / 100
+       IF flat:  0.0
+
+  3. bars_since_entry = (current_step - entry_step) / 100.0
+     Formula: number_of_bars_in_position / 100.0 (scaled for ML)
+
+  4. pips_from_peak = (peak_pips_in_position - current_position_pips) / 100.0
+     Formula: (max_unrealized_pnl_reached - current_unrealized_pnl) / 100.0
+     Note: Tracks drawdown from the peak within current position
+
+  5. max_drawdown_pips = max_observed_drawdown_in_position / 100.0
+     Formula: max(abs(negative_pnl_in_position)) / 100.0
+     Note: Maximum adverse excursion within current position
+
+  6. accumulated_dd = cumulative_drawdown_in_position / 1000.0
+     Formula: sum_of_drawdown_increases_step_by_step / 1000.0
+     Note: Step-by-step accumulation of drawdown within current position
+           (NOT across trades, resets on position close)
+           Used in AMDDP1 reward: R = PnL - 0.01 × accumulated_dd

@@ -17,74 +17,59 @@ class PolicyNetwork(nn.Module):
     """Optimized neural network for trading with PPO.
 
     Architecture designed for:
-    - 17 input features (7 market + 6 position + 4 time)
+    - 32 input features (26 market ML features + 6 position state)
     - 4 discrete actions (hold, buy, sell, close)
-    - Feature groups with different scales/meanings
+    - Residual connection from input to fusion layer
+
+    Network flow: 32 → 64 → 128 → 32 → Fusion(with skip) → 32 → Heads
     """
 
-    def __init__(self, input_dim=17, action_dim=4):
+    def __init__(self, input_dim=32, action_dim=4):
         super(PolicyNetwork, self).__init__()
 
-        # Feature extractors for different groups
-        # Market features (7): RSI, BB, swing, ER, etc.
-        self.market_encoder = nn.Sequential(
-            nn.Linear(7, 64),
-            nn.LayerNorm(64),
-            nn.ReLU(),
-            nn.Linear(64, 32)
-        )
-
-        # Position features (6): side, pips, bars_since, etc.
-        self.position_encoder = nn.Sequential(
-            nn.Linear(6, 32),
-            nn.LayerNorm(32),
-            nn.ReLU(),
-            nn.Linear(32, 16)
-        )
-
-        # Time features (4): sin/cos hour/week
-        self.time_encoder = nn.Sequential(
-            nn.Linear(4, 16),
-            nn.ReLU()
-        )
-
-        # Combined feature size: 32 + 16 + 16 = 64
-        combined_dim = 64
-
-        # Deeper shared trunk (4 layers: 64→256→128→64)
-        self.trunk = nn.Sequential(
-            nn.Linear(combined_dim, 64),
-            nn.LayerNorm(64),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-
-            nn.Linear(64, 256),
-            nn.LayerNorm(256),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-
-            nn.Linear(256, 128),
-            nn.LayerNorm(128),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-
-            nn.Linear(128, 64),
+        # Main pathway: 32 → 64 → 128 → 32
+        self.layer1 = nn.Sequential(
+            nn.Linear(32, 64),
             nn.LayerNorm(64),
             nn.ReLU(),
             nn.Dropout(0.1)
         )
 
-        # Separate heads for policy and value (connect from trunk output: 64)
-        self.policy_head = nn.Sequential(
-            nn.Linear(64, 32),
+        self.layer2 = nn.Sequential(
+            nn.Linear(64, 128),
+            nn.LayerNorm(128),
             nn.ReLU(),
-            nn.Linear(32, action_dim)
+            nn.Dropout(0.1)
+        )
+
+        self.layer3 = nn.Sequential(
+            nn.Linear(128, 32),
+            nn.LayerNorm(32),
+            nn.ReLU(),
+            nn.Dropout(0.1)
+        )
+
+        # Skip projection (32 → 32, identity since same dims)
+        self.skip_proj = nn.Identity()
+
+        # Fusion layer: combines main path (32) + skip (32) = 64 → 32
+        self.fusion = nn.Sequential(
+            nn.Linear(64, 32),
+            nn.LayerNorm(32),
+            nn.ReLU()
+        )
+
+        # Separate heads for policy and value (from fused output: 32)
+        self.policy_head = nn.Sequential(
+            nn.Linear(32, 16),
+            nn.ReLU(),
+            nn.Linear(16, action_dim)
         )
 
         self.value_head = nn.Sequential(
-            nn.Linear(64, 32),
+            nn.Linear(32, 16),
             nn.ReLU(),
-            nn.Linear(32, 1)
+            nn.Linear(16, 1)
         )
 
         # Initialize weights appropriately
@@ -103,42 +88,56 @@ class PolicyNetwork(nn.Module):
             nn.init.constant_(module.bias, 0.0)
 
     def forward(self, x):
-        """Forward pass with feature grouping."""
-        # Split input into feature groups
-        market_features = x[..., :7]
-        position_features = x[..., 7:13]
-        time_features = x[..., 13:17]
+        """Forward pass with residual connection.
 
-        # Encode each group
-        market_encoded = self.market_encoder(market_features)
-        position_encoded = self.position_encoder(position_features)
-        time_encoded = self.time_encoder(time_features)
+        Args:
+            x: Input tensor of shape (batch, 32)
 
-        # Combine encoded features
-        combined = torch.cat([
-            market_encoded,
-            position_encoded,
-            time_encoded
-        ], dim=-1)
+        Returns:
+            logits: Action logits of shape (batch, 4)
+            value: State value of shape (batch, 1)
+        """
+        # Store input for skip connection
+        identity = self.skip_proj(x)  # 32
 
-        # Pass through trunk
-        trunk_output = self.trunk(combined)
+        # Main pathway
+        x1 = self.layer1(x)      # 32 → 64
+        x2 = self.layer2(x1)     # 64 → 128
+        x3 = self.layer3(x2)     # 128 → 32
+
+        # Concatenate skip + main path
+        fused = torch.cat([x3, identity], dim=-1)  # [32 + 32] = 64
+
+        # Final fusion layer
+        out = self.fusion(fused)  # 64 → 32
 
         # Get policy and value outputs
-        logits = self.policy_head(trunk_output)
-        value = self.value_head(trunk_output)
+        logits = self.policy_head(out)
+        value = self.value_head(out)
 
         return logits, value
 
     def get_action(self, state):
-        """Sample action from policy with action masking."""
+        """Sample action from policy with action masking.
+
+        Args:
+            state: State vector of shape (32,)
+                - state[0:26]: Market features
+                - state[26]: position_side (-1/0/+1)
+                - state[27:32]: Other position features
+
+        Returns:
+            action: Sampled action (0-3)
+            log_prob: Log probability of action
+            value: State value estimate
+        """
         state_tensor = torch.FloatTensor(state).unsqueeze(0)
 
         with torch.no_grad():
             logits, value = self(state_tensor)
 
             # Action masking: prevent CLOSE when no position
-            position_side = state[7]  # position_side feature at index 7
+            position_side = state[26]  # position_side at index 26 (after 26 market features)
             if abs(position_side) < 0.01:  # No position
                 logits[0, 3] = -1e8  # Mask CLOSE action
 
@@ -165,7 +164,7 @@ class PPOAgent:
 
     def __init__(
         self,
-        state_dim=17,
+        state_dim=32,
         action_dim=4,
         learning_rate=1e-4,  # Lower LR for stability
         gamma=0.99,
@@ -397,7 +396,7 @@ class PPOLearningPolicy:
     Uses proper batch sizes and update frequencies for trading.
     """
 
-    def __init__(self, state_dim=17, load_path=None):
+    def __init__(self, state_dim=32, load_path=None):
         # Detect CUDA availability
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         if device == 'cuda':
@@ -474,10 +473,17 @@ if __name__ == "__main__":
     # Create agent
     agent = PPOLearningPolicy()
 
+    # Print network architecture
+    print(f"\nNetwork Architecture:")
+    print(f"  Input: 32 features (26 market + 6 position)")
+    print(f"  Hidden: 32→64→128→32 with skip connection")
+    print(f"  Output: 4 actions (HOLD, BUY, SELL, CLOSE)")
+    print(f"  Parameters: {sum(p.numel() for p in agent.agent.policy.parameters()):,}")
+
     # Simulate some steps
     for i in range(100):
-        # Random state (17 features)
-        state = np.random.randn(17)
+        # Random state (32 features)
+        state = np.random.randn(32)
 
         # Get action from policy
         action = agent.get_action(state)
