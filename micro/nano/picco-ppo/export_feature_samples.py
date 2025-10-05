@@ -78,27 +78,18 @@ def export_feature_samples():
     df = conn.execute(query).fetch_df()
     print(f"Total rows with labels: {len(df):,}")
 
-    # Find first SELL (bar 174) and its CLOSE (bar 378)
-    # Use compact window: 3 before SELL to 3 after CLOSE
-    # SELL at 174, CLOSE at 378
-    # Window: 171-381 = 211 bars (too long)
-    # Use: 171-180 (around SELL) + 375-381 (around CLOSE) = 17 bars total
+    # Use complete trade: SELL at bar 9428, CLOSE at bar 9449 (21 bar duration)
+    # Include 5 bars before SELL and 5 bars after CLOSE for context
+    # Total: 32 bars (Jan 11, 2022, 09:23-09:54)
 
-    sell_start = 171
-    sell_end = 180
-    close_start = 375
-    close_end = 381
+    start_idx = 9423  # 5 bars before SELL
+    end_idx = 9454    # 5 bars after CLOSE
 
-    window1 = df[(df['bar_index'] >= sell_start) & (df['bar_index'] <= sell_end)].copy()
-    window2 = df[(df['bar_index'] >= close_start) & (df['bar_index'] <= close_end)].copy()
+    combined = df[(df['bar_index'] >= start_idx) & (df['bar_index'] <= end_idx)].copy()
 
-    combined = pd.concat([window1, window2], ignore_index=True)
-
-    print(f"\n📊 Trade cycle sample ({len(combined)} rows):")
-    print(f"  Window 1 (SELL): bars {sell_start}-{sell_end}")
-    print(f"    Date: {window1['timestamp'].min()} to {window1['timestamp'].max()}")
-    print(f"  Window 2 (CLOSE): bars {close_start}-{close_end}")
-    print(f"    Date: {window2['timestamp'].min()} to {window2['timestamp'].max()}")
+    print(f"\n📊 Complete trade cycle ({len(combined)} rows):")
+    print(f"  Bar range: {start_idx}-{end_idx}")
+    print(f"  Date: {combined['timestamp'].min()} to {combined['timestamp'].max()}")
 
     # Action distribution for combined
     action_counts = combined['pretrain_action'].value_counts().sort_index()
@@ -151,11 +142,15 @@ def export_feature_samples():
     print("✅ EXPORT COMPLETE")
     print("=" * 80)
     print("\nGenerated files:")
-    print(f"  - sample_features.csv  ({len(combined)} rows: SELL context + CLOSE context)")
-    print(f"  - sample_labels.csv    ({len(combined)} rows: corresponding labels)")
-    print("\nTrade cycle captured:")
-    print("  - Bars 171-180: Context around SELL action (bar 174)")
-    print("  - Bars 375-381: Context around CLOSE action (bar 378)")
+    print(f"  - sample_features.csv  ({len(combined)} rows)")
+    print(f"  - sample_labels.csv    ({len(combined)} rows)")
+    print("\nComplete trade captured (32 bars):")
+    print("  - Bars 9423-9427: 5 bars before trade (context)")
+    print("  - Bar 9428: SELL action (trade entry)")
+    print("  - Bars 9429-9448: 20 bars holding position")
+    print("  - Bar 9449: CLOSE action (trade exit)")
+    print("  - Bars 9450-9454: 5 bars after trade (context)")
+    print("\nTrade profit: SELL @ 157.0240, CLOSE @ 156.8160 = +20.8 pips")
     print("\nThese CSV files should be committed to Git for documentation.")
 
 
