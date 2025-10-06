@@ -1,63 +1,58 @@
-# PPO M5/H1 Trading System – 4-Action Setup
+# PPO M1 Trading System – 4-Action GBPJPY
 
-Proximal Policy Optimization with **explicit 4-action space**, **rolling σ-based gating**, and **128→128 MLP policy architecture**.
-This version improves transparency and control by separating **Hold** and **Close** into distinct actions.
+Proximal Policy Optimization for GBPJPY trading with **M1 data**, **6-hour sessions**, **4-action space**, and **AMDDP1 reward** (1% DD penalty).
+
+## ⚠️ Current Status: Training Blocked
+
+**Issue**: DummyVecEnv (sequential) too slow for PPO learning. After ~2.35M timesteps (20K trades, 5 hours):
+- Expectancy: -0.066R (-0.79 pips/trade) - no improvement
+- Win rate: 7.3% (random baseline ~50%)
+- SubprocVecEnv (parallel) required but DuckDB connections fail pickling
+
+**Next Steps**: Implement thread-local DuckDB connections or connection pooling for SubprocVecEnv compatibility.
 
 ---
 
-## 🎯 Action Space (4 explicit actions)
+## 🎯 Action Space (4 discrete actions)
 
-* **0 = Hold** → Stay flat if no position, or hold current position if already open.
-* **1 = Buy** → Open a new long position (only if flat).
-* **2 = Sell** → Open a new short position (only if flat).
-* **3 = Close** → Exit current position (only if in a trade).
+* **0 = HOLD** → Do nothing, maintain current state
+* **1 = BUY** → Open long position (only if flat)
+* **2 = SELL** → Open short position (only if flat)
+* **3 = CLOSE** → Exit position (only if in trade)
 
-### 🔒 Action Masking
-
-* If **flat**: mask *Close (3)*.
-* If **in position**: mask *Buy (1)* and *Sell (2)*.
-* PPO sees 4 outputs every step, but invalid actions are masked to prevent wasted probability.
-
-This ensures:
-
-* **Clarity** → "Hold" always means continue, "Close" always means exit.
-* **Risk control** → Close is always available, even during gate blocks.
-* **Learning efficiency** → Agent doesn't waste exploration on impossible actions.
+**Action Logic:**
+- No action masking - invalid actions (BUY when long, CLOSE when flat) are ignored
+- Agent must explicitly choose CLOSE - no auto-closing
+- No reversals - must close before opening opposite direction
 
 ---
 
 ## 🏗️ Neural Network Architecture
 
-**Input: 32 features** (26 market ML features + 6 position state)
+**Stable-Baselines3 MlpPolicy:**
+* **Input**: 32 features (26 market ML + 6 position state)
+* **Network**: [64, 128, 32] with ReLU activation
+* **Output**: 4 action logits (HOLD, BUY, SELL, CLOSE)
+* **Total parameters**: ~20K
 
-Policy/value network with **residual connection**:
+**26 Market ML Features from master.duckdb:**
+1. `log_return_1m`, `log_return_5m`, `log_return_60m` - Multi-timeframe momentum
+2. `efficiency_ratio_h1` - H1 trending strength
+3. `momentum_strength_10_zsarctan_w20` - 10-bar momentum z-score
+4. `atr_14`, `atr_14_zsarctan_w20` - Volatility measures
+5. `vol_ratio_deviation`, `realized_vol_60_zsarctan_w20` - Volatility regime
+6. H1 swing features: `h1_swing_range_position`, `swing_point_range`, slopes
+7. M1 swing slopes with z-scores
+8. `combo_geometric` - Feature interaction
+9. `bb_position` - Bollinger Band position
+10. `hour_sin/cos`, `dow_sin/cos` - Cyclical time features
 
-```
-Input(32) ──┬──> Layer1(64) ──> Layer2(128) ──> Layer3(32) ──┬──> Concat(64) ──> Fusion(32) ──┬──> Policy(4)
-            │                                                 │                                └──> Value(1)
-            └─────────────────────────────────────────────────┘
-                                Skip Connection (direct to fusion)
-```
-
-**Architecture Details:**
-* **Input**: 32 dimensions (26 market + 6 position)
-* **Hidden layers**: 32→64→128→32 with LayerNorm, ReLU, Dropout(0.1)
-* **Skip connection**: Input concatenated with Layer3 output (32+32=64)
-* **Fusion layer**: 64→32 with LayerNorm and ReLU
-* **Policy head**: 32→16→4 (action logits)
-* **Value head**: 32→16→1 (state value)
-* **Total parameters**: ~18,300
-* **Benefits**: Gradient flow, preserves raw features, faster convergence
-
-### 🎓 Supervised Pretraining (NEW)
-
-**ZigZag Label Pretraining:**
-* Pretrain on 3.59 years of ZigZag pivot labels before PPO
-* **Labels**: 6,431 BUY (0.48%), 6,498 SELL (0.49%), 12,617 CLOSE (0.95%), 1.3M HOLD (98%)
-* **Training**: 70% train (933K samples), 30% val (400K samples)
-* **Class weights**: Balanced for imbalanced dataset (HOLD=0.25x, BUY/SELL=59x, CLOSE=30x)
-* **Epochs**: 1 epoch test first to verify learning, then extend if promising
-* **Benefits**: Network learns basic entry/exit patterns before RL exploration
+**6 Position State Features:**
+- Current position (-1/0/1)
+- PnL (pips, scaled, ATR-normalized)
+- Time in position
+- Accumulated drawdown
+- Peak pips
 
 ---
 
@@ -68,134 +63,113 @@ PPO_CONFIG = {
     "learning_rate": 3e-4,
     "n_steps": 2048,
     "batch_size": 64,
+    "n_epochs": 10,
     "gamma": 0.99,
     "gae_lambda": 0.95,
     "clip_range": 0.2,
     "ent_coef": 0.01,
-    "vf_coef": 0.25,
+    "vf_coef": 0.5,
     "max_grad_norm": 0.5,
-    "policy_kwargs": {
-        "net_arch": [128, 128],
-        "activation_fn": torch.nn.ReLU
-    }
+}
+
+TRAINING = {
+    "total_timesteps": 1_000_000,
+    "episode_length": 360,  # 360 M1 bars = 6 hours
+    "n_envs": 4,  # Currently DummyVecEnv (sequential)
+    "initial_balance": 10000.0,
+    "reward_scaling": 0.01,
 }
 ```
 
 ---
 
-## 🔎 Gating System
+## 🎯 Reward Function (AMDDP1)
 
-* **Rolling σ (12-bar M5)** defines volatility threshold.
-* **Hard gate** (early) → invalid entries masked, only Hold/Close remain.
-* **Soft gate** (later) → entries allowed but penalized.
-* **Threshold annealing**: k = 0.15 → 0.25 over training.
+```python
+# Phase 1 (optional): Winner-only learning (first 1000 profitable trades)
+if enable_phase1 and profitable_count < 1000:
+    reward = last_trade_pips * 0.01 if trade_won else 0.0
 
-### Threshold Formula
+# Phase 2 (default): Full AMDDP1 with 1% DD penalty
+else:
+    reward = pnl_change - 0.01 * accumulated_dd
+    if trade_won:
+        reward += 0.5  # Bonus for closing winners
 ```
-threshold = max(k × σ, 2 × spread, 2 pips)
-```
 
-Where:
-- **σ** = rolling standard deviation of 12-bar returns (M5)
-- **k** = threshold multiplier (anneals from 0.15 to 0.25)
-- **spread** = instrument spread (e.g., 4 pips for GBPJPY)
+**Key Parameters:**
+- **DD Penalty**: 1% of accumulated drawdown (correct AMDDP1)
+- **Winner Bonus**: +0.5 for closing profitable trades
+- **Phase1**: Optional `--phase1_1000winners` flag
 
 ---
 
-## 📈 Weighted Learning Strategy
+## 🚀 Quick Start (Docker Compose)
 
-Replaces winner-only learning with balanced weighting:
-
-* **Winners**: weight = 1.0 (full learning)
-* **Losers**: weight = 0.2 → 1.0 (annealed over 200k steps)
-
-This prevents selection bias while still emphasizing profitable patterns early in training.
-
----
-
-## 🎯 Training Objective
-
-**AMDDP1 Reward Function**:
-```
-R = ΔPnL - 0.01 × AccumulatedDD + GatePenalty
-```
-
-Where:
-- **ΔPnL** = Change in equity
-- **AccumulatedDD** = Cumulative drawdown from peak
-- **GatePenalty** = -0.1 when soft gating triggers
-
----
-
-## 🚀 Quick Start
-
-### 1. Precompute features (if not already done)
+### 1. Start training + monitoring
 ```bash
-python precompute_features_to_db.py
+docker compose up -d --build ppo-training ppo-monitor
 ```
 
-### 2. Train with 4-action environment
+### 2. Watch live expectancy
 ```bash
-python train_improved.py
+docker compose logs -f ppo-monitor
 ```
 
-### 3. Monitor training
+### 3. Check training logs
 ```bash
-# Real-time monitoring
-python monitor_continuous.py
-
-# Or bash script
-./monitor_training_live.sh
+docker compose logs -f ppo-training
 ```
 
-### 4. Validate checkpoint
+### 4. Stop training
 ```bash
-python validate_improved.py --model checkpoints/ppo_4action_500000_steps.zip
-```
-
-### 5. Live trading (with deployment risk controls)
-```bash
-python trade_live_improved.py --model checkpoints/best_model.zip
+docker compose stop ppo-training ppo-monitor
 ```
 
 ---
 
-## 📊 Performance Metrics
+## 📊 Data Pipeline
 
-### Latest Training Results (1M timesteps)
-- **Win Rate**: ~28% (targeting 30%+)
-- **Expectancy**: -2.1 pips/trade (improving)
-- **Gate Rate**: 45% (filtering noise effectively)
-- **Sharpe Ratio**: -0.8 (early stage)
+**Source**: `master.duckdb` (1.33M M1 bars, 379MB)
+- **Timeframe**: M1 (1-minute bars)
+- **Features**: 67 precomputed columns (26 used for ML)
+- **Episodes**: 360 M1 bars = 6 hours per episode
+- **No aggregation**: Uses M1 data directly (not M5)
 
-### Key Indicators
-- **Van Tharp SQN**: Score > 2.0 indicates good system
-- **Recovery Ratio**: Profit factor / max drawdown
-- **Calmar Ratio**: Annual return / max drawdown
+**Note**: `precompute_features_to_db.py` is DEPRECATED - it incorrectly aggregates M1→M5
 
 ---
 
-## 🛡️ Risk Management
+## 📊 Monitoring & Logging
 
-### Training Environment Constraints
-- **Fixed position size**: 1000 units (no compounding)
-- **Max positions**: 1 (no pyramiding)
-- **Episode termination**: 20% drawdown
+**Live Expectancy Monitor** (`ppo-monitor` container):
+- Reads `results/rolling_expectancy.json` every 5 seconds
+- Shows rolling 100/500/1000-trade windows
+- Displays expectancy (R-multiples), win rate, cumulative P&L
 
-### Deployment Risk Controls (Live Trading Only)
-These are **NOT** enforced during training to avoid biasing the learning:
-- **Max daily loss**: 2%
-- **Max drawdown**: 5%
-- **Consecutive loss circuit breaker**: 5 trades
+**Training Logs**:
+- Trade execution logged every 100 trades
+- Format: `✅/❌ Trade #N: X.X pips | Profitable: N/M | Phase: 2-All`
+
+**Files Written**:
+- `results/rolling_expectancy.json` - Live expectancy stats (updated every 10 trades)
+- `tensorboard/` - PPO training metrics
+- `models/` - Checkpoint saves every 10K steps
 
 ---
 
-## ✅ Advantages of 4-Action Setup
+## 📈 Latest Training Results (Oct 6, 2025)
 
-* **Transparency**: Each action has single meaning (no dual-purpose "hold/close")
-* **Control**: Close action always explicit and available
-* **Better debugging**: Logs and reward attribution clearer
-* **Safer risk management**: Stops and overrides don't get trapped by gating
+**Run Duration**: 5 hours (~2.35M timesteps, 20K trades)
+
+**Performance**:
+- **Expectancy**: -0.066R (-0.79 pips/trade) 🔴
+- **Win Rate**: 7.3% (random baseline ~50%) 🔴
+- **Status**: No learning detected
+
+**Issue**: DummyVecEnv (sequential) too slow for PPO to learn effectively. SubprocVecEnv (parallel) required but DuckDB connections fail pickling.
+
+**Next Steps**: Implement thread-local DuckDB connections or connection pooling
 
 ---
 
