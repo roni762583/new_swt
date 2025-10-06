@@ -166,7 +166,8 @@ def train_ppo(
     eval_freq: int = None,
     save_freq: int = None,
     tensorboard_log: str = None,
-    model_dir: str = None
+    model_dir: str = None,
+    pretrain_path: str = None
 ):
     """
     Train PPO agent on trading environment.
@@ -177,6 +178,7 @@ def train_ppo(
         eval_freq: Evaluation frequency
         save_freq: Model checkpoint frequency
         tensorboard_log: TensorBoard log directory
+        pretrain_path: Path to pretrained checkpoint (optional)
         model_dir: Model save directory
     """
 
@@ -240,6 +242,37 @@ def train_ppo(
     logger.info("Creating PPO model...")
 
     model = PPO(**ppo_config)
+
+    # Load pretrained weights if provided
+    if pretrain_path:
+        logger.info(f"Loading pretrained weights from: {pretrain_path}")
+        try:
+            checkpoint = torch.load(pretrain_path, map_location=ppo_config['device'])
+
+            # SB3's policy network is accessible via model.policy
+            # The pretrained model has action_dim=3, but PPO uses action_dim=4
+            # We'll load the shared layers and skip the final policy head
+            pretrained_dict = checkpoint['model_state_dict']
+            model_dict = model.policy.state_dict()
+
+            # Filter out incompatible keys (policy_head with different output dim)
+            pretrained_dict_filtered = {
+                k: v for k, v in pretrained_dict.items()
+                if k in model_dict and v.shape == model_dict[k].shape
+            }
+
+            # Update model with pretrained weights
+            model_dict.update(pretrained_dict_filtered)
+            model.policy.load_state_dict(model_dict, strict=False)
+
+            loaded_keys = len(pretrained_dict_filtered)
+            total_keys = len(model_dict)
+            logger.info(f"✅ Loaded {loaded_keys}/{total_keys} pretrained weights")
+            logger.info(f"   Skipped: final policy head (3→4 action mismatch)")
+            logger.info(f"   Pretrain val_acc: {checkpoint.get('val_acc', 'N/A')}%")
+        except Exception as e:
+            logger.error(f"❌ Failed to load pretrained weights: {e}")
+            logger.info("Continuing with random initialization...")
 
     # Setup callbacks
     checkpoint_callback = CheckpointCallback(
@@ -308,6 +341,8 @@ def main():
                        help="TensorBoard log directory")
     parser.add_argument("--model_dir", type=str, default="./models/",
                        help="Model save directory")
+    parser.add_argument("--pretrain", type=str, default=None,
+                       help="Path to pretrained checkpoint (optional)")
 
     args = parser.parse_args()
 
@@ -318,7 +353,8 @@ def main():
         eval_freq=args.eval_freq,
         save_freq=args.save_freq,
         tensorboard_log=args.tensorboard_dir,
-        model_dir=args.model_dir
+        model_dir=args.model_dir,
+        pretrain_path=args.pretrain
     )
 
     logger.info("Training complete!")

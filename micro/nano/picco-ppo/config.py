@@ -46,7 +46,7 @@ PPO_CONFIG = {
 
 # Network architecture
 NETWORK_CONFIG = {
-    "net_arch": [256, 256],          # Two hidden layers
+    "net_arch": [64, 128, 32],       # Match custom PolicyNetwork: 32→64→128→32 (residual in custom impl)
     "activation_fn": "ReLU",         # Activation function
     "normalize_images": False,
 }

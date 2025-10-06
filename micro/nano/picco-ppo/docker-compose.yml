@@ -11,7 +11,6 @@ services:
       dockerfile: Dockerfile
       target: production
       cache_from:
-        - picco-ppo:latest
         - python:3.11-slim
       args:
         BUILDKIT_INLINE_CACHE: 1
@@ -33,13 +32,14 @@ services:
     volumes:
       - ./checkpoints:/app/checkpoints
       - ./results:/app/results
-      - ../../../data:/app/data:ro
       - ./numba_cache:/tmp/numba_cache
       - pip-cache:/root/.cache/pip
       - ./env:/app/env  # Mount local env directory to use fixed trading_env.py
       - ./precomputed_features.duckdb:/app/precomputed_features.duckdb:ro  # Mount precomputed features
+      - ./master.duckdb:/app/master.duckdb:ro  # Mount local master database
       - ./config.py:/app/config.py:ro  # Mount config file
       - ./train.py:/app/train.py:ro  # Mount training script
+      - ./pretrain_zigzag.py:/app/pretrain_zigzag.py  # Mount pretraining script
 
     # Environment
     environment:
@@ -50,12 +50,14 @@ services:
       - NUMBA_CACHE_DIR=/tmp/numba_cache
       - TZ=America/New_York
 
-    # Command - using standard PPO training with optimized data loading
-    # Now supporting multi-env with precomputed features
+    # Command - Run pretraining first, then PPO with pretrained weights
     command: >
-      python -u train.py
-      --timesteps 1000000
-      --n_envs 4
+      bash -c "
+      echo '🔬 Starting supervised pretraining on ZigZag labels (4 actions)...' &&
+      python -u pretrain_zigzag.py &&
+      echo '✅ Pretraining complete, starting PPO training...' &&
+      python -u train.py --timesteps 1000000 --n_envs 4 --pretrain checkpoints/pretrain_zigzag_best.pth
+      "
 
     # Restart policy
     restart: unless-stopped

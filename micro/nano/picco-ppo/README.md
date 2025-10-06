@@ -49,6 +49,16 @@ Input(32) ──┬──> Layer1(64) ──> Layer2(128) ──> Layer3(32) ─
 * **Total parameters**: ~18,300
 * **Benefits**: Gradient flow, preserves raw features, faster convergence
 
+### 🎓 Supervised Pretraining (NEW)
+
+**ZigZag Label Pretraining:**
+* Pretrain on 3.59 years of ZigZag pivot labels before PPO
+* **Labels**: 6,431 BUY (0.48%), 6,498 SELL (0.49%), 12,617 CLOSE (0.95%), 1.3M HOLD (98%)
+* **Training**: 70% train (933K samples), 30% val (400K samples)
+* **Class weights**: Balanced for imbalanced dataset (HOLD=0.25x, BUY/SELL=59x, CLOSE=30x)
+* **Epochs**: 1 epoch test first to verify learning, then extend if promising
+* **Benefits**: Network learns basic entry/exit patterns before RL exploration
+
 ---
 
 ## ⚙️ PPO Configuration

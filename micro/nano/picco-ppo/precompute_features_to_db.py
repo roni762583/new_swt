@@ -201,8 +201,11 @@ def precompute_all_features(
 
 if __name__ == "__main__":
     # Check if master database exists
-    if not os.path.exists("/app/data/master.duckdb"):
-        # Try local path for development
+    if os.path.exists("master.duckdb"):
+        # Local development - master.duckdb in current directory
+        source_db = "master.duckdb"
+    elif not os.path.exists("/app/data/master.duckdb"):
+        # Try old location for compatibility
         source_db = "../../../data/master.duckdb"
         if not os.path.exists(source_db):
             # Create sample data for testing
