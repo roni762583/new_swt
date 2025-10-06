@@ -1,29 +1,20 @@
 #!/bin/bash
-# Entrypoint script to precompute features if needed
+# Entrypoint script - use master.duckdb directly (no precomputing needed)
 
-# Check if precomputed features database exists
-if [ ! -f "/app/precomputed_features.duckdb" ]; then
-    echo "🔄 Precomputed features not found, generating..."
+# ❌ DEPRECATED: precompute_features_to_db.py (aggregates M1→M5, loses granularity)
+# ✅ CURRENT: Use master.duckdb with M1 data directly
 
-    # Check if master database exists
-    if [ -f "/app/data/master.duckdb" ]; then
-        echo "📊 Found master database, computing features..."
-        python3 precompute_features_to_db.py
-
-        if [ $? -eq 0 ]; then
-            echo "✅ Features precomputed successfully"
-        else
-            echo "❌ Failed to precompute features, creating sample data..."
-            # The script will create sample data if master.duckdb doesn't exist
-            python3 precompute_features_to_db.py
-        fi
-    else
-        echo "⚠️ Master database not found at /app/data/master.duckdb"
-        echo "📦 Creating sample data for testing..."
-        python3 precompute_features_to_db.py
-    fi
+# Check if master database exists
+if [ -f "/app/master.duckdb" ]; then
+    echo "✅ Using master.duckdb (M1 data with precomputed features)"
+elif [ -f "/app/data/master.duckdb" ]; then
+    echo "✅ Using /app/data/master.duckdb (M1 data with precomputed features)"
 else
-    echo "✅ Precomputed features already exist"
+    echo "❌ ERROR: master.duckdb not found!"
+    echo "Expected locations:"
+    echo "  - /app/master.duckdb (mounted via docker-compose)"
+    echo "  - /app/data/master.duckdb"
+    exit 1
 fi
 
 # Execute the main command

@@ -20,7 +20,7 @@ TRAINING = {
     "save_freq": 10_000,             # Checkpoint save frequency
     "tensorboard_log": "./tensorboard/",
     "model_dir": "./models/",
-    "episode_length": 2000,          # M5 bars per episode
+    "episode_length": 360,           # 6-hour sessions: 360 M1 bars (aggregated to M5)
     "initial_balance": 10000.0,
     "reward_scaling": 0.01,
 }

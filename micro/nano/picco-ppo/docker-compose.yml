@@ -50,13 +50,11 @@ services:
       - NUMBA_CACHE_DIR=/tmp/numba_cache
       - TZ=America/New_York
 
-    # Command - Run pretraining first, then PPO with pretrained weights
+    # Command - Skip pretraining, run PPO training directly
     command: >
       bash -c "
-      echo '🔬 Starting supervised pretraining on ZigZag labels (4 actions)...' &&
-      python -u pretrain_zigzag.py &&
-      echo '✅ Pretraining complete, starting PPO training...' &&
-      python -u train.py --timesteps 1000000 --n_envs 4 --pretrain checkpoints/pretrain_zigzag_best.pth
+      echo '🚀 Starting PPO training (no pretraining)...' &&
+      python -u train.py --timesteps 1000000 --n_envs 4
       "
 
     # Restart policy
@@ -90,6 +88,7 @@ services:
     volumes:
       - ./results:/app/results:ro
       - ./checkpoints:/app/checkpoints:ro
+      - ./master.duckdb:/app/master.duckdb:ro  # Mount database for monitoring
 
     environment:
       - PYTHONUNBUFFERED=1

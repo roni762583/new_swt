@@ -1,7 +1,20 @@
 #!/usr/bin/env python3
 """
-Precompute all features and store them in DuckDB for efficient slicing.
-This avoids recalculating indicators for every episode and losing rows to initialization.
+❌ DEPRECATED - DO NOT USE ❌
+
+This script incorrectly aggregates M1 to M5, losing granularity.
+
+WRONG APPROACH:
+- Aggregates M1 → M5 (5× data loss)
+- Creates precomputed_features.duckdb with M5 bars
+- Does NOT align with 6-hour M1 session requirement
+
+CORRECT APPROACH:
+- Use master.duckdb directly (M1 data with all features precomputed)
+- 360 M1 bars = 6 hours (matches MuZero v7 validation)
+- All features already exist in master.duckdb columns
+
+DO NOT RUN THIS SCRIPT.
 """
 
 import duckdb

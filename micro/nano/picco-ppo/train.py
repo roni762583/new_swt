@@ -129,15 +129,21 @@ class LoggingWrapper(Monitor):
 
         return obs, reward, done, truncated, info
 
-def create_env(seed: int = None, env_id: int = 0):
-    """Create a single trading environment using precomputed features."""
+def create_env(seed: int = None, env_id: int = 0, enable_phase1: bool = False):
+    """Create a single trading environment using precomputed features.
+
+    Args:
+        seed: Random seed
+        env_id: Environment ID for tracking
+        enable_phase1: Enable phase1 winner-only learning (default: False)
+    """
 
     # Check if we're in Docker or local environment
     import os
-    if os.path.exists("/app/precomputed_features.duckdb"):
-        db_path = "/app/precomputed_features.duckdb"
+    if os.path.exists("/app/master.duckdb"):
+        db_path = "/app/master.duckdb"
     else:
-        db_path = "precomputed_features.duckdb"
+        db_path = "master.duckdb"
 
     env = TradingEnv(
         db_path=db_path,
@@ -145,7 +151,8 @@ def create_env(seed: int = None, env_id: int = 0):
         initial_balance=TRAINING["initial_balance"],
         instrument="GBPJPY",  # Uses config for pip values, spread, trade_size
         reward_scaling=TRAINING["reward_scaling"],
-        seed=seed
+        seed=seed,
+        enable_phase1_learning=enable_phase1  # Pass phase1 flag to environment
     )
 
     # Wrap with logging wrapper
@@ -167,7 +174,8 @@ def train_ppo(
     save_freq: int = None,
     tensorboard_log: str = None,
     model_dir: str = None,
-    pretrain_path: str = None
+    pretrain_path: str = None,
+    enable_phase1: bool = False
 ):
     """
     Train PPO agent on trading environment.
@@ -180,6 +188,7 @@ def train_ppo(
         tensorboard_log: TensorBoard log directory
         pretrain_path: Path to pretrained checkpoint (optional)
         model_dir: Model save directory
+        enable_phase1: Enable phase1 winner-only learning (default: False)
     """
 
     # Use config values as defaults
@@ -207,22 +216,20 @@ def train_ppo(
     def make_env(rank: int):
         def _init():
             # Each env gets a different random seed
-            return create_env(seed=rank, env_id=rank + 1)
+            return create_env(seed=rank, env_id=rank + 1, enable_phase1=enable_phase1)
         return _init
 
-    # Use SubprocVecEnv for true parallelization
-    if n_envs > 1:
-        train_env = SubprocVecEnv([make_env(i) for i in range(n_envs)])
-    else:
-        train_env = DummyVecEnv([make_env(0)])
+    # Use DummyVecEnv (threading) instead of SubprocVecEnv (multiprocessing)
+    # DuckDB connections don't work well with multiprocessing
+    train_env = DummyVecEnv([make_env(i) for i in range(n_envs)])
 
     # Create evaluation environment
     logger.info("Creating evaluation environment...")
-    eval_env = DummyVecEnv([lambda: create_env(seed=42, env_id=0)])
+    eval_env = DummyVecEnv([lambda: create_env(seed=42, env_id=0, enable_phase1=enable_phase1)])
 
     # Check environment
     logger.info("Checking environment compatibility...")
-    check_env(create_env(seed=42))
+    check_env(create_env(seed=42, enable_phase1=enable_phase1))
 
     # PPO hyperparameters from config
     ppo_config = {
@@ -343,6 +350,8 @@ def main():
                        help="Model save directory")
     parser.add_argument("--pretrain", type=str, default=None,
                        help="Path to pretrained checkpoint (optional)")
+    parser.add_argument("--phase1_1000winners", action="store_true",
+                       help="Enable phase1 winner-only learning (first 1000 profitable trades)")
 
     args = parser.parse_args()
 
@@ -354,7 +363,8 @@ def main():
         save_freq=args.save_freq,
         tensorboard_log=args.tensorboard_dir,
         model_dir=args.model_dir,
-        pretrain_path=args.pretrain
+        pretrain_path=args.pretrain,
+        enable_phase1=args.phase1_1000winners
     )
 
     logger.info("Training complete!")
